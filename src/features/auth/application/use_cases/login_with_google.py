@@ -95,11 +95,16 @@ class LoginWithGoogleUseCase:
 
         access_token = self._create_access_token(user)
         jti = str(uuid.uuid4())
+        # Nueva familia por login — se propaga sin cambiar en cada rotación
+        # posterior (ver RefreshSessionUseCase). Permite revocarla entera si
+        # se detecta reuso de un jti ya rotado.
+        family_id = str(uuid.uuid4())
         refresh_token = self._jwt_service.create_refresh_token({"sub": user.id, "jti": jti})
 
         await self._session_repository.create_session(
             user_id=user.id,
             jti=jti,
+            family_id=family_id,
             expires_at=self._jwt_service.get_refresh_token_expires_at(),
             user_agent=user_agent,
             ip_address=ip_address,

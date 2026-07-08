@@ -31,3 +31,20 @@ class PendingInvitation:
     role_id: str
     role_code: str
     entity_id: Optional[str]
+
+
+@dataclass(frozen=True)
+class SessionRecord:
+    """
+    Proyección de `auth_sessions` para un `jti` concreto. `family_id` es
+    constante a través de toda una cadena de rotaciones (login -> refresh ->
+    refresh -> ...) — es lo que permite revocar de un golpe todos los
+    descendientes de una sesión cuando se detecta reuso de un `jti` ya
+    rotado (patrón OWASP de "refresh token family revocation").
+    """
+
+    id: str
+    user_id: str
+    jti: str
+    family_id: str
+    is_revoked: bool

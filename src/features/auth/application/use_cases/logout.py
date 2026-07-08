@@ -1,8 +1,10 @@
 """
-Caso de uso: logout. Revoca server-side la sesión asociada al refresh token
-actual (además de que el router borra la cookie). Si el refresh token ya no
-es válido/decodificable (expirado, ausente), no falla — el objetivo de
-logout es que el usuario quede fuera, no exigirle un token perfecto.
+Caso de uso: logout. Revoca server-side TODA la familia de sesiones del
+refresh token actual (no solo su `jti` puntual) — así, aunque el navegador
+tuviera de milagro un descendiente ya rotado en vuelo, también queda
+invalidado. Además el router borra la cookie. Si el refresh token ya no es
+válido/decodificable (expirado, ausente), no falla — el objetivo de logout
+es que el usuario quede fuera, no exigirle un token perfecto.
 """
 
 from src.shared.jwt.domain.jwt_service import IJWTService
@@ -25,5 +27,9 @@ class LogoutUseCase:
             return
 
         jti = payload.get("jti")
-        if jti:
-            await self._session_repository.revoke_session(jti)
+        if not jti:
+            return
+
+        session = await self._session_repository.find_session(jti)
+        if session is not None:
+            await self._session_repository.revoke_family(session.family_id)

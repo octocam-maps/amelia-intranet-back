@@ -48,10 +48,15 @@ cp .env.example .env   # rellenar GOOGLE_CLIENT_ID como mínimo
 docker compose -f docker-compose.local.yaml --profile local up --build
 ```
 
-Esto levanta Postgres 17 (puerto `5436` en el host) y ejecuta las 8
+Esto levanta Postgres 17 (puerto `5436` en el host) y ejecuta las 9
 migraciones de `database/migrations/` automáticamente en el primer arranque
 del volumen (ver `database/migrations/README.md`). El backend queda en
 `http://localhost:8000` (`/docs` si `SWAGGER_ENABLED=true`).
+
+> Si ya tenías un volumen local con las migraciones 001-008 aplicadas
+> (Postgres no re-ejecuta `docker-entrypoint-initdb.d` en un volumen
+> existente), aplica la 009 a mano: `psql "$DATABASE_URL" -f
+> database/migrations/009_auth_sessions_family.sql`.
 
 ### 3. Sin Docker (venv local)
 
@@ -70,11 +75,13 @@ source .venv/bin/activate
 python -m pytest -v
 ```
 
-37 tests (JWT service, RBAC `require_role`, verificador de Google OIDC con
+39 tests (JWT service, RBAC `require_role`, verificador de Google OIDC con
 mocks, casos de uso de `auth` con fakes en memoria de `IUserRepository` /
 `ISessionRepository` — auto-provisión, invitación, admin sembrado, rotación
-y revocación de sesiones —, smoke tests de la app con `TestClient`). Todos
-pasan sin necesitar Postgres ni credenciales reales de Google.
+de sesiones, **detección de reuso de refresh token con revocación de
+familia**, refresh "concurrente" con el mismo jti —, smoke tests de la app
+con `TestClient`). Todos pasan sin necesitar Postgres ni credenciales reales
+de Google.
 
 ## Contrato de `/auth`
 
@@ -125,8 +132,8 @@ suspendida; `401` si el `id_token` no verifica (firma/aud/iss/expirado).
 
 Sin body — lee el refresh token de la cookie HttpOnly. Valida su firma/expiración
 Y que su `jti` siga activo en `auth_sessions` (no revocado por un logout ni por
-"logout-all"). Rota la sesión: revoca el `jti` usado y persiste uno nuevo.
-Devuelve un access token nuevo y rota la cookie.
+"logout-all"). Rota la sesión: revoca el `jti` usado y persiste uno nuevo en la
+MISMA familia (`family_id`). Devuelve un access token nuevo y rota la cookie.
 
 ```jsonc
 // Response 200
@@ -135,11 +142,19 @@ Devuelve un access token nuevo y rota la cookie.
 
 `401` si el refresh token es inválido, expiró, o su `jti` fue revocado.
 
+**Detección de reuso (rotación OWASP):** si el `jti` presentado existe pero
+YA estaba revocado (alguien reutiliza una copia de un refresh token ya
+rotado — señal de robo), se revoca la FAMILIA completa (todos los `jti`
+descendientes de esa cadena, no solo el reusado) y se responde `401`. El
+frontend debe evitar disparar refresh concurrentes con el mismo `jti` en
+primer lugar (ver `refreshSessionSingleFlight` en el frontend) — esta
+detección es defensa en profundidad, no la primera línea.
+
 ### `POST /auth/logout`
 
-Requiere `Authorization: Bearer <access_token>`. Revoca server-side la sesión
-del refresh token actual (`auth_sessions.revoked_at`) y limpia la cookie.
-`204 No Content`.
+Requiere `Authorization: Bearer <access_token>`. Revoca server-side TODA la
+familia de sesiones del refresh token actual (no solo su `jti` puntual) y
+limpia la cookie. `204 No Content`.
 
 ### `POST /auth/logout-all`
 
@@ -173,6 +188,17 @@ del JWT), para reflejar cambios de rol sin esperar al siguiente refresh.
 
 ## Pendiente / sin verificar (honesto)
 
+- **Concurrencia real en Postgres sin probar**: la detección de reuso está
+  probada con fakes en memoria (`test_concurrent_refresh_with_same_jti_...`),
+  que documentan el invariante pero no reproducen una carrera real de dos
+  conexiones asyncpg simultáneas contra la misma fila. En el peor caso de
+  una carrera real ganada por ambas lecturas antes de que ninguna escriba
+  (poco probable con Postgres y transacciones cortas, pero no descartado sin
+  un `SELECT ... FOR UPDATE` o una constraint que lo impida a nivel BD), el
+  segundo `UPDATE ... WHERE jti = $1 AND revoked_at IS NULL` de
+  `revoke_session` simplemente no afecta filas — no habría doble-rotación
+  silenciosa, pero tampoco se ha verificado con una prueba de carga real
+  contra Postgres.
 - **Login real de Google no se puede probar sin credenciales** — se verificó
   con `google.oauth2.id_token.verify_oauth2_token` mockeado en tests, no
   contra la API real de Google.

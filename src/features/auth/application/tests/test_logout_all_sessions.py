@@ -13,9 +13,15 @@ from .fakes import FakeSessionRepository
 async def test_logout_all_revokes_every_active_session_of_the_user_only():
     session_repo = FakeSessionRepository()
     now = datetime.now(timezone.utc)
-    await session_repo.create_session(user_id="user-1", jti="a", expires_at=now, user_agent=None, ip_address=None)
-    await session_repo.create_session(user_id="user-1", jti="b", expires_at=now, user_agent=None, ip_address=None)
-    await session_repo.create_session(user_id="user-2", jti="c", expires_at=now, user_agent=None, ip_address=None)
+    await session_repo.create_session(
+        user_id="user-1", jti="a", family_id="fam-1", expires_at=now, user_agent=None, ip_address=None
+    )
+    await session_repo.create_session(
+        user_id="user-1", jti="b", family_id="fam-2", expires_at=now, user_agent=None, ip_address=None
+    )
+    await session_repo.create_session(
+        user_id="user-2", jti="c", family_id="fam-3", expires_at=now, user_agent=None, ip_address=None
+    )
 
     use_case = LogoutAllSessionsUseCase(session_repo)
     revoked_count = await use_case.execute("user-1")

@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from src.features.auth.domain.entities import AuthenticatedUser, PendingInvitation
+from src.features.auth.domain.entities import AuthenticatedUser, PendingInvitation, SessionRecord
 
 
 @dataclass
@@ -63,16 +63,32 @@ class FakeSessionRepository:
     def __init__(self):
         self.sessions: dict[str, dict] = {}
 
-    async def create_session(self, *, user_id, jti, expires_at, user_agent, ip_address):
-        self.sessions[jti] = {"user_id": user_id, "revoked": False}
+    async def create_session(self, *, user_id, jti, family_id, expires_at, user_agent, ip_address):
+        self.sessions[jti] = {"user_id": user_id, "family_id": family_id, "revoked": False}
 
-    async def is_session_active(self, jti: str) -> bool:
+    async def find_session(self, jti: str) -> Optional[SessionRecord]:
         session = self.sessions.get(jti)
-        return bool(session and not session["revoked"])
+        if session is None:
+            return None
+        return SessionRecord(
+            id=jti,
+            user_id=session["user_id"],
+            jti=jti,
+            family_id=session["family_id"],
+            is_revoked=session["revoked"],
+        )
 
     async def revoke_session(self, jti: str) -> None:
         if jti in self.sessions:
             self.sessions[jti]["revoked"] = True
+
+    async def revoke_family(self, family_id: str) -> int:
+        count = 0
+        for session in self.sessions.values():
+            if session["family_id"] == family_id and not session["revoked"]:
+                session["revoked"] = True
+                count += 1
+        return count
 
     async def revoke_all_sessions_for_user(self, user_id: str) -> int:
         count = 0
