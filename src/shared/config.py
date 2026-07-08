@@ -38,7 +38,13 @@ class Settings:
         self.refresh_token_cookie_name = os.getenv(
             "REFRESH_TOKEN_COOKIE_NAME", "amelia_intranet_refresh_token"
         )
-        self.refresh_token_cookie_path = os.getenv("REFRESH_TOKEN_COOKIE_PATH", "/auth/refresh")
+        # `/auth` (no `/auth/refresh`): el navegador solo adjunta la cookie a
+        # rutas que empiecen por su `path`. Con `/auth/refresh` la cookie
+        # NUNCA llegaba a `/auth/logout`, así que `LogoutUseCase` no podía
+        # revocar nada server-side (bug real detectado en el E2E de Fase 1 —
+        # ver SOFT-2170). `/auth` cubre `/auth/refresh` y `/auth/logout`
+        # sin exponer la cookie a rutas fuera de auth.
+        self.refresh_token_cookie_path = os.getenv("REFRESH_TOKEN_COOKIE_PATH", "/auth")
         self.refresh_token_cookie_secure = _is_truthy(
             os.getenv("REFRESH_TOKEN_COOKIE_SECURE", "false")
         )
