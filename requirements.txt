@@ -1,0 +1,21 @@
+# Dependencias de runtime. Espejo de backend2: FastAPI + asyncpg (SQL crudo, sin ORM).
+fastapi[standard]>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+asyncpg>=0.29.0
+python-jose[cryptography]>=3.3.0
+google-auth>=2.28.0
+requests>=2.31.0
+slowapi>=0.1.9
+loguru>=0.7.0
+httpx>=0.25.0
+sendgrid>=6.11.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.1
+faker>=19.0.0

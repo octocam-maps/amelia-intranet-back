@@ -1,0 +1,34 @@
+[tool.ruff]
+target-version = "py312"
+src = ["src"]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    # B008: FastAPI's Depends() pattern is a function-call-in-default-argument by design.
+    "B008",
+    # B904: raise-without-from-inside-except — domain errors are intentionally
+    # translated at boundaries (auth/google_oidc -> HTTP errors).
+    "B904",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"main.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+warn_return_any = true
+check_untyped_defs = true
+explicit_package_bases = true
+mypy_path = "."
+ignore_missing_imports = true

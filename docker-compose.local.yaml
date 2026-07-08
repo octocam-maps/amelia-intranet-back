@@ -1,0 +1,58 @@
+# Stack de desarrollo local (Postgres + backend con --reload).
+# Uso: docker compose -f docker-compose.local.yaml --profile local up
+services:
+  amelia-intranet-database:
+    image: postgres:17-bookworm
+    container_name: amelia-intranet-database
+    profiles: [local]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5436}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/pgdata
+      # Postgres ejecuta alfabéticamente todo *.sql montado aquí en el primer
+      # arranque (volumen vacío) — 001_..006_ ya quedan en orden numérico.
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - amelia-intranet-network
+
+  amelia-intranet-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: amelia-intranet-backend
+    env_file:
+      - ${ENV_FILE:-.env}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      amelia-intranet-database:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      UVICORN_RELOAD: ${UVICORN_RELOAD:-true}
+    command: ["python", "run_server.py"]
+    networks:
+      - amelia-intranet-network
+
+volumes:
+  postgres_data:
+
+networks:
+  amelia-intranet-network:
+    driver: bridge
