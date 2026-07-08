@@ -15,6 +15,7 @@ una migración nueva.
 | `005_admin_comms.sql` | Tablas de Fase 5 (incluye `anonymous_messages`, anonimato estructural) |
 | `006_notifications.sql` | Tablas de Fase 6 |
 | `007_seed_initial_admin.sql` | Bootstrap del único Administrador (Beatriz Luna) — ver comentario en el archivo sobre el email placeholder |
+| `008_auth_sessions.sql` | `auth_sessions` — revocación server-side de refresh tokens (aditiva, añadida tras validación de Fase 1) |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero
@@ -26,7 +27,7 @@ de tablas esperan a su fase correspondiente.
 - **Local (Docker, base de datos nueva):** `docker-compose.local.yaml` monta
   `./database/migrations` en `/docker-entrypoint-initdb.d`. Postgres ejecuta ahí
   todo `*.sql` en orden alfabético en el PRIMER arranque del volumen (los prefijos
-  `001_`…`007_` garantizan el orden numérico). Si el volumen ya existe, no se
+  `001_`…`008_` garantizan el orden numérico). Si el volumen ya existe, no se
   vuelven a ejecutar — hay que recrearlo (`docker compose down -v`) o aplicar la
   migración nueva a mano.
 - **Manual / stage / prod:** aplicar con `psql`, en orden, contra una base ya

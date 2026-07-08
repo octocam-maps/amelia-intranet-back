@@ -35,7 +35,11 @@ Fase 2+.
    - `amelia-intranet-back/.env` → `GOOGLE_CLIENT_ID`
    - `amelia-intranet-web/.env` → `VITE_GOOGLE_CLIENT_ID` (mismo valor)
 5. Confirmar `GOOGLE_WORKSPACE_HOSTED_DOMAIN=ameliahub.com` — es el claim `hd`
-   que distingue plantilla interna de externos-invitado.
+   que distingue plantilla interna de externos-invitado. **Ojo:** cualquier
+   cuenta de ese Workspace que haga login y no tenga invitación pendiente se
+   auto-provisiona como `empleado` (ver "Contrato de `/auth`" más abajo) —
+   revisar que este dominio esté bien antes de habilitar el login en un
+   entorno compartido.
 
 ### 2. Base de datos + backend (Docker)
 
@@ -44,7 +48,7 @@ cp .env.example .env   # rellenar GOOGLE_CLIENT_ID como mínimo
 docker compose -f docker-compose.local.yaml --profile local up --build
 ```
 
-Esto levanta Postgres 17 (puerto `5436` en el host) y ejecuta las 7
+Esto levanta Postgres 17 (puerto `5436` en el host) y ejecuta las 8
 migraciones de `database/migrations/` automáticamente en el primer arranque
 del volumen (ver `database/migrations/README.md`). El backend queda en
 `http://localhost:8000` (`/docs` si `SWAGGER_ENABLED=true`).
@@ -66,9 +70,11 @@ source .venv/bin/activate
 python -m pytest -v
 ```
 
-24 tests (JWT service, RBAC `require_role`, verificador de Google OIDC con
-mocks, smoke tests de la app con `TestClient`). Todos pasan sin necesitar
-Postgres ni credenciales reales de Google.
+37 tests (JWT service, RBAC `require_role`, verificador de Google OIDC con
+mocks, casos de uso de `auth` con fakes en memoria de `IUserRepository` /
+`ISessionRepository` — auto-provisión, invitación, admin sembrado, rotación
+y revocación de sesiones —, smoke tests de la app con `TestClient`). Todos
+pasan sin necesitar Postgres ni credenciales reales de Google.
 
 ## Contrato de `/auth`
 
@@ -102,25 +108,50 @@ Identity Services) por una sesión interna.
 También fija una cookie `HttpOnly`, `Secure` (en prod), `SameSite=Strict`
 llamada `amelia_intranet_refresh_token` (path `/auth/refresh`).
 
-Errores: `403` si el email no tiene cuenta ni invitación pendiente
-(`NotInvitedError`) o si la cuenta está suspendida; `401` si el `id_token` no
-verifica (firma/aud/iss/expirado).
+**Alta de usuario** (si el email no existe todavía en `users`), en este orden:
+1. Si hay una `invitations` PENDIENTE para ese email, se usa su rol/entidad
+   (cubre externos-invitado y cualquier interno que RRHH quiera pre-asignar
+   a un rol concreto, p.ej. un futuro admin).
+2. Si no hay invitación pero el claim `hd` del id_token (verificado por
+   Google, nunca el sufijo del email) coincide con
+   `GOOGLE_WORKSPACE_HOSTED_DOMAIN`, se auto-provisiona como `empleado`
+   `active` — entidad/departamento quedan `NULL`, RRHH los completa después.
+3. Si no es interno y no hay invitación, `403 NotInvitedError`.
+
+Errores: `403` si no hay alta posible (`NotInvitedError`) o si la cuenta está
+suspendida; `401` si el `id_token` no verifica (firma/aud/iss/expirado).
 
 ### `POST /auth/refresh`
 
-Sin body — lee el refresh token de la cookie HttpOnly. Devuelve un access
-token nuevo y rota la cookie.
+Sin body — lee el refresh token de la cookie HttpOnly. Valida su firma/expiración
+Y que su `jti` siga activo en `auth_sessions` (no revocado por un logout ni por
+"logout-all"). Rota la sesión: revoca el `jti` usado y persiste uno nuevo.
+Devuelve un access token nuevo y rota la cookie.
 
 ```jsonc
 // Response 200
 { "access_token": "<jwt interno>", "token_type": "bearer", "expires_in": 900 }
 ```
 
+`401` si el refresh token es inválido, expiró, o su `jti` fue revocado.
+
 ### `POST /auth/logout`
 
-Requiere `Authorization: Bearer <access_token>`. Limpia la cookie de refresh.
-`204 No Content`. **Stateless en Fase 1**: no hay tabla de revocación de
-refresh tokens — ver "Pendiente" más abajo.
+Requiere `Authorization: Bearer <access_token>`. Revoca server-side la sesión
+del refresh token actual (`auth_sessions.revoked_at`) y limpia la cookie.
+`204 No Content`.
+
+### `POST /auth/logout-all`
+
+Requiere `Authorization: Bearer <access_token>`. Revoca **todas** las
+sesiones activas del usuario (todos los dispositivos/refresh tokens vivos),
+no solo la actual — pensado para incidentes RGPD (dispositivo perdido o
+robado). También limpia la cookie del dispositivo desde el que se llama.
+
+```jsonc
+// Response 200
+{ "revoked_sessions": 3 }
+```
 
 ### `GET /auth/me`
 
@@ -145,16 +176,22 @@ del JWT), para reflejar cambios de rol sin esperar al siguiente refresh.
 - **Login real de Google no se puede probar sin credenciales** — se verificó
   con `google.oauth2.id_token.verify_oauth2_token` mockeado en tests, no
   contra la API real de Google.
-- **Revocación de refresh tokens**: es un JWT stateless (sin tabla de
-  persistencia, a diferencia de `backend2`). `logout` solo borra la cookie
-  del navegador — un token robado sigue siendo válido hasta que expira (7
-  días por defecto). Si esto es un requisito duro, hace falta una tabla
-  `refresh_tokens` (no está en `docs/fase-0-esquema-datos.md`) — decisión
-  pendiente para el equipo.
+- **Precedencia invitación vs. auto-provisión**: si un email interno tiene
+  una invitación pendiente, esta gana sobre la auto-provisión como
+  `empleado` (permite pre-asignar rol/entidad a un interno concreto). No
+  estaba explícito en el encargo — es una decisión de diseño para no romper
+  el flujo de invitación existente; confirmarla con el equipo si no era la
+  intención.
 - **Verificación de Google es bloqueante en el event loop**: `google-auth`
   hace una llamada HTTP síncrona (cacheada) para las claves públicas de
   Google. Para Fase 1 es aceptable; si el volumen de logins lo justifica,
   mover a `httpx` async o ejecutar en threadpool.
 - **Bootstrap del admin único** (`007_seed_initial_admin.sql`) usa un email
-  placeholder (`beatriz.luna@ameliahub.com`) — actualizar antes de producción.
+  placeholder (`beatriz.luna@ameliahub.com`) — sigue pendiente, actualizar
+  antes de producción. La auto-provisión por dominio NO reemplaza este seed:
+  sin él, Beatriz entraría como `empleado` en vez de `administrador`.
+- **Limpieza de `auth_sessions`**: no hay todavía un job que borre filas
+  viejas (revocadas o expiradas hace tiempo) — la tabla crece sin límite.
+  No es un problema funcional en Fase 1 (bajo volumen), pero conviene un
+  cron/trigger de limpieza antes de producción.
 - No hay todavía tabla `schema_migrations` — ver `database/migrations/README.md`.

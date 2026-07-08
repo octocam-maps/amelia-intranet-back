@@ -120,6 +120,38 @@ class PostgresUserRepository(IUserRepository):
         assert user is not None
         return user
 
+    async def create_auto_provisioned_user(
+        self,
+        email: str,
+        *,
+        google_sub: str,
+        full_name: str,
+        avatar_url: Optional[str],
+        hosted_domain: Optional[str],
+    ) -> AuthenticatedUser:
+        user_id = await self._db.fetchval(
+            """
+            INSERT INTO users (
+                email, google_sub, hosted_domain, full_name, avatar_url,
+                role_id, status, is_external, last_login_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5,
+                (SELECT id FROM roles WHERE code = 'empleado'),
+                'active', FALSE, CURRENT_TIMESTAMP
+            )
+            RETURNING id
+            """,
+            email.lower(),
+            google_sub,
+            hosted_domain,
+            full_name,
+            avatar_url,
+        )
+        user = await self.find_by_id(str(user_id))
+        assert user is not None
+        return user
+
     async def bind_google_login(
         self,
         user_id: str,

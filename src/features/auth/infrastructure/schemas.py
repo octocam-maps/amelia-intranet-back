@@ -31,3 +31,7 @@ class TokenResponseDTO(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+
+
+class LogoutAllResponseDTO(BaseModel):
+    revoked_sessions: int
