@@ -44,6 +44,13 @@ services:
       amelia-intranet-database:
         condition: service_healthy
     restart: unless-stopped
+    volumes:
+      # Hot-reload de desarrollo: monta el código del host para que
+      # uvicorn --reload recoja los cambios sin reconstruir la imagen.
+      # Se montan solo `src/` y `main.py` para NO pisar `/app/deps`
+      # (las dependencias instaladas en la imagen). NO usar en prod.
+      - ./src:/app/src
+      - ./main.py:/app/main.py
     environment:
       UVICORN_RELOAD: ${UVICORN_RELOAD:-true}
     command: ["python", "run_server.py"]
