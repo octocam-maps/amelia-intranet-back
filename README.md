@@ -75,12 +75,15 @@ source .venv/bin/activate
 python -m pytest -v
 ```
 
-39 tests (JWT service, RBAC `require_role`, verificador de Google OIDC con
+41 tests (JWT service, RBAC `require_role`, verificador de Google OIDC con
 mocks, casos de uso de `auth` con fakes en memoria de `IUserRepository` /
 `ISessionRepository` — auto-provisión, invitación, admin sembrado, rotación
 de sesiones, **detección de reuso de refresh token con revocación de
-familia**, refresh "concurrente" con el mismo jti —, smoke tests de la app
-con `TestClient`). Todos pasan sin necesitar Postgres ni credenciales reales
+familia**, refresh "concurrente" con el mismo jti —, tests route-level con
+`TestClient` + `dependency_overrides` — **logout revoca server-side ahora
+que la cookie llega con `path=/auth`** (SOFT-2170), refresh sigue
+funcionando —, smoke tests de la app). Todos pasan sin necesitar Postgres
+ni credenciales reales
 de Google.
 
 ## Contrato de `/auth`
@@ -113,7 +116,13 @@ Identity Services) por una sesión interna.
 ```
 
 También fija una cookie `HttpOnly`, `Secure` (en prod), `SameSite=Strict`
-llamada `amelia_intranet_refresh_token` (path `/auth/refresh`).
+llamada `amelia_intranet_refresh_token` (path `/auth`).
+
+> **SOFT-2170 (fix):** el path era `/auth/refresh` en la primera entrega de
+> Fase 1 — el navegador nunca mandaba la cookie a `/auth/logout` (path
+> distinto), así que `POST /auth/logout` devolvía `204` pero NO revocaba
+> nada server-side (la sesión seguía `revoked_at IS NULL` para siempre).
+> `/auth` cubre ambas rutas.
 
 **Alta de usuario** (si el email no existe todavía en `users`), en este orden:
 1. Si hay una `invitations` PENDIENTE para ese email, se usa su rol/entidad
