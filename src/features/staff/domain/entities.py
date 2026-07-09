@@ -12,6 +12,7 @@ class StaffMember:
     id: str
     full_name: str
     email: str
+    avatar_url: Optional[str]
     job_title: Optional[str]
     department_id: Optional[str]
     department_name: Optional[str]

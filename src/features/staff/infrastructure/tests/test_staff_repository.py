@@ -22,6 +22,7 @@ def _row(**overrides) -> dict:
         "id": "user-1",
         "full_name": "Sandra Ramírez",
         "email": "sandra@ameliahub.com",
+        "avatar_url": None,
         "job_title": "Project Manager",
         "status": "invited",
         "hire_date": None,

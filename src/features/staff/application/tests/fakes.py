@@ -85,6 +85,7 @@ class FakeStaffRepository:
             id=str(uuid.uuid4()),
             full_name=full_name,
             email=email,
+            avatar_url=None,
             job_title=job_title,
             department_id=department_id,
             department_name=None,

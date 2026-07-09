@@ -15,7 +15,7 @@ from ...domain.ports import IStaffRepository
 
 _STAFF_SELECT = """
     SELECT
-        u.id, u.full_name, u.email, u.job_title, u.status, u.hire_date, u.created_at,
+        u.id, u.full_name, u.email, u.avatar_url, u.job_title, u.status, u.hire_date, u.created_at,
         u.department_id, d.name AS department_name,
         u.entity_id, e.code AS entity_code,
         u.role_id, r.code AS role_code,
@@ -52,6 +52,7 @@ def _row_to_member(row) -> StaffMember:
         id=str(row["id"]),
         full_name=row["full_name"],
         email=row["email"],
+        avatar_url=row["avatar_url"],
         job_title=row["job_title"],
         department_id=str(row["department_id"]) if row["department_id"] else None,
         department_name=row["department_name"],

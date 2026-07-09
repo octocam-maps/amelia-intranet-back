@@ -7,6 +7,7 @@ def member_to_dto(member: StaffMember) -> StaffMemberDTO:
         id=member.id,
         full_name=member.full_name,
         email=member.email,
+        avatar_url=member.avatar_url,
         job_title=member.job_title,
         department_id=member.department_id,
         department_name=member.department_name,
