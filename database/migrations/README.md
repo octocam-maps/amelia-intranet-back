@@ -21,6 +21,9 @@ una migración nueva.
 | `011_update_admin_seed_email.sql` | Actualiza el email del admin sembrado en 007: `beatriz.luna@ameliahub.com` -> `people@ameliahub.com` (cambio de la demo) |
 | `012_time_clock_no_overlap_constraint.sql` | `btree_gist` + `EXCLUDE` en `time_clock_entries` — cinturón de seguridad en BD contra el solape de tramos bajo concurrencia (RACE-3, auditoría QA Fase 3) |
 | `013_absence_types_seed_expansion.sql` | Seed de `justificada`/`remoto`/`otros` (los 6 tipos del modal de nueva solicitud) + colores realineados con `docs/deck-fase3` |
+| `014_mailbox_reply_status.sql` | `anonymous_messages.admin_reply`/`replied_at` (aditiva) + estado `resolved` sustituye a `archived` + CHECK de `category` (Fase 6, buzón anónimo) |
+| `015_users_hire_date.sql` | `users.hire_date` (aditiva) — fecha de alta ligada al cálculo de vacaciones (Fase 6, gestión de plantilla) |
+| `016_departments_unique_name.sql` | `uq_departments_entity_name` — permite el upsert de departamentos "sobre la marcha" desde el alta/edición de plantilla, sin CRUD propio todavía (Fase 6) |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero

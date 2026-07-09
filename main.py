@@ -17,6 +17,8 @@ from slowapi.middleware import SlowAPIMiddleware
 from src.features.absences.infrastructure.routes import create_absences_router
 from src.features.auth.infrastructure.routes import create_auth_router
 from src.features.dashboard.infrastructure.routes import create_dashboard_router
+from src.features.mailbox.infrastructure.routes import create_mailbox_router
+from src.features.staff.infrastructure.routes import create_staff_router
 from src.features.time_clock.infrastructure.routes import create_time_clock_router
 from src.shared.config import get_settings
 from src.shared.database import get_database_pool
@@ -100,7 +102,12 @@ def create_app() -> FastAPI:
     app.include_router(create_dashboard_router())
     app.include_router(create_time_clock_router())
     app.include_router(create_absences_router())
-    logger.info("Routers registered", routers=["auth", "dashboard", "time-clock", "absences"])
+    app.include_router(create_mailbox_router())
+    app.include_router(create_staff_router())
+    logger.info(
+        "Routers registered",
+        routers=["auth", "dashboard", "time-clock", "absences", "mailbox", "staff"],
+    )
 
     @app.get("/", include_in_schema=False)
     def read_root():
