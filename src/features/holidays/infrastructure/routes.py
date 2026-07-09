@@ -1,0 +1,74 @@
+"""
+Router de `/holidays`: calendario laboral (docs/permisos-roles.md §
+"Festivos" — el admin los marca anualmente, el resto de la plantilla los
+consulta en su calendario de ausencias). El externo-invitado no tiene
+"Ausencias" en la matriz de permisos (❌) — se rechaza aquí, en el backend.
+"""
+
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
+
+from src.shared.auth.dependencies import require_role
+
+from ..application.use_cases.create_holiday import CreateHolidayUseCase
+from ..application.use_cases.delete_holiday import DeleteHolidayUseCase
+from ..application.use_cases.list_holidays import ListHolidaysUseCase
+from ..application.use_cases.update_holiday import UpdateHolidayUseCase
+from .dependencies import (
+    get_create_holiday_use_case,
+    get_delete_holiday_use_case,
+    get_list_holidays_use_case,
+    get_update_holiday_use_case,
+)
+from .mappers import holiday_to_dto, holidays_to_dto
+from .schemas import CreateHolidayDTO, HolidayDTO, HolidayListDTO, UpdateHolidayDTO
+
+
+def create_holidays_router() -> APIRouter:
+    router = APIRouter(prefix="/holidays", tags=["holidays"])
+
+    @router.get("", response_model=HolidayListDTO)
+    async def list_holidays(
+        year: Optional[int] = Query(None),
+        entity: Optional[str] = Query(None, description="Filtra por código de entidad (hub/lab/ops)"),
+        current_user: dict = Depends(require_role("administrador", "empleado")),
+        use_case: ListHolidaysUseCase = Depends(get_list_holidays_use_case),
+    ):
+        holidays = await use_case.execute(year=year, entity_code=entity)
+        return holidays_to_dto(holidays)
+
+    @router.post("", response_model=HolidayDTO, status_code=201)
+    async def create_holiday(
+        dto: CreateHolidayDTO,
+        current_user: dict = Depends(require_role("administrador")),
+        use_case: CreateHolidayUseCase = Depends(get_create_holiday_use_case),
+    ):
+        holiday = await use_case.execute(day=dto.day, name=dto.name, entity_code=dto.entity)
+        return holiday_to_dto(holiday)
+
+    @router.patch("/{holiday_id}", response_model=HolidayDTO)
+    async def update_holiday(
+        holiday_id: str,
+        dto: UpdateHolidayDTO,
+        current_user: dict = Depends(require_role("administrador")),
+        use_case: UpdateHolidayUseCase = Depends(get_update_holiday_use_case),
+    ):
+        # `model_fields_set` distingue "el cliente no mandó `entity`" (no
+        # tocar el ámbito) de "mandó `entity: null`" (vaciarlo -> aplica a
+        # las 3 entidades) — un `Optional[str] = None` por sí solo no puede.
+        kwargs = {"day": dto.day, "name": dto.name}
+        if "entity" in dto.model_fields_set:
+            kwargs["entity_code"] = dto.entity
+        holiday = await use_case.execute(holiday_id, **kwargs)
+        return holiday_to_dto(holiday)
+
+    @router.delete("/{holiday_id}", status_code=204)
+    async def delete_holiday(
+        holiday_id: str,
+        current_user: dict = Depends(require_role("administrador")),
+        use_case: DeleteHolidayUseCase = Depends(get_delete_holiday_use_case),
+    ):
+        await use_case.execute(holiday_id)
+
+    return router
