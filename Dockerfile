@@ -16,6 +16,11 @@ COPY . .
 
 ENV PYTHONPATH=/app:/app/deps
 ENV PATH="/app/deps/bin:$PATH"
+# TZ-1 (auditoría QA Fase 3): fija la hora del proceso a UTC explícitamente
+# — no depender de la TZ de la imagen base ni del host. "Qué día es hoy"
+# para RRHH (dashboard, fichaje, export) se decide aparte en
+# src/shared/utils/timezone.py (Europe/Madrid), no con la hora del sistema.
+ENV TZ=UTC
 
 EXPOSE 8000
 
