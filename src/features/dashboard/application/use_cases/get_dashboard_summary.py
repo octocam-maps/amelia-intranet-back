@@ -11,7 +11,7 @@ que llama a este caso de uso ya lo bloquea con `require_role` antes de
 llegar aquí.
 """
 
-from datetime import date
+from src.shared.utils.timezone import today_in_madrid
 
 from ...domain.entities import AdminDashboardSummary, EmployeeDashboardSummary
 from ...domain.ports import IDashboardRepository
@@ -25,7 +25,10 @@ class GetDashboardSummaryUseCase:
         self._repository = repository
 
     async def execute(self, *, user_id: str, role: str) -> EmployeeDashboardSummary:
-        today = date.today()
+        # TZ-1: "hoy" es Europe/Madrid, no la TZ del proceso (UTC) — decide
+        # qué contador de vacaciones ve el usuario y si su fichaje de "hoy"
+        # sigue abierto justo alrededor de la medianoche.
+        today = today_in_madrid()
         vacation_balance = await self._repository.get_vacation_balance(user_id, today.year)
         clock_status = await self._repository.get_today_clock_status(user_id, today)
         holidays = await self._repository.list_upcoming_holidays(today, _UPCOMING_HOLIDAYS_LIMIT)

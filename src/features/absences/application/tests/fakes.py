@@ -59,6 +59,21 @@ class FakeAbsenceRepository:
             pending_days=existing.pending_days + pending_delta,
         )
 
+    async def try_reserve_balance(self, user_id, absence_type_id, year, *, pending_delta) -> bool:
+        # Espeja el UPDATE...WHERE atómico de Postgres: comprueba el saldo
+        # disponible Y escribe la reserva en la misma "operación" — en el
+        # fake no hay concurrencia real, pero mantiene el mismo contrato
+        # (0 filas afectadas == False) para que los tests de RACE-1 no
+        # dependan de un check-then-act en el use case.
+        key = (user_id, absence_type_id, year)
+        existing = self.balances.get(key)
+        if existing is None:
+            return False
+        if existing.available_days < pending_delta:
+            return False
+        self.balances[key] = replace(existing, pending_days=existing.pending_days + pending_delta)
+        return True
+
     async def create_request(
         self, *, user_id, absence_type_id, start_date, end_date, days_count, reason
     ) -> AbsenceRequest:
@@ -92,8 +107,10 @@ class FakeAbsenceRepository:
     async def list_all_requests(self) -> list[AbsenceRequest]:
         return list(self.requests.values())
 
-    async def update_request_status(self, request_id, *, status, reviewed_by, review_note):
+    async def update_request_status_if_pending(self, request_id, *, status, reviewed_by, review_note):
         existing = self.requests[request_id]
+        if existing.status != "pending":
+            return None
         updated = replace(
             existing,
             status=status,

@@ -3,8 +3,9 @@ Caso de uso: consultar el saldo (contador en tiempo real) de un usuario para
 el año en curso, por cada tipo de ausencia configurado.
 """
 
-from datetime import date
 from typing import Optional
+
+from src.shared.utils.timezone import today_in_madrid
 
 from ...domain.entities import AbsenceBalance
 from ...domain.errors import AbsenceForbiddenError
@@ -29,7 +30,7 @@ class GetAbsenceBalanceUseCase:
                 raise AbsenceForbiddenError("No puedes ver el saldo de otro usuario.")
             effective_user_id = target_user_id
 
-        resolved_year = year or date.today().year
+        resolved_year = year or today_in_madrid().year  # TZ-1: año en Europe/Madrid, no UTC
 
         # Asegura que TODOS los tipos configurados tengan fila de saldo,
         # aunque el usuario nunca haya solicitado ese tipo todavía — así el

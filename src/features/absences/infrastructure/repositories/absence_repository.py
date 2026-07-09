@@ -126,8 +126,10 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         used_delta: float,
         pending_delta: float,
     ) -> None:
-        # UPDATE atómico en una sola query — evita el "leer-modificar-escribir"
-        # entre dos solicitudes concurrentes del mismo usuario/tipo/año.
+        # UPDATE incondicional — solo lo usa `ReviewAbsenceRequestUseCase`
+        # DESPUÉS de haber ganado el UPDATE...WHERE status='pending' atómico
+        # (ver update_request_status_if_pending), así que aquí ya no hay
+        # carrera posible: la fila de la solicitud está "reservada".
         await self._db.execute(
             """
             UPDATE absence_balances
@@ -142,6 +144,36 @@ class PostgresAbsenceRepository(IAbsenceRepository):
             used_delta,
             pending_delta,
         )
+
+    async def try_reserve_balance(
+        self,
+        user_id: str,
+        absence_type_id: str,
+        year: int,
+        *,
+        pending_delta: float,
+    ) -> bool:
+        # RACE-1 (auditoría QA Fase 3): reservar saldo al CREAR una solicitud
+        # debe ser un único UPDATE condicionado al saldo disponible EN LA
+        # PROPIA QUERY (no leer el saldo en Python y decidir aparte) — así
+        # dos solicitudes concurrentes del mismo usuario/tipo/año no pueden
+        # ambas leer "saldo suficiente" y las dos escribir un overdraft.
+        # 0 filas afectadas == saldo insuficiente en el momento del commit.
+        row = await self._db.fetchrow(
+            """
+            UPDATE absence_balances
+            SET pending_days = pending_days + $4,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = $1 AND absence_type_id = $2 AND year = $3
+              AND (entitled_days - used_days - pending_days) >= $4
+            RETURNING id
+            """,
+            user_id,
+            absence_type_id,
+            year,
+            pending_delta,
+        )
+        return row is not None
 
     async def create_request(
         self,
@@ -190,20 +222,26 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         rows = await self._db.fetch("SELECT * FROM absence_requests ORDER BY start_date DESC")
         return [_row_to_request(row) for row in rows]
 
-    async def update_request_status(
+    async def update_request_status_if_pending(
         self,
         request_id: str,
         *,
         status: str,
         reviewed_by: str,
         review_note: Optional[str],
-    ) -> AbsenceRequest:
+    ) -> Optional[AbsenceRequest]:
+        # RACE-2 (auditoría QA Fase 3): condicionar el UPDATE a
+        # `status = 'pending'` en la misma query hace que, si dos admins (o
+        # doble clic) revisan la misma solicitud a la vez, solo UNO de los
+        # dos UPDATE afecte una fila — el otro ve 0 filas y sabe que ya no
+        # tiene que ajustar el saldo. `None` == la solicitud ya no estaba
+        # pending cuando esta query se ejecutó.
         row = await self._db.fetchrow(
             """
             UPDATE absence_requests
             SET status = $2, reviewed_by = $3, review_note = $4,
                 reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-            WHERE id = $1
+            WHERE id = $1 AND status = 'pending'
             RETURNING *
             """,
             request_id,
@@ -211,7 +249,7 @@ class PostgresAbsenceRepository(IAbsenceRepository):
             reviewed_by,
             review_note,
         )
-        return _row_to_request(row)
+        return _row_to_request(row) if row else None
 
     async def list_holiday_dates(self, date_from: date, date_to: date) -> list[date]:
         rows = await self._db.fetch(

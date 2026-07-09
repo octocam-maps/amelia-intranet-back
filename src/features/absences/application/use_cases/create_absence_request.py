@@ -59,14 +59,24 @@ class CreateAbsenceRequestUseCase:
 
         year = start_date.year
         if absence_type.affects_balance:
-            balance = await self._repository.get_or_create_balance(user_id, absence_type_id, year)
-            if balance.available_days < days_count:
+            # Se asegura la fila de saldo (upsert) y LUEGO se reserva en un
+            # único UPDATE condicionado al saldo disponible EN LA QUERY —
+            # RACE-1 (auditoría QA Fase 3): comprobar el saldo en memoria y
+            # escribir el ajuste en una query aparte permite que dos
+            # solicitudes concurrentes del mismo usuario/tipo/año lean ambas
+            # "saldo suficiente" y las dos reserven, provocando overdraft.
+            # `try_reserve_balance` devuelve False si, en el momento del
+            # commit, el saldo ya no cubre `days_count`.
+            await self._repository.get_or_create_balance(user_id, absence_type_id, year)
+            reserved = await self._repository.try_reserve_balance(
+                user_id, absence_type_id, year, pending_delta=days_count
+            )
+            if not reserved:
                 raise InsufficientBalanceError(
-                    f"Saldo insuficiente: disponibles {balance.available_days}, "
-                    f"solicitados {days_count}."
+                    f"Saldo insuficiente para solicitar {days_count} día(s)."
                 )
 
-        request = await self._repository.create_request(
+        return await self._repository.create_request(
             user_id=user_id,
             absence_type_id=absence_type_id,
             start_date=start_date,
@@ -74,13 +84,6 @@ class CreateAbsenceRequestUseCase:
             days_count=days_count,
             reason=reason,
         )
-
-        if absence_type.affects_balance:
-            await self._repository.adjust_balance(
-                user_id, absence_type_id, year, used_delta=0, pending_delta=days_count
-            )
-
-        return request
 
     async def _count_business_days(self, start_date: date, end_date: date) -> float:
         holidays = set(await self._repository.list_holiday_dates(start_date, end_date))

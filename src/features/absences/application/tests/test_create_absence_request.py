@@ -117,6 +117,42 @@ async def test_rejects_when_balance_is_insufficient():
 
 
 @pytest.mark.asyncio
+async def test_race_at_reserve_time_raises_insufficient_balance_and_creates_nothing():
+    """RACE-1: aunque el saldo en memoria pareciera suficiente, el UPDATE
+    atómico (`try_reserve_balance`) es la fuente de verdad — si en el
+    momento del commit ya no cubre la solicitud (otra petición concurrente
+    se adelantó), se rechaza sin crear la solicitud ni dejar un ajuste a
+    medias."""
+
+    class _RaceRepository(FakeAbsenceRepository):
+        async def try_reserve_balance(self, *args, **kwargs) -> bool:
+            return False
+
+    balance = AbsenceBalance(
+        id="balance-1",
+        user_id="user-1",
+        absence_type_id="type-vacaciones",
+        year=2026,
+        entitled_days=23,
+        used_days=0,
+        pending_days=0,
+    )
+    repository = _RaceRepository(types=[_VACACIONES], balances=[balance])
+    use_case = CreateAbsenceRequestUseCase(repository)
+
+    with pytest.raises(InsufficientBalanceError):
+        await use_case.execute(
+            user_id="user-1",
+            absence_type_id="type-vacaciones",
+            start_date=_monday(30),
+            end_date=_friday(30),
+            reason=None,
+        )
+
+    assert repository.requests == {}
+
+
+@pytest.mark.asyncio
 async def test_type_that_does_not_affect_balance_skips_balance_check():
     """La baja médica no descuenta del saldo (010_absence_types_defaults.sql) —
     no exige balance previo ni lo crea."""

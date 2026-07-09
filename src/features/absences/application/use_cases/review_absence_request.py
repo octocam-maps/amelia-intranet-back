@@ -41,6 +41,21 @@ class ReviewAbsenceRequestUseCase:
         if absence_type is None:
             raise AbsenceTypeNotFoundError("El tipo de ausencia no existe.")
 
+        # RACE-2 (auditoría QA Fase 3): el UPDATE...WHERE status='pending' es
+        # lo que decide de verdad quién "gana" la revisión bajo concurrencia
+        # (doble clic, o dos admins aprobando a la vez) — el check de arriba
+        # (`request.status != "pending"`) es solo una salida rápida para el
+        # caso NO concurrente, no la garantía real de exclusión.
+        updated = await self._repository.update_request_status_if_pending(
+            request_id, status=decision, reviewed_by=reviewer_id, review_note=note
+        )
+        if updated is None:
+            raise AbsenceRequestAlreadyReviewedError(
+                "Esta solicitud ya fue revisada — no admite una segunda decisión."
+            )
+
+        # Solo se ajusta el saldo si ESTE UPDATE fue el que ganó la carrera
+        # — de lo contrario se duplicaría el ajuste de saldo (RACE-2).
         if absence_type.affects_balance:
             used_delta = request.days_count if decision == "approved" else 0
             await self._repository.adjust_balance(
@@ -51,6 +66,4 @@ class ReviewAbsenceRequestUseCase:
                 pending_delta=-request.days_count,
             )
 
-        return await self._repository.update_request_status(
-            request_id, status=decision, reviewed_by=reviewer_id, review_note=note
-        )
+        return updated
