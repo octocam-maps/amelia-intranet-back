@@ -24,6 +24,7 @@ una migración nueva.
 | `014_mailbox_reply_status.sql` | `anonymous_messages.admin_reply`/`replied_at` (aditiva) + estado `resolved` sustituye a `archived` + CHECK de `category` (Fase 6, buzón anónimo) |
 | `015_users_hire_date.sql` | `users.hire_date` (aditiva) — fecha de alta ligada al cálculo de vacaciones (Fase 6, gestión de plantilla) |
 | `016_departments_unique_name.sql` | `uq_departments_entity_name` — permite el upsert de departamentos "sobre la marcha" desde el alta/edición de plantilla, sin CRUD propio todavía (Fase 6) |
+| `017_holidays_updated_at.sql` | `holidays.updated_at` (aditiva) — necesario para el CRUD admin de festivos (Fase 6, ronda 2) |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero
