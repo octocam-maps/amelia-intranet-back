@@ -14,9 +14,11 @@ services:
       - "${POSTGRES_PORT:-5436}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data/pgdata
-      # Postgres ejecuta alfabéticamente todo *.sql montado aquí en el primer
-      # arranque (volumen vacío) — 001_..006_ ya quedan en orden numérico.
-      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+      # Esquema completo autocontenido — Postgres lo ejecuta en el primer
+      # arranque (volumen vacío). Las migraciones de ./database/migrations son
+      # el registro incremental para bases ya existentes (se aplican a mano);
+      # su estado final está reflejado en init.sql.
+      - ./database/init.sql:/docker-entrypoint-initdb.d/00_init.sql:ro
     healthcheck:
       test:
         [

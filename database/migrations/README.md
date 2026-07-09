@@ -35,26 +35,38 @@ de tablas esperan a su fase correspondiente.
 
 ## Cómo se aplican
 
-- **Local (Docker, base de datos nueva):** `docker-compose.local.yaml` monta
-  `./database/migrations` en `/docker-entrypoint-initdb.d`. Postgres ejecuta ahí
-  todo `*.sql` en orden alfabético en el PRIMER arranque del volumen (los prefijos
-  `001_`…`009_` garantizan el orden numérico). Si el volumen ya existe, no se
-  vuelven a ejecutar — hay que recrearlo (`docker compose down -v`) o aplicar la
-  migración nueva a mano (p.ej. un entorno local que ya tenía 001-008 aplicadas
-  necesita `psql "$DATABASE_URL" -f database/migrations/009_auth_sessions_family.sql`
-  para tener la columna `family_id`).
-- **Servidor / stage / prod (base nueva):** usar el punto de entrada único
-  `database/init.sql`, que aplica todas las migraciones en orden con `\ir`:
+El modelo es el mismo que en `backend2`:
+
+- **`database/init.sql` = esquema COMPLETO autocontenido** (estado actual, con la
+  estructura de creación inline). Es la fuente para inicializar una base de datos
+  NUEVA de un solo golpe.
+- **`database/migrations/NNN_*.sql` = registro incremental** para bases YA
+  existentes. Se aplican **a mano**.
+
+- **Local (Docker, base nueva):** `docker-compose.local.yaml` monta
+  `./database/init.sql` en `/docker-entrypoint-initdb.d/00_init.sql`. Postgres lo
+  ejecuta en el PRIMER arranque del volumen (vacío). Si el volumen ya existe no se
+  re-ejecuta — recrearlo con `docker compose down -v` o aplicar la migración nueva
+  a mano (`psql "$DATABASE_URL" -f database/migrations/NNN_*.sql`).
+- **Servidor / stage / prod (base nueva):** un solo comando:
   ```bash
   psql "$DATABASE_URL" -f database/init.sql
   ```
-  Al añadir una migración nueva hay que agregar su línea `\ir` en `init.sql`,
-  en orden. NO montar `init.sql` en `/docker-entrypoint-initdb.d` junto con
-  `./migrations` — se ejecutarían las migraciones dos veces.
-- **Manual (equivalente sin init.sql):** aplicar con `psql`, en orden:
+- **Base existente + cambio nuevo:** aplicar SOLO la migración nueva, a mano:
   ```bash
-  for f in database/migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done
+  psql "$DATABASE_URL" -f database/migrations/NNN_descripcion.sql
   ```
-- No hay todavía una tabla de control de versión de migraciones (`schema_migrations`).
-  Para Fase 1 (greenfield, un único entorno local) no es crítico; recomendado antes
-  de tener stage/prod reales.
+
+> ⚠️ Al añadir una migración nueva hay que reflejar su cambio TAMBIÉN en
+> `database/init.sql` (columna/tabla/seed en su estado final) y en la tabla de
+> arriba. `init.sql` y las migraciones deben describir el mismo esquema — se
+> verifica comparando `pg_dump -s` de una base creada con `init.sql` contra otra
+> creada aplicando las migraciones en orden (deben coincidir salvo el orden de
+> columnas que `ALTER ... ADD COLUMN` deja al final, irrelevante para la app).
+
+- Las migraciones que crean constraints con nombre (`012` EXCLUDE, `016` UNIQUE)
+  NO son re-ejecutables (Postgres no soporta `ADD CONSTRAINT IF NOT EXISTS`); si se
+  corren dos veces dan error "ya existe" y abortan esa transacción, sin corromper
+  nada. El resto es idempotente (`IF NOT EXISTS` / `ON CONFLICT DO NOTHING`).
+- No hay todavía una tabla de control de versión (`schema_migrations`).
+  Recomendado antes de tener stage/prod reales.
