@@ -11,19 +11,31 @@ from fastapi.responses import StreamingResponse
 from src.shared.auth.dependencies import require_role
 from src.shared.utils.timezone import today_in_madrid
 
+from ..application.use_cases.clock_in import ClockInUseCase
+from ..application.use_cases.clock_out import ClockOutUseCase
 from ..application.use_cases.create_time_clock_entry import CreateTimeClockEntryUseCase
 from ..application.use_cases.delete_time_clock_entry import DeleteTimeClockEntryUseCase
+from ..application.use_cases.end_break import EndBreakUseCase
+from ..application.use_cases.get_live_status import GetLiveStatusUseCase
 from ..application.use_cases.list_time_clock_entries import ListTimeClockEntriesUseCase
+from ..application.use_cases.start_break import StartBreakUseCase
 from ..application.use_cases.update_time_clock_entry import UpdateTimeClockEntryUseCase
 from .dependencies import (
+    get_clock_in_use_case,
+    get_clock_out_use_case,
     get_create_time_clock_entry_use_case,
     get_delete_time_clock_entry_use_case,
+    get_end_break_use_case,
     get_list_time_clock_entries_use_case,
+    get_live_status_use_case,
+    get_start_break_use_case,
     get_update_time_clock_entry_use_case,
 )
-from .mappers import entries_to_dto, entry_to_dto
+from .mappers import break_to_dto, entries_to_dto, entry_to_dto, live_status_to_dto
 from .schemas import (
     CreateTimeClockEntryDTO,
+    LiveClockStatusDTO,
+    TimeClockBreakDTO,
     TimeClockEntryDTO,
     TimeClockEntryListDTO,
     UpdateTimeClockEntryDTO,
@@ -145,5 +157,48 @@ def create_time_clock_router() -> APIRouter:
             requester_id=current_user["sub"],
             requester_role=current_user["role"],
         )
+
+    # --- Fichaje en vivo (modelo "ambos" — complementa los tramos manuales
+    # de arriba, no los sustituye; docs/deck-fase3/01-home-empleado.png) ---
+
+    @router.get("/live/status", response_model=LiveClockStatusDTO)
+    async def get_live_status(
+        current_user: dict = Depends(require_role("administrador", "empleado")),
+        use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
+    ):
+        status = await use_case.execute(user_id=current_user["sub"])
+        return live_status_to_dto(status)
+
+    @router.post("/live/clock-in", response_model=TimeClockEntryDTO, status_code=201)
+    async def clock_in(
+        current_user: dict = Depends(require_role("administrador", "empleado")),
+        use_case: ClockInUseCase = Depends(get_clock_in_use_case),
+    ):
+        entry = await use_case.execute(user_id=current_user["sub"])
+        return entry_to_dto(entry)
+
+    @router.post("/live/clock-out", response_model=TimeClockEntryDTO)
+    async def clock_out(
+        current_user: dict = Depends(require_role("administrador", "empleado")),
+        use_case: ClockOutUseCase = Depends(get_clock_out_use_case),
+    ):
+        entry = await use_case.execute(user_id=current_user["sub"])
+        return entry_to_dto(entry)
+
+    @router.post("/live/breaks/start", response_model=TimeClockBreakDTO, status_code=201)
+    async def start_break(
+        current_user: dict = Depends(require_role("administrador", "empleado")),
+        use_case: StartBreakUseCase = Depends(get_start_break_use_case),
+    ):
+        break_ = await use_case.execute(user_id=current_user["sub"])
+        return break_to_dto(break_)
+
+    @router.post("/live/breaks/end", response_model=TimeClockBreakDTO)
+    async def end_break(
+        current_user: dict = Depends(require_role("administrador", "empleado")),
+        use_case: EndBreakUseCase = Depends(get_end_break_use_case),
+    ):
+        break_ = await use_case.execute(user_id=current_user["sub"])
+        return break_to_dto(break_)
 
     return router

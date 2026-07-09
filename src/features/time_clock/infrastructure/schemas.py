@@ -52,3 +52,23 @@ class TimeClockEntryDTO(BaseModel):
 
 class TimeClockEntryListDTO(BaseModel):
     entries: list[TimeClockEntryDTO]
+
+
+class TimeClockBreakDTO(BaseModel):
+    id: str
+    entry_id: str
+    break_start: datetime
+    break_end: Optional[datetime]
+
+
+class LiveClockStatusDTO(BaseModel):
+    """Estado en vivo del fichaje — tarjeta grande del dashboard
+    (docs/deck-fase3/01-home-empleado.png)."""
+
+    has_open_entry: bool
+    clock_in: Optional[datetime]
+    has_open_break: bool
+    break_start: Optional[datetime]
+    worked_seconds_today: float
+    week_worked_seconds: float
+    week_target_seconds: float

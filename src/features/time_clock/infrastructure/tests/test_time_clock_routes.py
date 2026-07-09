@@ -56,3 +56,51 @@ def test_employee_can_list_their_own_time_clock_entries():
             assert response.json() == {"entries": []}
     finally:
         app.dependency_overrides.clear()
+
+
+def test_externo_invitado_cannot_read_live_clock_status():
+    response = None
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/time-clock/live/status",
+                headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_employee_can_read_live_clock_status():
+    from datetime import datetime, timezone
+
+    class FakeLiveStatusUseCase:
+        async def execute(self, **kwargs):
+            from src.features.time_clock.application.results import LiveClockStatusResult
+
+            return LiveClockStatusResult(
+                has_open_entry=True,
+                clock_in=datetime(2026, 7, 9, 9, 0, tzinfo=timezone.utc),
+                has_open_break=False,
+                break_start=None,
+                worked_seconds_today=3600,
+                week_worked_seconds=7200,
+                week_target_seconds=144000,
+            )
+
+    app.dependency_overrides[time_clock_dependencies.get_live_status_use_case] = (
+        lambda: FakeLiveStatusUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/time-clock/live/status",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+            assert response.status_code == 200
+            body = response.json()
+            assert body["has_open_entry"] is True
+            assert body["week_target_seconds"] == 144000
+    finally:
+        app.dependency_overrides.clear()

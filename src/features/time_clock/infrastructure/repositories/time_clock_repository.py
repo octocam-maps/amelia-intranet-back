@@ -3,14 +3,14 @@ Adaptador asyncpg del puerto `ITimeClockRepository`. SQL crudo — sin ORM.
 Único lugar del feature que conoce el esquema de `time_clock_entries`.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
 import asyncpg
 
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
-from ...domain.entities import TimeClockEntry
+from ...domain.entities import TimeClockBreak, TimeClockEntry
 from ...domain.errors import TimeClockOverlapError
 from ...domain.ports import ITimeClockRepository
 
@@ -18,6 +18,8 @@ _ENTRY_SELECT = """
     SELECT id, user_id, work_date, clock_in, clock_out, source, created_at, updated_at
     FROM time_clock_entries
 """
+
+_BREAK_SELECT = "SELECT id, entry_id, break_start, break_end FROM time_clock_breaks"
 
 
 def _row_to_entry(row) -> TimeClockEntry:
@@ -30,6 +32,15 @@ def _row_to_entry(row) -> TimeClockEntry:
         source=row["source"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _row_to_break(row) -> TimeClockBreak:
+    return TimeClockBreak(
+        id=str(row["id"]),
+        entry_id=str(row["entry_id"]),
+        break_start=row["break_start"],
+        break_end=row["break_end"],
     )
 
 
@@ -155,3 +166,74 @@ class PostgresTimeClockRepository(ITimeClockRepository):
 
     async def delete_entry(self, entry_id: str) -> None:
         await self._db.execute("DELETE FROM time_clock_entries WHERE id = $1", entry_id)
+
+    # --- Fichaje en vivo ---
+
+    async def find_open_entry_for_user(self, user_id: str) -> Optional[TimeClockEntry]:
+        row = await self._db.fetchrow(
+            f"{_ENTRY_SELECT} WHERE user_id = $1 AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1",
+            user_id,
+        )
+        return _row_to_entry(row) if row else None
+
+    async def find_open_break_for_entry(self, entry_id: str) -> Optional[TimeClockBreak]:
+        row = await self._db.fetchrow(
+            f"{_BREAK_SELECT} WHERE entry_id = $1 AND break_end IS NULL LIMIT 1", entry_id
+        )
+        return _row_to_break(row) if row else None
+
+    async def create_break(self, entry_id: str, break_start: datetime) -> TimeClockBreak:
+        row = await self._db.fetchrow(
+            """
+            INSERT INTO time_clock_breaks (entry_id, break_start)
+            VALUES ($1, $2)
+            RETURNING id, entry_id, break_start, break_end
+            """,
+            entry_id,
+            break_start,
+        )
+        return _row_to_break(row)
+
+    async def close_break(self, break_id: str, break_end: datetime) -> TimeClockBreak:
+        row = await self._db.fetchrow(
+            """
+            UPDATE time_clock_breaks SET break_end = $2
+            WHERE id = $1
+            RETURNING id, entry_id, break_start, break_end
+            """,
+            break_id,
+            break_end,
+        )
+        return _row_to_break(row)
+
+    async def get_week_worked_seconds(
+        self, user_id: str, week_start: date, week_end: date
+    ) -> float:
+        # Resta las pausas del tiempo bruto del tramo — el tramo/pausa
+        # abierto cuenta hasta AHORA (COALESCE(..., NOW())), así que el
+        # contador "Esta semana" avanza en vivo sin que el frontend tenga
+        # que re-sumarlo.
+        rows = await self._db.fetch(
+            """
+            SELECT
+                e.clock_in,
+                e.clock_out,
+                COALESCE(
+                    SUM(EXTRACT(EPOCH FROM (COALESCE(b.break_end, NOW()) - b.break_start))),
+                    0
+                ) AS break_seconds
+            FROM time_clock_entries e
+            LEFT JOIN time_clock_breaks b ON b.entry_id = e.id
+            WHERE e.user_id = $1 AND e.work_date BETWEEN $2 AND $3
+            GROUP BY e.id, e.clock_in, e.clock_out
+            """,
+            user_id,
+            week_start,
+            week_end,
+        )
+        now = datetime.now(timezone.utc)
+        total_seconds = 0.0
+        for row in rows:
+            gross = ((row["clock_out"] or now) - row["clock_in"]).total_seconds()
+            total_seconds += max(gross - float(row["break_seconds"]), 0.0)
+        return total_seconds

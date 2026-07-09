@@ -33,3 +33,24 @@ class TimeClockEntry:
         if self.clock_out is None:
             return None
         return int((self.clock_out - self.clock_in).total_seconds() // 60)
+
+
+@dataclass(frozen=True)
+class TimeClockBreak:
+    """Una pausa DENTRO de un tramo abierto — modelo "en vivo" (botón
+    Pausa/Reanudar del dashboard, docs/deck-fase3/01-home-empleado.png).
+
+    A diferencia del fichaje manual por tramos (donde el hueco ENTRE dos
+    tramos ya actúa como pausa implícita, ver `TimeClockEntry`), aquí sí se
+    usa `time_clock_breaks` porque la pausa ocurre DENTRO de un mismo tramo
+    que sigue abierto — parar el timer sin cerrar la jornada.
+    """
+
+    id: str
+    entry_id: str
+    break_start: datetime
+    break_end: Optional[datetime]
+
+    @property
+    def is_open(self) -> bool:
+        return self.break_end is None

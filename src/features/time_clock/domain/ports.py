@@ -7,7 +7,7 @@ en `infrastructure` y se inyecta aquí por duck typing estructural.
 from datetime import date, datetime
 from typing import Optional, Protocol
 
-from .entities import TimeClockEntry
+from .entities import TimeClockBreak, TimeClockEntry
 
 
 class ITimeClockRepository(Protocol):
@@ -52,3 +52,26 @@ class ITimeClockRepository(Protocol):
     ) -> TimeClockEntry: ...
 
     async def delete_entry(self, entry_id: str) -> None: ...
+
+    # --- Fichaje en vivo ---
+
+    async def find_open_entry_for_user(self, user_id: str) -> Optional[TimeClockEntry]:
+        """El tramo abierto (`clock_out IS NULL`) del usuario, si lo hay —
+        independientemente del `work_date` (cubre jornadas que cruzan la
+        medianoche de reloj de pared aunque el tramo en sí no cruce de
+        `work_date`, ver `_validate_range`)."""
+        ...
+
+    async def find_open_break_for_entry(self, entry_id: str) -> Optional[TimeClockBreak]: ...
+
+    async def create_break(self, entry_id: str, break_start: datetime) -> TimeClockBreak: ...
+
+    async def close_break(self, break_id: str, break_end: datetime) -> TimeClockBreak: ...
+
+    async def get_week_worked_seconds(
+        self, user_id: str, week_start: date, week_end: date
+    ) -> float:
+        """Segundos trabajados en el rango (normalmente lunes-domingo de la
+        semana en curso), sumando todos los tramos del usuario y restando el
+        tiempo de sus pausas — el tramo/pausa abierto cuenta hasta AHORA."""
+        ...
