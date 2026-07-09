@@ -27,8 +27,63 @@ class FakeAbsenceRepository:
     async def list_types(self) -> list[AbsenceType]:
         return list(self.types.values())
 
+    async def list_all_types(self) -> list[AbsenceType]:
+        return list(self.types.values())
+
     async def find_type_by_id(self, absence_type_id: str) -> Optional[AbsenceType]:
         return self.types.get(absence_type_id)
+
+    async def find_type_by_code(self, code: str) -> Optional[AbsenceType]:
+        return next((t for t in self.types.values() if t.code == code), None)
+
+    async def create_type(
+        self, *, code, name, is_paid, affects_balance, default_entitled_days, color
+    ) -> AbsenceType:
+        type_id = str(uuid.uuid4())
+        absence_type = AbsenceType(
+            id=type_id,
+            code=code,
+            name=name,
+            is_paid=is_paid,
+            affects_balance=affects_balance,
+            default_entitled_days=default_entitled_days,
+            color=color,
+            is_active=True,
+        )
+        self.types[type_id] = absence_type
+        return absence_type
+
+    async def update_type(
+        self,
+        absence_type_id,
+        *,
+        name,
+        is_paid,
+        affects_balance,
+        default_entitled_days,
+        color,
+        is_active,
+    ) -> Optional[AbsenceType]:
+        existing = self.types.get(absence_type_id)
+        if existing is None:
+            return None
+        updated = replace(
+            existing,
+            name=name if name is not None else existing.name,
+            is_paid=is_paid if is_paid is not None else existing.is_paid,
+            affects_balance=(
+                affects_balance if affects_balance is not None else existing.affects_balance
+            ),
+            default_entitled_days=(
+                default_entitled_days
+                if default_entitled_days is not None
+                else existing.default_entitled_days
+            ),
+            color=color if color is not None else existing.color,
+            is_active=is_active if is_active is not None else existing.is_active,
+        )
+        self.types[absence_type_id] = updated
+        return updated
 
     async def get_or_create_balance(self, user_id, absence_type_id, year) -> AbsenceBalance:
         key = (user_id, absence_type_id, year)

@@ -13,7 +13,43 @@ from .entities import AbsenceBalance, AbsenceRequest, AbsenceType
 class IAbsenceRepository(Protocol):
     async def list_types(self) -> list[AbsenceType]: ...
 
+    async def list_all_types(self) -> list[AbsenceType]:
+        """Vista de gestión del admin (docs/permisos-roles.md § "Tipos de
+        ausencia"): incluye los desactivados, a diferencia de `list_types`
+        (que solo muestra los activos al empleado que va a solicitar una
+        ausencia)."""
+        ...
+
     async def find_type_by_id(self, absence_type_id: str) -> Optional[AbsenceType]: ...
+
+    async def find_type_by_code(self, code: str) -> Optional[AbsenceType]: ...
+
+    async def create_type(
+        self,
+        *,
+        code: str,
+        name: str,
+        is_paid: bool,
+        affects_balance: bool,
+        default_entitled_days: float,
+        color: Optional[str],
+    ) -> AbsenceType: ...
+
+    async def update_type(
+        self,
+        absence_type_id: str,
+        *,
+        name: Optional[str],
+        is_paid: Optional[bool],
+        affects_balance: Optional[bool],
+        default_entitled_days: Optional[float],
+        color: Optional[str],
+        is_active: Optional[bool],
+    ) -> Optional[AbsenceType]:
+        """Actualización parcial. `code` NO es editable — `absence_balances`
+        y el seed (010/013_absence_types_*.sql) referencian el código como
+        identificador estable, no solo el UUID."""
+        ...
 
     async def get_or_create_balance(
         self, user_id: str, absence_type_id: str, year: int

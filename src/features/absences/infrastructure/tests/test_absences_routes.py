@@ -79,3 +79,76 @@ def test_employee_cannot_open_pending_tray():
         app.dependency_overrides.clear()
 
     assert response.status_code == 403
+
+
+def test_employee_cannot_manage_absence_types():
+    """"Tipos de ausencia" es exclusivo del admin (docs/permisos-roles.md §
+    "Tipos de ausencia") — ni el listado de gestión ni el CRUD son
+    accesibles para el empleado."""
+    try:
+        with TestClient(app) as client:
+            headers = {"Authorization": f"Bearer {_token_for('empleado')}"}
+            admin_list_response = client.get("/absences/types/admin", headers=headers)
+            create_response = client.post(
+                "/absences/types", json={"code": "x", "name": "X"}, headers=headers
+            )
+            update_response = client.patch(
+                "/absences/types/type-1", json={"name": "x"}, headers=headers
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert admin_list_response.status_code == 403
+    assert create_response.status_code == 403
+    assert update_response.status_code == 403
+
+
+def test_admin_can_create_an_absence_type():
+    class FakeCreateTypeUseCase:
+        async def execute(self, **kwargs):
+            class _Type:
+                id = "type-1"
+                code = kwargs["code"]
+                name = kwargs["name"]
+                is_paid = kwargs["is_paid"]
+                affects_balance = kwargs["affects_balance"]
+                default_entitled_days = kwargs["default_entitled_days"]
+                color = kwargs["color"]
+                is_active = True
+
+            return _Type()
+
+    app.dependency_overrides[absences_dependencies.get_create_absence_type_use_case] = (
+        lambda: FakeCreateTypeUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/absences/types",
+                json={"code": "excedencia", "name": "Excedencia"},
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+            assert response.status_code == 201
+            assert response.json()["code"] == "excedencia"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_admin_can_list_all_absence_types_including_inactive():
+    class FakeListAllTypesUseCase:
+        async def execute(self):
+            return []
+
+    app.dependency_overrides[absences_dependencies.get_list_all_absence_types_use_case] = (
+        lambda: FakeListAllTypesUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/types/admin",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+            assert response.status_code == 200
+            assert response.json() == {"types": []}
+    finally:
+        app.dependency_overrides.clear()

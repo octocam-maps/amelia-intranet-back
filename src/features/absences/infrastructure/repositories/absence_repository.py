@@ -68,8 +68,77 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         )
         return [_row_to_type(row) for row in rows]
 
+    async def list_all_types(self) -> list[AbsenceType]:
+        # Gestión del admin: incluye los desactivados, a diferencia de
+        # `list_types` (que el empleado usa para elegir tipo al solicitar).
+        rows = await self._db.fetch("SELECT * FROM absence_types ORDER BY name")
+        return [_row_to_type(row) for row in rows]
+
     async def find_type_by_id(self, absence_type_id: str) -> Optional[AbsenceType]:
         row = await self._db.fetchrow("SELECT * FROM absence_types WHERE id = $1", absence_type_id)
+        return _row_to_type(row) if row else None
+
+    async def find_type_by_code(self, code: str) -> Optional[AbsenceType]:
+        row = await self._db.fetchrow("SELECT * FROM absence_types WHERE code = $1", code)
+        return _row_to_type(row) if row else None
+
+    async def create_type(
+        self,
+        *,
+        code: str,
+        name: str,
+        is_paid: bool,
+        affects_balance: bool,
+        default_entitled_days: float,
+        color: Optional[str],
+    ) -> AbsenceType:
+        row = await self._db.fetchrow(
+            """
+            INSERT INTO absence_types (code, name, is_paid, affects_balance, default_entitled_days, color)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+            """,
+            code,
+            name,
+            is_paid,
+            affects_balance,
+            default_entitled_days,
+            color,
+        )
+        return _row_to_type(row)
+
+    async def update_type(
+        self,
+        absence_type_id: str,
+        *,
+        name: Optional[str],
+        is_paid: Optional[bool],
+        affects_balance: Optional[bool],
+        default_entitled_days: Optional[float],
+        color: Optional[str],
+        is_active: Optional[bool],
+    ) -> Optional[AbsenceType]:
+        row = await self._db.fetchrow(
+            """
+            UPDATE absence_types
+            SET name = COALESCE($2, name),
+                is_paid = COALESCE($3, is_paid),
+                affects_balance = COALESCE($4, affects_balance),
+                default_entitled_days = COALESCE($5, default_entitled_days),
+                color = COALESCE($6, color),
+                is_active = COALESCE($7, is_active),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            RETURNING *
+            """,
+            absence_type_id,
+            name,
+            is_paid,
+            affects_balance,
+            default_entitled_days,
+            color,
+            is_active,
+        )
         return _row_to_type(row) if row else None
 
     async def get_or_create_balance(
