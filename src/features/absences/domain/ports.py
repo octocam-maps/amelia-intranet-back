@@ -69,11 +69,15 @@ class IAbsenceRepository(Protocol):
     async def list_requests_for_user(self, user_id: str) -> list[AbsenceRequest]: ...
 
     async def list_pending_requests(self) -> list[AbsenceRequest]:
-        """Bandeja de aprobación del admin (docs/permisos-roles.md § Ausencias)."""
+        """Bandeja de aprobación del admin (docs/permisos-roles.md § Ausencias).
+        Rellena `user_full_name` (JOIN con `users`) — la bandeja necesita el
+        nombre real del solicitante, no solo su `user_id`."""
         ...
 
     async def list_all_requests(self) -> list[AbsenceRequest]:
-        """Vista de calendario global del admin."""
+        """Vista de calendario global del admin. Rellena `user_full_name`
+        igual que `list_pending_requests`, por la misma razón (gantt de
+        plantilla)."""
         ...
 
     async def update_request_status_if_pending(

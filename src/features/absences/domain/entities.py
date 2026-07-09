@@ -52,3 +52,8 @@ class AbsenceRequest:
     reviewed_at: Optional[datetime]
     review_note: Optional[str]
     created_at: datetime
+    # Solo lo rellenan `list_pending_requests`/`list_all_requests` (JOIN con
+    # `users`) — las vistas de admin (bandeja, gantt de plantilla) lo
+    # necesitan para no mostrar "Empleado #XXXX". `None` en el resto de
+    # consultas (crear, listar las propias) donde no hace falta.
+    user_full_name: Optional[str] = None

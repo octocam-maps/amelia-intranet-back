@@ -52,6 +52,9 @@ def _row_to_request(row) -> AbsenceRequest:
         reviewed_at=row["reviewed_at"],
         review_note=row["review_note"],
         created_at=row["created_at"],
+        # Solo presente cuando la query hizo JOIN con `users` (bandejas de
+        # admin) — `.get()` evita un KeyError en el resto de queries (`SELECT *`).
+        user_full_name=row.get("user_full_name"),
     )
 
 
@@ -213,13 +216,31 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         return [_row_to_request(row) for row in rows]
 
     async def list_pending_requests(self) -> list[AbsenceRequest]:
+        # JOIN con `users` para alimentar `user_full_name` — la bandeja de
+        # aprobación del admin necesita el nombre real, no solo el user_id.
         rows = await self._db.fetch(
-            "SELECT * FROM absence_requests WHERE status = 'pending' ORDER BY created_at ASC"
+            """
+            SELECT ar.*, u.full_name AS user_full_name
+            FROM absence_requests ar
+            JOIN users u ON u.id = ar.user_id
+            WHERE ar.status = 'pending'
+            ORDER BY ar.created_at ASC
+            """
         )
         return [_row_to_request(row) for row in rows]
 
     async def list_all_requests(self) -> list[AbsenceRequest]:
-        rows = await self._db.fetch("SELECT * FROM absence_requests ORDER BY start_date DESC")
+        # Idem — el "Calendario de la plantilla" (gantt) del admin usa esta
+        # query y antes caía a "Empleado #XXXX" para quien no apareciera en
+        # la bandeja de pendientes.
+        rows = await self._db.fetch(
+            """
+            SELECT ar.*, u.full_name AS user_full_name
+            FROM absence_requests ar
+            JOIN users u ON u.id = ar.user_id
+            ORDER BY ar.start_date DESC
+            """
+        )
         return [_row_to_request(row) for row in rows]
 
     async def update_request_status_if_pending(

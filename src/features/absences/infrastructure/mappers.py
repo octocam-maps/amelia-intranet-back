@@ -51,6 +51,7 @@ def request_to_dto(request: AbsenceRequest) -> AbsenceRequestDTO:
         status=request.status,
         reviewed_by=request.reviewed_by,
         review_note=request.review_note,
+        user_full_name=request.user_full_name,
     )
 
 

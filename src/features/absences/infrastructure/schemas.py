@@ -55,6 +55,9 @@ class AbsenceRequestDTO(BaseModel):
     status: str
     reviewed_by: Optional[str]
     review_note: Optional[str]
+    # Solo viene relleno en `/requests/pending` y `/requests/all` (JOIN con
+    # `users`) — mismo nombre de campo que `dashboard.PendingAbsenceRequestDTO`.
+    user_full_name: Optional[str] = None
 
 
 class AbsenceRequestListDTO(BaseModel):
