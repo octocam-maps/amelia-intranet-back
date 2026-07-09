@@ -25,6 +25,9 @@ class AbsenceTypeAdminDTO(AbsenceTypeDTO):
 
     default_entitled_days: float
     is_active: bool
+    requires_approval: bool
+    requires_justification: bool
+    max_days_per_year: Optional[int]
 
 
 class AbsenceTypeAdminListDTO(BaseModel):
@@ -38,6 +41,9 @@ class CreateAbsenceTypeDTO(BaseModel):
     affects_balance: bool = True
     default_entitled_days: float = Field(0, ge=0)
     color: Optional[str] = None
+    requires_approval: bool = True
+    requires_justification: bool = False
+    max_days_per_year: Optional[int] = Field(None, ge=0)
 
 
 class UpdateAbsenceTypeDTO(BaseModel):
@@ -47,6 +53,9 @@ class UpdateAbsenceTypeDTO(BaseModel):
     default_entitled_days: Optional[float] = Field(None, ge=0)
     color: Optional[str] = None
     is_active: Optional[bool] = None
+    requires_approval: Optional[bool] = None
+    requires_justification: Optional[bool] = None
+    max_days_per_year: Optional[int] = Field(None, ge=0)
 
 
 class AbsenceBalanceDTO(BaseModel):

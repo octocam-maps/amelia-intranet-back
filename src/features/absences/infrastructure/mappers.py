@@ -36,6 +36,9 @@ def type_to_admin_dto(absence_type: AbsenceType) -> AbsenceTypeAdminDTO:
         color=absence_type.color,
         default_entitled_days=absence_type.default_entitled_days,
         is_active=absence_type.is_active,
+        requires_approval=absence_type.requires_approval,
+        requires_justification=absence_type.requires_justification,
+        max_days_per_year=absence_type.max_days_per_year,
     )
 
 

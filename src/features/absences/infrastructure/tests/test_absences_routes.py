@@ -115,6 +115,9 @@ def test_admin_can_create_an_absence_type():
                 default_entitled_days = kwargs["default_entitled_days"]
                 color = kwargs["color"]
                 is_active = True
+                requires_approval = kwargs.get("requires_approval", True)
+                requires_justification = kwargs.get("requires_justification", False)
+                max_days_per_year = kwargs.get("max_days_per_year")
 
             return _Type()
 

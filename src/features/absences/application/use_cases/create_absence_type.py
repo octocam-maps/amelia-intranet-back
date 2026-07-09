@@ -21,6 +21,9 @@ class CreateAbsenceTypeUseCase:
         affects_balance: bool,
         default_entitled_days: float,
         color: Optional[str],
+        requires_approval: bool = True,
+        requires_justification: bool = False,
+        max_days_per_year: Optional[int] = None,
     ) -> AbsenceType:
         normalized_code = code.strip().lower()
         if await self._repository.find_type_by_code(normalized_code) is not None:
@@ -35,4 +38,7 @@ class CreateAbsenceTypeUseCase:
             affects_balance=affects_balance,
             default_entitled_days=default_entitled_days,
             color=color,
+            requires_approval=requires_approval,
+            requires_justification=requires_justification,
+            max_days_per_year=max_days_per_year,
         )

@@ -23,6 +23,9 @@ def _row_to_type(row) -> AbsenceType:
         default_entitled_days=float(row["default_entitled_days"]),
         color=row["color"],
         is_active=row["is_active"],
+        requires_approval=row["requires_approval"],
+        requires_justification=row["requires_justification"],
+        max_days_per_year=row["max_days_per_year"],
     )
 
 
@@ -91,11 +94,17 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         affects_balance: bool,
         default_entitled_days: float,
         color: Optional[str],
+        requires_approval: bool = True,
+        requires_justification: bool = False,
+        max_days_per_year: Optional[int] = None,
     ) -> AbsenceType:
         row = await self._db.fetchrow(
             """
-            INSERT INTO absence_types (code, name, is_paid, affects_balance, default_entitled_days, color)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO absence_types (
+                code, name, is_paid, affects_balance, default_entitled_days, color,
+                requires_approval, requires_justification, max_days_per_year
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
             """,
             code,
@@ -104,6 +113,9 @@ class PostgresAbsenceRepository(IAbsenceRepository):
             affects_balance,
             default_entitled_days,
             color,
+            requires_approval,
+            requires_justification,
+            max_days_per_year,
         )
         return _row_to_type(row)
 
@@ -117,6 +129,9 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         default_entitled_days: Optional[float],
         color: Optional[str],
         is_active: Optional[bool],
+        requires_approval: Optional[bool] = None,
+        requires_justification: Optional[bool] = None,
+        max_days_per_year: Optional[int] = None,
     ) -> Optional[AbsenceType]:
         row = await self._db.fetchrow(
             """
@@ -127,6 +142,9 @@ class PostgresAbsenceRepository(IAbsenceRepository):
                 default_entitled_days = COALESCE($5, default_entitled_days),
                 color = COALESCE($6, color),
                 is_active = COALESCE($7, is_active),
+                requires_approval = COALESCE($8, requires_approval),
+                requires_justification = COALESCE($9, requires_justification),
+                max_days_per_year = COALESCE($10, max_days_per_year),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
             RETURNING *
@@ -138,6 +156,9 @@ class PostgresAbsenceRepository(IAbsenceRepository):
             default_entitled_days,
             color,
             is_active,
+            requires_approval,
+            requires_justification,
+            max_days_per_year,
         )
         return _row_to_type(row) if row else None
 

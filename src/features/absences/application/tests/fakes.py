@@ -37,7 +37,17 @@ class FakeAbsenceRepository:
         return next((t for t in self.types.values() if t.code == code), None)
 
     async def create_type(
-        self, *, code, name, is_paid, affects_balance, default_entitled_days, color
+        self,
+        *,
+        code,
+        name,
+        is_paid,
+        affects_balance,
+        default_entitled_days,
+        color,
+        requires_approval=True,
+        requires_justification=False,
+        max_days_per_year=None,
     ) -> AbsenceType:
         type_id = str(uuid.uuid4())
         absence_type = AbsenceType(
@@ -49,6 +59,9 @@ class FakeAbsenceRepository:
             default_entitled_days=default_entitled_days,
             color=color,
             is_active=True,
+            requires_approval=requires_approval,
+            requires_justification=requires_justification,
+            max_days_per_year=max_days_per_year,
         )
         self.types[type_id] = absence_type
         return absence_type
@@ -63,6 +76,9 @@ class FakeAbsenceRepository:
         default_entitled_days,
         color,
         is_active,
+        requires_approval=None,
+        requires_justification=None,
+        max_days_per_year=None,
     ) -> Optional[AbsenceType]:
         existing = self.types.get(absence_type_id)
         if existing is None:
@@ -81,6 +97,17 @@ class FakeAbsenceRepository:
             ),
             color=color if color is not None else existing.color,
             is_active=is_active if is_active is not None else existing.is_active,
+            requires_approval=(
+                requires_approval if requires_approval is not None else existing.requires_approval
+            ),
+            requires_justification=(
+                requires_justification
+                if requires_justification is not None
+                else existing.requires_justification
+            ),
+            max_days_per_year=(
+                max_days_per_year if max_days_per_year is not None else existing.max_days_per_year
+            ),
         )
         self.types[absence_type_id] = updated
         return updated

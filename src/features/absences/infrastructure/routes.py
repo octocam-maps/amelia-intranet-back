@@ -84,6 +84,9 @@ def create_absences_router() -> APIRouter:
             affects_balance=dto.affects_balance,
             default_entitled_days=dto.default_entitled_days,
             color=dto.color,
+            requires_approval=dto.requires_approval,
+            requires_justification=dto.requires_justification,
+            max_days_per_year=dto.max_days_per_year,
         )
         return type_to_admin_dto(absence_type)
 
@@ -106,6 +109,9 @@ def create_absences_router() -> APIRouter:
             default_entitled_days=dto.default_entitled_days,
             color=dto.color,
             is_active=dto.is_active,
+            requires_approval=dto.requires_approval,
+            requires_justification=dto.requires_justification,
+            max_days_per_year=dto.max_days_per_year,
         )
         return type_to_admin_dto(absence_type)
 

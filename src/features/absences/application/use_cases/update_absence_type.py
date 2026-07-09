@@ -26,6 +26,9 @@ class UpdateAbsenceTypeUseCase:
         default_entitled_days: Optional[float] = None,
         color: Optional[str] = None,
         is_active: Optional[bool] = None,
+        requires_approval: Optional[bool] = None,
+        requires_justification: Optional[bool] = None,
+        max_days_per_year: Optional[int] = None,
     ) -> AbsenceType:
         updated = await self._repository.update_type(
             absence_type_id,
@@ -35,6 +38,9 @@ class UpdateAbsenceTypeUseCase:
             default_entitled_days=default_entitled_days,
             color=color,
             is_active=is_active,
+            requires_approval=requires_approval,
+            requires_justification=requires_justification,
+            max_days_per_year=max_days_per_year,
         )
         if updated is None:
             raise AbsenceTypeNotFoundError("El tipo de ausencia no existe.")

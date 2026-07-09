@@ -33,6 +33,9 @@ class IAbsenceRepository(Protocol):
         affects_balance: bool,
         default_entitled_days: float,
         color: Optional[str],
+        requires_approval: bool = True,
+        requires_justification: bool = False,
+        max_days_per_year: Optional[int] = None,
     ) -> AbsenceType: ...
 
     async def update_type(
@@ -45,6 +48,9 @@ class IAbsenceRepository(Protocol):
         default_entitled_days: Optional[float],
         color: Optional[str],
         is_active: Optional[bool],
+        requires_approval: Optional[bool] = None,
+        requires_justification: Optional[bool] = None,
+        max_days_per_year: Optional[int] = None,
     ) -> Optional[AbsenceType]:
         """Actualización parcial. `code` NO es editable — `absence_balances`
         y el seed (010/013_absence_types_*.sql) referencian el código como

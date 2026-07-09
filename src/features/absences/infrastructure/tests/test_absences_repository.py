@@ -70,6 +70,9 @@ def _type_row(**overrides) -> dict:
         "default_entitled_days": 0,
         "color": None,
         "is_active": True,
+        "requires_approval": True,
+        "requires_justification": False,
+        "max_days_per_year": None,
     }
     row.update(overrides)
     return row

@@ -18,6 +18,11 @@ class AbsenceType:
     default_entitled_days: float
     color: Optional[str]
     is_active: bool
+    # Políticas configurables por el admin (019). Con defaults para no romper
+    # construcciones existentes que aún no las pasan.
+    requires_approval: bool = True
+    requires_justification: bool = False
+    max_days_per_year: Optional[int] = None
 
 
 @dataclass(frozen=True)
