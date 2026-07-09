@@ -151,9 +151,10 @@ async def test_live_status_reflects_open_entry_and_break():
 
     status = await GetLiveStatusUseCase(repository).execute(user_id="user-1")
 
-    assert status.has_open_entry is True
-    assert status.has_open_break is True
-    assert status.week_target_seconds == 40 * 3600
+    assert status.open_entry is not None
+    assert status.open_entry.id == "entry-1"
+    assert status.open_entry.on_break is True
+    assert status.expected_weekly_minutes == 40 * 60
 
 
 @pytest.mark.asyncio
@@ -162,7 +163,5 @@ async def test_live_status_with_no_entries_is_idle():
 
     status = await GetLiveStatusUseCase(repository).execute(user_id="user-1")
 
-    assert status.has_open_entry is False
-    assert status.has_open_break is False
-    assert status.worked_seconds_today == 0
-    assert status.week_worked_seconds == 0
+    assert status.open_entry is None
+    assert status.week_worked_minutes == 0

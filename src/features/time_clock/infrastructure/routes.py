@@ -31,11 +31,10 @@ from .dependencies import (
     get_start_break_use_case,
     get_update_time_clock_entry_use_case,
 )
-from .mappers import break_to_dto, entries_to_dto, entry_to_dto, live_status_to_dto
+from .mappers import entries_to_dto, entry_to_dto, live_status_to_dto
 from .schemas import (
     CreateTimeClockEntryDTO,
-    LiveClockStatusDTO,
-    TimeClockBreakDTO,
+    TimeClockCurrentStatusDTO,
     TimeClockEntryDTO,
     TimeClockEntryListDTO,
     UpdateTimeClockEntryDTO,
@@ -159,46 +158,59 @@ def create_time_clock_router() -> APIRouter:
         )
 
     # --- Fichaje en vivo (modelo "ambos" — complementa los tramos manuales
-    # de arriba, no los sustituye; docs/deck-fase3/01-home-empleado.png) ---
+    # de arriba, no los sustituye; docs/deck-fase3/01-home-empleado.png).
+    # Paths y forma de respuesta son el contrato acordado con el frontend
+    # (`time-clock/domain/ports.ts`): las 4 acciones devuelven el MISMO
+    # `TimeClockCurrentStatusDTO` que `GET /current`, ya recalculado tras el
+    # cambio — evita que el frontend tenga que volver a pedirlo aparte. ---
 
-    @router.get("/live/status", response_model=LiveClockStatusDTO)
-    async def get_live_status(
+    async def _current_status(
+        user_id: str, status_use_case: GetLiveStatusUseCase
+    ) -> TimeClockCurrentStatusDTO:
+        status = await status_use_case.execute(user_id=user_id)
+        return live_status_to_dto(status)
+
+    @router.get("/current", response_model=TimeClockCurrentStatusDTO)
+    async def get_current_status(
         current_user: dict = Depends(require_role("administrador", "empleado")),
         use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
     ):
-        status = await use_case.execute(user_id=current_user["sub"])
-        return live_status_to_dto(status)
+        return await _current_status(current_user["sub"], use_case)
 
-    @router.post("/live/clock-in", response_model=TimeClockEntryDTO, status_code=201)
+    @router.post("/clock-in", response_model=TimeClockCurrentStatusDTO, status_code=201)
     async def clock_in(
         current_user: dict = Depends(require_role("administrador", "empleado")),
         use_case: ClockInUseCase = Depends(get_clock_in_use_case),
+        status_use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
     ):
-        entry = await use_case.execute(user_id=current_user["sub"])
-        return entry_to_dto(entry)
+        await use_case.execute(user_id=current_user["sub"])
+        return await _current_status(current_user["sub"], status_use_case)
 
-    @router.post("/live/clock-out", response_model=TimeClockEntryDTO)
+    @router.post("/clock-out", response_model=TimeClockCurrentStatusDTO)
     async def clock_out(
         current_user: dict = Depends(require_role("administrador", "empleado")),
         use_case: ClockOutUseCase = Depends(get_clock_out_use_case),
+        status_use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
     ):
-        entry = await use_case.execute(user_id=current_user["sub"])
-        return entry_to_dto(entry)
+        await use_case.execute(user_id=current_user["sub"])
+        return await _current_status(current_user["sub"], status_use_case)
 
-    @router.post("/live/breaks/start", response_model=TimeClockBreakDTO, status_code=201)
+    @router.post("/breaks/start", response_model=TimeClockCurrentStatusDTO, status_code=201)
     async def start_break(
         current_user: dict = Depends(require_role("administrador", "empleado")),
         use_case: StartBreakUseCase = Depends(get_start_break_use_case),
+        status_use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
     ):
-        break_ = await use_case.execute(user_id=current_user["sub"])
-        return break_to_dto(break_)
+        await use_case.execute(user_id=current_user["sub"])
+        return await _current_status(current_user["sub"], status_use_case)
 
-    @router.post("/live/breaks/end", response_model=TimeClockBreakDTO)
+    @router.post("/breaks/end", response_model=TimeClockCurrentStatusDTO)
     async def end_break(
         current_user: dict = Depends(require_role("administrador", "empleado")),
         use_case: EndBreakUseCase = Depends(get_end_break_use_case),
+        status_use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
     ):
-        break_ = await use_case.execute(user_id=current_user["sub"])
-        return break_to_dto(break_)
+        await use_case.execute(user_id=current_user["sub"])
+        return await _current_status(current_user["sub"], status_use_case)
 
     return router
