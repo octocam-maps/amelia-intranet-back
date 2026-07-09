@@ -5,10 +5,11 @@ FastAPI + asyncpg (SQL crudo, sin ORM). Arquitectura hexagonal por feature
 `../amelia-intranet/CLAUDE.md` y `../amelia-intranet/docs/` para el contrato
 funcional completo.
 
-**Fase 1 (actual):** Autenticación (Google OIDC) + RBAC base. El resto de
-tablas del esquema (onboarding, RRHH, documentos, admin/comms, notificaciones)
-ya existen en las migraciones pero **no tienen endpoints todavía** — eso es
-Fase 2+.
+**Fase 3 (actual):** Portal RRHH core — dashboard por rol, control horario
+(fichaje por tramos manuales) y ausencias/vacaciones con aprobación del
+admin. Fase 2 (onboarding) queda en STANDBY hasta que RRHH entregue
+contenido — las tablas ya existen pero sin endpoints. Documentos/Drive,
+equipo/organigrama y admin/notificaciones son Fase 4+.
 
 ## Stack
 
@@ -48,15 +49,16 @@ cp .env.example .env   # rellenar GOOGLE_CLIENT_ID como mínimo
 docker compose -f docker-compose.local.yaml --profile local up --build
 ```
 
-Esto levanta Postgres 17 (puerto `5436` en el host) y ejecuta las 9
+Esto levanta Postgres 17 (puerto `5436` en el host) y ejecuta las 11
 migraciones de `database/migrations/` automáticamente en el primer arranque
 del volumen (ver `database/migrations/README.md`). El backend queda en
 `http://localhost:8000` (`/docs` si `SWAGGER_ENABLED=true`).
 
-> Si ya tenías un volumen local con las migraciones 001-008 aplicadas
+> Si ya tenías un volumen local con migraciones anteriores aplicadas
 > (Postgres no re-ejecuta `docker-entrypoint-initdb.d` en un volumen
-> existente), aplica la 009 a mano: `psql "$DATABASE_URL" -f
-> database/migrations/009_auth_sessions_family.sql`.
+> existente), aplica las que falten a mano, en orden:
+> `psql "$DATABASE_URL" -f database/migrations/010_absence_types_defaults.sql`
+> `psql "$DATABASE_URL" -f database/migrations/011_update_admin_seed_email.sql`
 
 ### 3. Sin Docker (venv local)
 
@@ -75,16 +77,17 @@ source .venv/bin/activate
 python -m pytest -v
 ```
 
-41 tests (JWT service, RBAC `require_role`, verificador de Google OIDC con
-mocks, casos de uso de `auth` con fakes en memoria de `IUserRepository` /
-`ISessionRepository` — auto-provisión, invitación, admin sembrado, rotación
-de sesiones, **detección de reuso de refresh token con revocación de
-familia**, refresh "concurrente" con el mismo jti —, tests route-level con
-`TestClient` + `dependency_overrides` — **logout revoca server-side ahora
-que la cookie llega con `path=/auth`** (SOFT-2170), refresh sigue
-funcionando —, smoke tests de la app). Todos pasan sin necesitar Postgres
-ni credenciales reales
-de Google.
+79 tests (los 41 de Fase 1 — JWT service, RBAC `require_role`, verificador de
+Google OIDC con mocks, casos de uso de `auth` con fakes en memoria, tests
+route-level de `TestClient` + `dependency_overrides`, smoke tests de la app —
+más los 38 nuevos de Fase 3: fichaje por tramos con detección de solape y
+RBAC dueño/admin, cálculo de días laborables excluyendo finde/festivos,
+saldo insuficiente, aprobación/rechazo con ajuste atómico de saldo,
+"revisar dos veces" bloqueado, RBAC de la bandeja de pendientes/calendario
+global, dashboard por rol con y sin widgets de admin, y tests route-level
+que confirman que el externo-invitado recibe `403` en `/time-clock` y
+`/absences` — no solo se le oculta el navbar). Todos pasan sin necesitar
+Postgres ni credenciales reales de Google.
 
 ## Contrato de `/auth`
 
@@ -183,6 +186,75 @@ Requiere `Authorization: Bearer <access_token>`. Devuelve el mismo objeto
 `user` que `/auth/login`, leído en tiempo real de la base de datos (no solo
 del JWT), para reflejar cambios de rol sin esperar al siguiente refresh.
 
+## Contrato de `/dashboard` (Fase 3)
+
+### `GET /dashboard/summary`
+
+Requiere rol `empleado` o `administrador` (el externo-invitado no tiene
+"Inicio" en la matriz de permisos — `403` si lo intenta). Resumen agregado
+de solo lectura sobre `time_clock`/`absences`; nunca escribe.
+
+```jsonc
+// Response 200 (empleado)
+{
+  "vacation_balance": { "entitled_days": 23, "used_days": 5, "pending_days": 2, "available_days": 16 },
+  "today_clock_status": { "has_open_entry": false, "worked_minutes_today": 480 },
+  "upcoming_holidays": [{ "day": "2026-08-15", "name": "Asunción" }],
+  "pending_absence_requests": null,
+  "employees_clocked_in_now": null
+}
+```
+
+Si el rol es `administrador`, `pending_absence_requests` (bandeja completa,
+hasta 20) y `employees_clocked_in_now` (tramos abiertos hoy en toda la
+plantilla) vienen rellenos en vez de `null`. `vacation_balance` es `null`
+si el usuario todavía no tiene fila de saldo para el año (se crea
+perezosamente al usar `/absences`, no aquí).
+
+## Contrato de `/time-clock` (Fase 3)
+
+Control horario por **selección manual de tramos** (p.ej. "de 6 a 9") — NO
+es fichaje en tiempo real. Un mismo día admite varios tramos; el hueco entre
+ellos actúa como pausa implícita (no se usa `time_clock_breaks` todavía).
+
+- `POST /time-clock/entries` — crea un tramo del usuario autenticado.
+  `{"work_date": "2026-07-09", "clock_in": "2026-07-09T06:00:00Z", "clock_out": "2026-07-09T09:00:00Z"}`
+  (`clock_out` opcional: tramo abierto). `422` si el rango cruza de día o
+  `clock_out <= clock_in`; `422` (`TimeClockOverlapError`) si se solapa con
+  otro tramo del mismo usuario/día.
+- `GET /time-clock/entries?user_id=&date_from=&date_to=` — historial. Sin
+  `user_id`: los propios; el admin puede pasar cualquier `user_id` o, si lo
+  omite, ve la vista aumentada de TODA la plantilla. `403` si un empleado
+  pide el `user_id` de otro.
+- `GET /time-clock/entries/export` — mismo filtro, respuesta `text/csv`.
+- `PATCH /time-clock/entries/{id}` — edita horas (dueño o admin, `403` si no).
+- `DELETE /time-clock/entries/{id}` — borra un tramo (dueño o admin).
+
+## Contrato de `/absences` (Fase 3)
+
+- `GET /absences/types` — catálogo activo (`vacaciones`, `baja_medica`,
+  `asuntos_propios` — seed en `010_absence_types_defaults.sql`, editable por
+  el admin en Fase 5).
+- `GET /absences/balance?user_id=&year=` — contador en tiempo real
+  (`entitled/used/pending/available`) por tipo, para el año dado (por
+  defecto el actual). Crea la fila de saldo la primera vez que hace falta.
+  Sin `user_id`: el propio; solo el admin puede consultar el de otro.
+- `POST /absences/requests` — crea una solicitud. `days_count` se calcula en
+  el backend excluyendo fines de semana y festivos (`holidays`, vacío hasta
+  Fase 5). `422` si el rango no tiene ningún día laborable o si el saldo
+  disponible no cubre los días pedidos (tipos con `affects_balance=TRUE`
+  únicamente — `baja_medica` no lo exige). La solicitud nace `pending` y
+  SUMA a `pending_days` de inmediato.
+- `GET /absences/requests?user_id=` — propias por defecto; el admin puede
+  pasar `user_id` para ver las de otro.
+- `GET /absences/requests/pending` — bandeja de aprobación, **exclusiva del
+  admin** (`require_role("administrador")`, `403` para cualquier otro rol).
+- `GET /absences/requests/all` — calendario global, exclusivo del admin.
+- `POST /absences/requests/{id}/review` — `{"decision": "approved"|"rejected", "note": "..."}`,
+  exclusivo del admin. Aprobar traslada los días de `pending_days` a
+  `used_days`; rechazar solo libera `pending_days`. `422` si la solicitud ya
+  fue revisada (no admite una segunda decisión).
+
 ## RBAC
 
 - `src/shared/auth/dependencies.py::get_current_user` — dependencia FastAPI
@@ -191,9 +263,13 @@ del JWT), para reflejar cambios de rol sin esperar al siguiente refresh.
   dependencia que además exige que el rol del usuario esté en la lista.
   Ejemplo: `Depends(require_role("administrador"))`.
 - **Regla no negociable**: el navbar del frontend condicionado por rol es
-  solo cosmético. Cada endpoint de Fase 2+ que sea exclusivo de un rol DEBE
-  usar `require_role(...)` — nunca confiar en que el frontend no muestre el
-  enlace.
+  solo cosmético. Cada endpoint exclusivo de un rol DEBE usar
+  `require_role(...)` (`/dashboard/summary`, `/absences/requests/pending`,
+  `/absences/requests/all`, `/absences/requests/{id}/review`) — nunca
+  confiar en que el frontend no muestre el enlace. En `/time-clock` y en
+  `/absences/requests`/`/absences/balance` la autorización es más fina
+  (dueño del recurso o admin) y vive dentro del caso de uso, no en la
+  dependencia de ruta — ver `TimeClockForbiddenError`/`AbsenceForbiddenError`.
 
 ## Pendiente / sin verificar (honesto)
 
@@ -221,12 +297,41 @@ del JWT), para reflejar cambios de rol sin esperar al siguiente refresh.
   hace una llamada HTTP síncrona (cacheada) para las claves públicas de
   Google. Para Fase 1 es aceptable; si el volumen de logins lo justifica,
   mover a `httpx` async o ejecutar en threadpool.
-- **Bootstrap del admin único** (`007_seed_initial_admin.sql`) usa un email
-  placeholder (`beatriz.luna@ameliahub.com`) — sigue pendiente, actualizar
-  antes de producción. La auto-provisión por dominio NO reemplaza este seed:
-  sin él, Beatriz entraría como `empleado` en vez de `administrador`.
+- **Bootstrap del admin único** (`007_seed_initial_admin.sql`) sembraba un
+  email placeholder (`beatriz.luna@ameliahub.com`); `011_update_admin_seed_email.sql`
+  (Fase 3) lo actualizó a `people@ameliahub.com` (cambio de la demo). La
+  auto-provisión por dominio NO reemplaza este seed: sin él, quien inicia
+  sesión con ese email entraría como `empleado` en vez de `administrador`.
 - **Limpieza de `auth_sessions`**: no hay todavía un job que borre filas
   viejas (revocadas o expiradas hace tiempo) — la tabla crece sin límite.
+- **Pendiente RRHH (Fase 3 — cuestionario sin responder)**: los valores de
+  `010_absence_types_defaults.sql` son defaults sensatos, NO confirmados —
+  vacaciones 23 laborables/año (viene del propio requerimiento), baja médica
+  sin entitlement (no descuenta saldo), asuntos propios en 0 días. También
+  sin confirmar: nº de tramos de fichaje permitidos por día, ventana de
+  edición retroactiva del control horario, cálculo de horas extra, y qué
+  saldo aplica si una solicitud de ausencia cruza de un año a otro (hoy se
+  usa el año de `start_date` sin prorratear). Todo es CONFIGURABLE sin
+  migración nueva salvo el propio catálogo de tipos — el admin lo edita en
+  Fase 5.
+- **`holidays` sigue vacía** — hasta que el admin cargue los festivos de
+  Barcelona (Fase 5), el cálculo de días laborables de `absences` solo
+  excluye fines de semana.
+- **Sin endpoint de aprobación parcial ni cancelación de una solicitud ya
+  aprobada** — `review_absence_request` solo cubre `pending -> approved|rejected`;
+  cancelar una ausencia ya aprobada (p.ej. el empleado se pone enfermo antes
+  de sus vacaciones) no se pidió para esta ronda y no tiene endpoint.
+- **`time_clock_breaks` sin usar** — el modelo de tramos manuales hace que el
+  hueco entre dos tramos actúe como pausa implícita; si RRHH pide registrar
+  pausas DENTRO de un mismo tramo, esa tabla ya existe desde `003_hr_core`
+  sin necesitar migración nueva.
+- **`GoogleOIDCVerificationError` no mapeada en el exception handler**
+  (bug preexistente de Fase 1, no de esta ronda): un `id_token` malformado
+  cae al `except Exception` genérico y responde `500` en vez de `401`. Se
+  detectó al hacer smoke testing manual de Fase 3 con un token falso —
+  queda fuera de alcance de este cambio, pero conviene un ticket aparte
+  (`src/shared/errors/handler.py` — añadir `GoogleOIDCVerificationError` a
+  `_STATUS_BY_ERROR` con `401`).
   No es un problema funcional en Fase 1 (bajo volumen), pero conviene un
   cron/trigger de limpieza antes de producción.
 - No hay todavía tabla `schema_migrations` — ver `database/migrations/README.md`.

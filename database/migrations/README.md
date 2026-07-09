@@ -17,6 +17,8 @@ una migración nueva.
 | `007_seed_initial_admin.sql` | Bootstrap del único Administrador (Beatriz Luna) — ver comentario en el archivo sobre el email placeholder |
 | `008_auth_sessions.sql` | `auth_sessions` — revocación server-side de refresh tokens (aditiva, añadida tras validación de Fase 1) |
 | `009_auth_sessions_family.sql` | `auth_sessions.family_id` — detección de reuso de refresh token (rotación OWASP), aditiva |
+| `010_absence_types_defaults.sql` | `absence_types.default_entitled_days` (aditiva) + seed de vacaciones/baja_medica/asuntos_propios (Fase 3) |
+| `011_update_admin_seed_email.sql` | Actualiza el email del admin sembrado en 007: `beatriz.luna@ameliahub.com` -> `people@ameliahub.com` (cambio de la demo) |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero
