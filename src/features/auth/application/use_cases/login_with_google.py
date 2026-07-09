@@ -26,7 +26,7 @@ import uuid
 from src.shared.jwt.domain.jwt_service import IJWTService
 
 from ...domain.entities import AuthenticatedUser
-from ...domain.errors import NotInvitedError, UserSuspendedError
+from ...domain.errors import EmailNotVerifiedError, NotInvitedError, UserSuspendedError
 from ...domain.ports import IGoogleIdentityVerifier, ISessionRepository, IUserRepository
 from ..results import LoginResult
 
@@ -52,6 +52,16 @@ class LoginWithGoogleUseCase:
         ip_address: str | None = None,
     ) -> LoginResult:
         identity = self._google_verifier.verify(google_id_token)
+
+        # Defensa en profundidad (auditoría QA Fase 3): Google verifica la
+        # FIRMA del id_token, pero `email_verified=false` significa que el
+        # titular todavía no confirmó ese email (frecuente en cuentas
+        # recién creadas) — no es una identidad en la que podamos basar alta
+        # automática ni sesión.
+        if not identity.email_verified:
+            raise EmailNotVerifiedError(
+                "Tu cuenta de Google no tiene el email verificado."
+            )
 
         user = await self._user_repository.find_by_google_sub(identity.sub)
 

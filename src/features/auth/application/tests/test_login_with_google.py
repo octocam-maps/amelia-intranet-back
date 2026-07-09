@@ -4,7 +4,7 @@ from src.features.auth.application.use_cases.login_with_google import (
     LoginWithGoogleUseCase,
 )
 from src.features.auth.domain.entities import AuthenticatedUser, PendingInvitation
-from src.features.auth.domain.errors import NotInvitedError, UserSuspendedError
+from src.features.auth.domain.errors import EmailNotVerifiedError, NotInvitedError, UserSuspendedError
 
 from .fakes import (
     FakeGoogleIdentity,
@@ -133,6 +133,29 @@ async def test_suspended_user_cannot_login():
 
     with pytest.raises(UserSuspendedError):
         await use_case.execute("fake-id-token")
+
+
+@pytest.mark.asyncio
+async def test_rejects_login_when_google_email_is_not_verified():
+    """Defensa en profundidad (auditoría QA Fase 3): Google verifica la firma
+    del id_token, pero `email_verified=false` no garantiza el titular del
+    email — se rechaza ANTES de tocar el repositorio de usuarios."""
+    identity = FakeGoogleIdentity(
+        sub="google-sub-unverified",
+        email="sin.verificar@ameliahub.com",
+        email_verified=False,
+        full_name="Sin Verificar",
+        avatar_url=None,
+        hosted_domain="ameliahub.com",
+        is_internal=True,
+    )
+    user_repo = FakeUserRepository()
+    use_case, _ = _build_use_case(user_repo, identity)
+
+    with pytest.raises(EmailNotVerifiedError):
+        await use_case.execute("fake-id-token")
+
+    assert len(user_repo.users) == 0  # no se auto-provisiona con email sin verificar
 
 
 @pytest.mark.asyncio
