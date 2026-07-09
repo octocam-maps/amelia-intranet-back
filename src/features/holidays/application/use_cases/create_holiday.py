@@ -16,7 +16,12 @@ class CreateHolidayUseCase:
         self._repository = repository
 
     async def execute(
-        self, *, day: date, name: str, entity_code: Optional[str]
+        self,
+        *,
+        day: date,
+        name: str,
+        entity_code: Optional[str],
+        scope: Optional[str] = None,
     ) -> Holiday:
         entity_id = None
         if entity_code:
@@ -30,4 +35,6 @@ class CreateHolidayUseCase:
                 "Ya existe un festivo en esa fecha para ese ámbito."
             )
 
-        return await self._repository.create_holiday(day=day, name=name, entity_id=entity_id)
+        return await self._repository.create_holiday(
+            day=day, name=name, entity_id=entity_id, scope=scope
+        )

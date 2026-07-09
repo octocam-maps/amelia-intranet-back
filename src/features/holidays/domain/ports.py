@@ -43,7 +43,7 @@ class IHolidayRepository(Protocol):
     async def resolve_entity_id(self, entity_code: str) -> Optional[str]: ...
 
     async def create_holiday(
-        self, *, day: date, name: str, entity_id: Optional[str]
+        self, *, day: date, name: str, entity_id: Optional[str], scope: Optional[str] = None
     ) -> Holiday: ...
 
     async def update_holiday(
@@ -54,6 +54,7 @@ class IHolidayRepository(Protocol):
         name: Optional[str],
         entity_id: Optional[str],
         clear_entity: bool,
+        scope: Optional[str] = None,
     ) -> Optional[Holiday]:
         """Actualización parcial. `clear_entity` vacía `entity_id` cuando el
         admin pasa el festivo de "una entidad" a "todas" — `COALESCE` no

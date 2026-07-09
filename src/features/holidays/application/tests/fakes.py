@@ -37,7 +37,7 @@ class FakeHolidayRepository:
         return _ENTITY_IDS.get(entity_code)
 
     async def create_holiday(
-        self, *, day: date, name: str, entity_id: Optional[str]
+        self, *, day: date, name: str, entity_id: Optional[str], scope: Optional[str] = None
     ) -> Holiday:
         holiday_id = str(uuid.uuid4())
         entity_code = next((k for k, v in _ENTITY_IDS.items() if v == entity_id), None)
@@ -50,6 +50,7 @@ class FakeHolidayRepository:
             entity_code=entity_code,
             created_at=now,
             updated_at=now,
+            scope=scope,
         )
         self.holidays[holiday_id] = holiday
         return holiday
@@ -62,6 +63,7 @@ class FakeHolidayRepository:
         name: Optional[str],
         entity_id: Optional[str],
         clear_entity: bool,
+        scope: Optional[str] = None,
     ) -> Optional[Holiday]:
         existing = self.holidays.get(holiday_id)
         if existing is None:
@@ -74,6 +76,7 @@ class FakeHolidayRepository:
             name=name if name is not None else existing.name,
             entity_id=new_entity_id,
             entity_code=new_entity_code,
+            scope=scope if scope is not None else existing.scope,
             updated_at=datetime.now(timezone.utc),
         )
         self.holidays[holiday_id] = updated

@@ -23,6 +23,7 @@ class UpdateHolidayUseCase:
         *,
         day: Optional[date] = None,
         name: Optional[str] = None,
+        scope: Optional[str] = None,
         entity_code: Optional[str] = _NOT_SET,  # type: ignore[assignment]
     ) -> Holiday:
         existing = await self._repository.find_by_id(holiday_id)
@@ -43,6 +44,7 @@ class UpdateHolidayUseCase:
             holiday_id,
             day=day,
             name=name,
+            scope=scope,
             entity_id=entity_id,
             clear_entity=clear_entity,
         )

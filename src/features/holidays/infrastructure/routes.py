@@ -56,7 +56,9 @@ def create_holidays_router() -> APIRouter:
         current_user: dict = Depends(require_role("administrador")),
         use_case: CreateHolidayUseCase = Depends(get_create_holiday_use_case),
     ):
-        holiday = await use_case.execute(day=dto.day, name=dto.name, entity_code=dto.entity)
+        holiday = await use_case.execute(
+            day=dto.day, name=dto.name, entity_code=dto.entity, scope=dto.scope
+        )
         return holiday_to_dto(holiday)
 
     @router.post("/import", response_model=HolidayImportResultDTO)
@@ -92,7 +94,7 @@ def create_holidays_router() -> APIRouter:
         # `model_fields_set` distingue "el cliente no mandó `entity`" (no
         # tocar el ámbito) de "mandó `entity: null`" (vaciarlo -> aplica a
         # las 3 entidades) — un `Optional[str] = None` por sí solo no puede.
-        kwargs = {"day": dto.day, "name": dto.name}
+        kwargs = {"day": dto.day, "name": dto.name, "scope": dto.scope}
         if "entity" in dto.model_fields_set:
             kwargs["entity_code"] = dto.entity
         holiday = await use_case.execute(holiday_id, **kwargs)

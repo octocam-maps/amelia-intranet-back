@@ -70,7 +70,7 @@ def test_empleado_can_list_holidays_but_not_write():
 
 def test_admin_can_create_a_holiday():
     class FakeCreateUseCase:
-        async def execute(self, *, day, name, entity_code):
+        async def execute(self, *, day, name, entity_code, scope=None):
             class _Holiday:
                 id = "hol-1"
                 pass

@@ -62,17 +62,20 @@ class PostgresHolidayRepository(IHolidayRepository):
         return str(row) if row else None
 
     async def create_holiday(
-        self, *, day: date, name: str, entity_id: Optional[str]
+        self, *, day: date, name: str, entity_id: Optional[str], scope: Optional[str] = None
     ) -> Holiday:
+        # `source` no se pasa: el default de la tabla ('manual') aplica a todo
+        # lo creado por esta vía. Los 'oficial' entran por `import_official_holidays`.
         row = await self._db.fetchrow(
             """
-            INSERT INTO holidays (day, name, entity_id)
-            VALUES ($1, $2, $3)
+            INSERT INTO holidays (day, name, entity_id, scope)
+            VALUES ($1, $2, $3, $4)
             RETURNING id
             """,
             day,
             name,
             entity_id,
+            scope,
         )
         holiday = await self.find_by_id(str(row["id"]))
         assert holiday is not None
@@ -86,12 +89,14 @@ class PostgresHolidayRepository(IHolidayRepository):
         name: Optional[str],
         entity_id: Optional[str],
         clear_entity: bool,
+        scope: Optional[str] = None,
     ) -> Optional[Holiday]:
         found = await self._db.fetchval(
             """
             UPDATE holidays
             SET day = COALESCE($2, day),
                 name = COALESCE($3, name),
+                scope = COALESCE($6, scope),
                 entity_id = CASE WHEN $4 THEN NULL ELSE COALESCE($5, entity_id) END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
@@ -102,6 +107,7 @@ class PostgresHolidayRepository(IHolidayRepository):
             name,
             clear_entity,
             entity_id,
+            scope,
         )
         if found is None:
             return None
