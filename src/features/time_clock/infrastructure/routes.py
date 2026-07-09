@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from src.shared.auth.dependencies import require_role
+from src.shared.utils.timezone import today_in_madrid
 
 from ..application.use_cases.create_time_clock_entry import CreateTimeClockEntryUseCase
 from ..application.use_cases.delete_time_clock_entry import DeleteTimeClockEntryUseCase
@@ -32,7 +33,10 @@ _DEFAULT_WINDOW_DAYS = 30
 
 
 def _resolve_range(date_from: Optional[date], date_to: Optional[date]) -> tuple[date, date]:
-    today = date.today()
+    # TZ-1: "hoy" del historial y del export es Europe/Madrid, no la TZ del
+    # proceso (UTC) — evita que el último tramo del día "se pierda" de la
+    # ventana por defecto justo alrededor de la medianoche.
+    today = today_in_madrid()
     return date_from or (today - timedelta(days=_DEFAULT_WINDOW_DAYS)), date_to or today
 
 

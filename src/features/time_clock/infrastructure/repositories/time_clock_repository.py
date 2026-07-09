@@ -6,9 +6,12 @@ Adaptador asyncpg del puerto `ITimeClockRepository`. SQL crudo — sin ORM.
 from datetime import date, datetime
 from typing import Optional
 
+import asyncpg
+
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
 from ...domain.entities import TimeClockEntry
+from ...domain.errors import TimeClockOverlapError
 from ...domain.ports import ITimeClockRepository
 
 _ENTRY_SELECT = """
@@ -43,18 +46,28 @@ class PostgresTimeClockRepository(ITimeClockRepository):
         clock_out: Optional[datetime],
         source: str,
     ) -> TimeClockEntry:
-        row = await self._db.fetchrow(
-            """
-            INSERT INTO time_clock_entries (user_id, work_date, clock_in, clock_out, source)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id, user_id, work_date, clock_in, clock_out, source, created_at, updated_at
-            """,
-            user_id,
-            work_date,
-            clock_in,
-            clock_out,
-            source,
-        )
+        # RACE-3: `find_overlapping_entry` ya se comprueba en el use case,
+        # pero eso es un check-then-act — el constraint EXCLUDE de la
+        # migración 012 es la fuente de verdad real bajo concurrencia. Si
+        # dos tramos concurrentes del mismo usuario/día se solapan, Postgres
+        # rechaza el segundo INSERT con ExclusionViolationError.
+        try:
+            row = await self._db.fetchrow(
+                """
+                INSERT INTO time_clock_entries (user_id, work_date, clock_in, clock_out, source)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id, user_id, work_date, clock_in, clock_out, source, created_at, updated_at
+                """,
+                user_id,
+                work_date,
+                clock_in,
+                clock_out,
+                source,
+            )
+        except asyncpg.exceptions.ExclusionViolationError as e:
+            raise TimeClockOverlapError(
+                "Ese tramo se solapa con otro fichaje ya registrado ese día."
+            ) from e
         return _row_to_entry(row)
 
     async def find_entry_by_id(self, entry_id: str) -> Optional[TimeClockEntry]:
@@ -122,17 +135,22 @@ class PostgresTimeClockRepository(ITimeClockRepository):
     async def update_entry(
         self, entry_id: str, *, clock_in: datetime, clock_out: Optional[datetime]
     ) -> TimeClockEntry:
-        row = await self._db.fetchrow(
-            """
-            UPDATE time_clock_entries
-            SET clock_in = $2, clock_out = $3, updated_at = CURRENT_TIMESTAMP
-            WHERE id = $1
-            RETURNING id, user_id, work_date, clock_in, clock_out, source, created_at, updated_at
-            """,
-            entry_id,
-            clock_in,
-            clock_out,
-        )
+        try:
+            row = await self._db.fetchrow(
+                """
+                UPDATE time_clock_entries
+                SET clock_in = $2, clock_out = $3, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $1
+                RETURNING id, user_id, work_date, clock_in, clock_out, source, created_at, updated_at
+                """,
+                entry_id,
+                clock_in,
+                clock_out,
+            )
+        except asyncpg.exceptions.ExclusionViolationError as e:
+            raise TimeClockOverlapError(
+                "Ese tramo se solapa con otro fichaje ya registrado ese día."
+            ) from e
         return _row_to_entry(row)
 
     async def delete_entry(self, entry_id: str) -> None:
