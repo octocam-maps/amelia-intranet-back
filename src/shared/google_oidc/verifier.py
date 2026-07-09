@@ -19,13 +19,20 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
 from src.shared.config import get_settings
+from src.shared.errors.base import InvalidCredentialsError
 from src.shared.logger import get_logger
 
 logger = get_logger("google_oidc.verifier")
 
 
-class GoogleOIDCVerificationError(Exception):
-    """El id_token de Google no se pudo verificar (firma, aud, iss, expirado)."""
+class GoogleOIDCVerificationError(InvalidCredentialsError):
+    """El id_token de Google no se pudo verificar (firma, aud, iss, expirado).
+
+    Hereda de `InvalidCredentialsError` (-> HTTP 401) a propósito: antes era
+    una `Exception` a pelo, así que `error_handler` (que solo traduce
+    subclases de `BaseError`) la dejaba caer en el 500 genérico — un
+    id_token malformado respondía "Internal server error" en vez de "no
+    autenticado" (bug detectado en la auditoría QA Fase 3)."""
 
 
 @dataclass(frozen=True)

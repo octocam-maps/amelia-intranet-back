@@ -7,6 +7,8 @@ from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from src.shared.google_oidc import GoogleOIDCVerificationError
+
 from .base import (
     AlreadyExistsError,
     AuthenticationRequiredError,
@@ -29,6 +31,11 @@ _STATUS_BY_ERROR = {
     InvalidTokenError: 401,
     TokenExpiredError: 401,
     TokenNotFoundError: 401,
+    # `GoogleOIDCVerificationError` ya hereda de `InvalidCredentialsError`
+    # (401) — se deja explícita aquí porque un id_token de Google mal
+    # verificado fue justo el caso real que caía en el 500 genérico antes
+    # de la auditoría QA Fase 3 (ver comentario en `google_oidc/verifier.py`).
+    GoogleOIDCVerificationError: 401,
     InsufficientPermissionsError: 403,
 }
 

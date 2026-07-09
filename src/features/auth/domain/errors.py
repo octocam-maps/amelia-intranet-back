@@ -1,4 +1,4 @@
-from src.shared.errors.base import InsufficientPermissionsError
+from src.shared.errors.base import InsufficientPermissionsError, InvalidCredentialsError
 
 
 class NotInvitedError(InsufficientPermissionsError):
@@ -12,3 +12,10 @@ class NotInvitedError(InsufficientPermissionsError):
 
 class UserSuspendedError(InsufficientPermissionsError):
     """El usuario existe pero está suspendido (status='suspended')."""
+
+
+class EmailNotVerifiedError(InvalidCredentialsError):
+    """El id_token de Google trae `email_verified=false` (auditoría QA Fase
+    3): Google verificó la firma del token, pero NO garantiza que el titular
+    controle esa dirección de email — defensa en profundidad, nunca dado de
+    alta ni loggeado como sesión válida con un email no verificado."""
