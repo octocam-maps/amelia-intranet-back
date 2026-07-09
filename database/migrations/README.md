@@ -43,8 +43,15 @@ de tablas esperan a su fase correspondiente.
   migración nueva a mano (p.ej. un entorno local que ya tenía 001-008 aplicadas
   necesita `psql "$DATABASE_URL" -f database/migrations/009_auth_sessions_family.sql`
   para tener la columna `family_id`).
-- **Manual / stage / prod:** aplicar con `psql`, en orden, contra una base ya
-  existente:
+- **Servidor / stage / prod (base nueva):** usar el punto de entrada único
+  `database/init.sql`, que aplica todas las migraciones en orden con `\ir`:
+  ```bash
+  psql "$DATABASE_URL" -f database/init.sql
+  ```
+  Al añadir una migración nueva hay que agregar su línea `\ir` en `init.sql`,
+  en orden. NO montar `init.sql` en `/docker-entrypoint-initdb.d` junto con
+  `./migrations` — se ejecutarían las migraciones dos veces.
+- **Manual (equivalente sin init.sql):** aplicar con `psql`, en orden:
   ```bash
   for f in database/migrations/*.sql; do psql "$DATABASE_URL" -f "$f"; done
   ```
