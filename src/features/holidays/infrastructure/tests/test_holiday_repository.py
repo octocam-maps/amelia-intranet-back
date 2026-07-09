@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.features.holidays.domain.entities import OfficialHoliday
 from src.features.holidays.infrastructure.repositories.holiday_repository import (
     PostgresHolidayRepository,
 )
@@ -22,6 +23,8 @@ def _row(**overrides) -> dict:
         "entity_code": None,
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
+        "source": "manual",
+        "scope": None,
     }
     row.update(overrides)
     return row
@@ -65,3 +68,31 @@ async def test_delete_holiday_returns_true_when_a_row_was_removed():
     deleted = await repository.delete_holiday("hol-1")
 
     assert deleted is True
+
+
+@pytest.mark.asyncio
+async def test_import_official_inserts_updates_and_skips_manual():
+    pool = AsyncMock()
+    # Un día por item: no existe (insert), existe manual (skip), existe oficial (update).
+    pool.fetchrow.side_effect = [
+        None,
+        {"id": "hol-manual", "source": "manual"},
+        {"id": "hol-oficial", "source": "oficial"},
+    ]
+    repository = PostgresHolidayRepository(pool)
+
+    summary = await repository.import_official_holidays(
+        [
+            OfficialHoliday(day=date(2026, 6, 24), name="Sant Joan", scope="autonomico"),
+            OfficialHoliday(day=date(2026, 9, 24), name="La Mercè oficial?", scope="nacional"),
+            OfficialHoliday(day=date(2026, 1, 1), name="Año Nuevo", scope="nacional"),
+        ]
+    )
+
+    assert (summary.imported, summary.updated, summary.skipped) == (1, 1, 1)
+    # Solo dos escrituras: el insert del nuevo y el update del oficial; el
+    # manual NO genera ningún execute.
+    assert pool.execute.await_count == 2
+    statements = [call.args[0] for call in pool.execute.await_args_list]
+    assert any("INSERT INTO holidays" in s for s in statements)
+    assert any("UPDATE holidays" in s for s in statements)

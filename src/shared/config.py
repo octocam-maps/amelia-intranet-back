@@ -58,6 +58,12 @@ class Settings:
         self.sendgrid_from_email = os.getenv("SENDGRID_FROM_EMAIL", "no-reply@ameliahub.com")
         self.frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
+        # Nager.Date (https://date.nager.at) — festivos oficiales de España
+        # para la importación automática de Festivos (Fase 6, ronda 2).
+        # Configurable para poder apuntar a un stub en tests/staging sin
+        # tocar código.
+        self.nager_base_url = os.getenv("NAGER_BASE_URL", "https://date.nager.at")
+
         # IPs del proxy inverso en las que SÍ confiamos para leer
         # X-Forwarded-For/X-Real-IP (ver src/shared/utils/client_ip.py). Vacío
         # por defecto: sin esta allowlist, cualquier cliente podría falsear su

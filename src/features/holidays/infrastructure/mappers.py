@@ -11,6 +11,8 @@ def holiday_to_dto(holiday: Holiday) -> HolidayDTO:
         entity_code=holiday.entity_code,
         created_at=holiday.created_at,
         updated_at=holiday.updated_at,
+        source=holiday.source,
+        scope=holiday.scope,
     )
 
 

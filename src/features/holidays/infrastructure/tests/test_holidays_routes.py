@@ -82,6 +82,8 @@ def test_admin_can_create_a_holiday():
             h.entity_code = entity_code
             h.created_at = "2026-07-09T09:14:00Z"
             h.updated_at = "2026-07-09T09:14:00Z"
+            h.source = "manual"
+            h.scope = None
             return h
 
     app.dependency_overrides[holidays_dependencies.get_create_holiday_use_case] = (

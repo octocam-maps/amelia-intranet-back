@@ -12,13 +12,31 @@ sustituye esa lectura interna.
 from datetime import date
 from typing import Optional, Protocol
 
-from .entities import Holiday
+from .entities import Holiday, ImportSummary, OfficialHoliday
+
+
+class IHolidayProvider(Protocol):
+    """Puerto de salida hacia un proveedor externo de festivos oficiales. El
+    adaptador concreto (Nager.Date, httpx) vive en `infrastructure`. Devuelve
+    los festivos ya filtrados a lo que aplica en Barcelona (nacional España +
+    autonómico Cataluña)."""
+
+    async def fetch_official_holidays(self, year: int) -> list[OfficialHoliday]: ...
 
 
 class IHolidayRepository(Protocol):
     async def list_holidays(
         self, *, year: Optional[int], entity_code: Optional[str]
     ) -> list[Holiday]: ...
+
+    async def import_official_holidays(
+        self, items: list[OfficialHoliday]
+    ) -> ImportSummary:
+        """Upsert idempotente de festivos oficiales (todos con
+        `entity_id IS NULL`). Por cada día: si no existe, inserta como
+        'oficial'; si ya existe una fila 'oficial', la refresca; si existe una
+        fila 'manual', NO la toca (los manuales mandan). Devuelve el recuento."""
+        ...
 
     async def find_by_id(self, holiday_id: str) -> Optional[Holiday]: ...
 

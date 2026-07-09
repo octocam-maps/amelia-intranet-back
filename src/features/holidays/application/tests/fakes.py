@@ -6,7 +6,11 @@ from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from src.features.holidays.domain.entities import Holiday
+from src.features.holidays.domain.entities import (
+    Holiday,
+    ImportSummary,
+    OfficialHoliday,
+)
 
 _ENTITY_IDS = {"hub": "entity-hub", "lab": "entity-lab", "ops": "entity-ops"}
 
@@ -80,3 +84,43 @@ class FakeHolidayRepository:
             return False
         del self.holidays[holiday_id]
         return True
+
+    async def import_official_holidays(
+        self, items: list[OfficialHoliday]
+    ) -> ImportSummary:
+        imported = updated = skipped = 0
+        for item in items:
+            existing = next(
+                (
+                    h
+                    for h in self.holidays.values()
+                    if h.day == item.day and h.entity_id is None
+                ),
+                None,
+            )
+            if existing is None:
+                holiday_id = str(uuid.uuid4())
+                now = datetime.now(timezone.utc)
+                self.holidays[holiday_id] = Holiday(
+                    id=holiday_id,
+                    day=item.day,
+                    name=item.name,
+                    entity_id=None,
+                    entity_code=None,
+                    created_at=now,
+                    updated_at=now,
+                    source="oficial",
+                    scope=item.scope,
+                )
+                imported += 1
+            elif existing.source == "manual":
+                skipped += 1
+            else:
+                self.holidays[existing.id] = replace(
+                    existing,
+                    name=item.name,
+                    scope=item.scope,
+                    updated_at=datetime.now(timezone.utc),
+                )
+                updated += 1
+        return ImportSummary(imported=imported, updated=updated, skipped=skipped)

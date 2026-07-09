@@ -16,10 +16,21 @@ class HolidayDTO(BaseModel):
     entity_code: Optional[str]  # None == aplica a las 3 entidades
     created_at: datetime
     updated_at: datetime
+    source: str  # 'oficial' | 'manual'
+    scope: Optional[str]  # 'nacional' | 'autonomico' | 'local' | 'empresa' | None
 
 
 class HolidayListDTO(BaseModel):
     holidays: list[HolidayDTO]
+
+
+class HolidayImportResultDTO(BaseModel):
+    """Recuento de una importación de festivos oficiales."""
+
+    year: int
+    imported: int
+    updated: int
+    skipped: int
 
 
 class CreateHolidayDTO(BaseModel):

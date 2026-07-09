@@ -19,3 +19,28 @@ class Holiday:
     entity_code: Optional[str]
     created_at: datetime
     updated_at: datetime
+    # Fase 6 R2 (018): 'oficial' == importado de la API oficial; 'manual' ==
+    # añadido a mano por el admin. `scope` es informativo para la UI.
+    source: str = "manual"
+    scope: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class OfficialHoliday:
+    """Festivo oficial tal como lo entrega un proveedor externo (Nager.Date),
+    ya normalizado y filtrado a lo que aplica en Barcelona (nacional España o
+    autonómico Cataluña). Es un value object de entrada al import — no lleva
+    id ni entity_id porque los oficiales aplican a todas las entidades."""
+
+    day: date
+    name: str
+    scope: str  # 'nacional' | 'autonomico'
+
+
+@dataclass(frozen=True)
+class ImportSummary:
+    """Resultado de una importación de festivos oficiales."""
+
+    imported: int
+    updated: int
+    skipped: int

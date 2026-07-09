@@ -12,3 +12,9 @@ class HolidayAlreadyExistsError(AlreadyExistsError):
 
 class InvalidEntityCodeError(ValidationError):
     """El código de entidad no corresponde a `hub`/`lab`/`ops`."""
+
+
+class HolidayProviderError(ValidationError):
+    """El proveedor externo de festivos oficiales (Nager.Date) no respondió o
+    devolvió algo inesperado. La ruta lo traduce a un 502 — es un fallo de
+    dependencia externa, no del cliente."""

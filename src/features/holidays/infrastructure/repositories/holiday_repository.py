@@ -9,12 +9,12 @@ from typing import Optional
 
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
-from ...domain.entities import Holiday
+from ...domain.entities import Holiday, ImportSummary, OfficialHoliday
 from ...domain.ports import IHolidayRepository
 
 _SELECT = """
     SELECT h.id, h.day, h.name, h.entity_id, e.code AS entity_code,
-           h.created_at, h.updated_at
+           h.created_at, h.updated_at, h.source, h.scope
     FROM holidays h
     LEFT JOIN entities e ON e.id = h.entity_id
 """
@@ -29,6 +29,8 @@ def _row_to_holiday(row) -> Holiday:
         entity_code=row["entity_code"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        source=row["source"],
+        scope=row["scope"],
     )
 
 
@@ -110,3 +112,44 @@ class PostgresHolidayRepository(IHolidayRepository):
             "DELETE FROM holidays WHERE id = $1 RETURNING id", holiday_id
         )
         return found is not None
+
+    async def import_official_holidays(
+        self, items: list[OfficialHoliday]
+    ) -> ImportSummary:
+        # Los oficiales aplican a todas las entidades -> `entity_id IS NULL`.
+        # No se puede usar `ON CONFLICT (day, entity_id)` porque en Postgres
+        # los NULL cuentan como distintos (la UNIQUE no dispara con entity_id
+        # NULL), así que se resuelve fila a fila respetando los manuales.
+        imported = updated = skipped = 0
+        for item in items:
+            existing = await self._db.fetchrow(
+                "SELECT id, source FROM holidays WHERE day = $1 AND entity_id IS NULL",
+                item.day,
+            )
+            if existing is None:
+                await self._db.execute(
+                    """
+                    INSERT INTO holidays (day, name, entity_id, source, scope)
+                    VALUES ($1, $2, NULL, 'oficial', $3)
+                    """,
+                    item.day,
+                    item.name,
+                    item.scope,
+                )
+                imported += 1
+            elif existing["source"] == "manual":
+                # Un festivo manual en esa fecha manda — no lo pisamos.
+                skipped += 1
+            else:
+                await self._db.execute(
+                    """
+                    UPDATE holidays
+                    SET name = $2, scope = $3, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $1
+                    """,
+                    existing["id"],
+                    item.name,
+                    item.scope,
+                )
+                updated += 1
+        return ImportSummary(imported=imported, updated=updated, skipped=skipped)
