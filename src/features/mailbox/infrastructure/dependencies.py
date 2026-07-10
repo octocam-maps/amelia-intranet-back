@@ -1,5 +1,6 @@
 """Wiring de FastAPI: construye los casos de uso con sus adaptadores concretos."""
 
+from src.features.notifications.infrastructure.dependencies import get_notify_use_case
 from src.shared.database import get_database_pool
 
 from ..application.use_cases.list_mailbox_messages import ListMailboxMessagesUseCase
@@ -15,7 +16,7 @@ def _get_repository() -> PostgresMailboxRepository:
 
 
 def get_submit_anonymous_message_use_case() -> SubmitAnonymousMessageUseCase:
-    return SubmitAnonymousMessageUseCase(_get_repository())
+    return SubmitAnonymousMessageUseCase(_get_repository(), get_notify_use_case())
 
 
 def get_list_mailbox_messages_use_case() -> ListMailboxMessagesUseCase:
