@@ -69,7 +69,7 @@ class CreateAnnouncementUseCase:
                 _EXCLUDED_ROLE,
                 type="announcement_published",
                 title=f"Nuevo anuncio: {announcement.title}",
-                data={"announcement_id": announcement.id, "url": "/inicio"},
+                data={"announcement_id": announcement.id, "url": "/"},
             )
 
         return announcement

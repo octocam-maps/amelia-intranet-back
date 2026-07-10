@@ -92,7 +92,7 @@ class CreateAbsenceRequestUseCase:
             await self._notify.notify_admins(
                 type="absence_requested",
                 title="Nueva solicitud de ausencia",
-                data={"request_id": request.id, "url": "/administracion/ausencias"},
+                data={"request_id": request.id, "url": "/ausencias"},
             )
 
         return request
