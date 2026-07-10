@@ -139,6 +139,31 @@ class PostgresNotificationRepository(INotificationRepository):
         )
         return [str(row["id"]) for row in rows]
 
+    async def list_announcement_recipient_ids(
+        self, *, audience: str, entity_id: Optional[str], role_id: Optional[str]
+    ) -> list[str]:
+        # La exclusión de externo_invitado va SIEMPRE, sin importar la
+        # audiencia — si audience='role' apunta justo a ese rol, el AND la
+        # deja vacía en vez de colarlo por el filtro extra.
+        conditions = ["r.code != 'externo_invitado'", "u.status = 'active'", "u.deleted_at IS NULL"]
+        params: list[Any] = []
+        if audience == "entity":
+            params.append(entity_id)
+            conditions.append(f"u.entity_id = ${len(params)}")
+        elif audience == "role":
+            params.append(role_id)
+            conditions.append(f"u.role_id = ${len(params)}")
+
+        rows = await self._db.fetch(
+            f"""
+            SELECT u.id FROM users u
+            JOIN roles r ON r.id = u.role_id
+            WHERE {' AND '.join(conditions)}
+            """,
+            *params,
+        )
+        return [str(row["id"]) for row in rows]
+
     async def list_birthday_user_ids(self, *, month: int, day: int) -> list[tuple[str, str]]:
         rows = await self._db.fetch(
             """

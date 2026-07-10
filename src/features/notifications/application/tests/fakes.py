@@ -17,6 +17,11 @@ class FakeNotificationRepository:
         self.emails_by_user: dict[str, str] = {}
         self.admin_ids: list[str] = []
         self.active_user_ids_by_excluded_role: dict[str, list[str]] = {}
+        # Clave (audience, entity_id, role_id) -> destinatarios ya
+        # acotados — el filtrado real (SQL) se testea contra el pool
+        # mockeado en `infrastructure/tests/test_notification_repository.py`;
+        # aquí solo importa que `NotifyUseCase` reenvíe los parámetros.
+        self.announcement_recipients: dict[tuple[str, Optional[str], Optional[str]], list[str]] = {}
         self.birthday_users: list[tuple[str, str]] = []
         self.anniversary_users: list[tuple[str, int]] = []
         self.user_ids_with_open_entry: list[str] = []
@@ -77,6 +82,11 @@ class FakeNotificationRepository:
 
     async def list_active_user_ids_excluding_role(self, role_code: str) -> list[str]:
         return list(self.active_user_ids_by_excluded_role.get(role_code, []))
+
+    async def list_announcement_recipient_ids(
+        self, *, audience: str, entity_id: Optional[str], role_id: Optional[str]
+    ) -> list[str]:
+        return list(self.announcement_recipients.get((audience, entity_id, role_id), []))
 
     async def list_birthday_user_ids(self, *, month: int, day: int) -> list[tuple[str, str]]:
         return list(self.birthday_users)

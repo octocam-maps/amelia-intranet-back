@@ -94,3 +94,35 @@ async def test_notify_team_excluding_role_resolves_recipients_from_the_repositor
     )
 
     assert {n.user_id for n in notifications} == {"user-1", "user-2"}
+
+
+@pytest.mark.asyncio
+async def test_notify_announcement_resolves_recipients_scoped_to_the_audience():
+    repository = FakeNotificationRepository()
+    repository.announcement_recipients = {
+        ("entity", "entity-hub", None): ["user-hub-1", "user-hub-2"],
+    }
+    use_case = NotifyUseCase(repository, FakeEmailSender())
+
+    notifications = await use_case.notify_announcement(
+        audience="entity",
+        entity_id="entity-hub",
+        role_id=None,
+        type="announcement_published",
+        title="Nuevo anuncio",
+    )
+
+    assert {n.user_id for n in notifications} == {"user-hub-1", "user-hub-2"}
+
+
+@pytest.mark.asyncio
+async def test_notify_announcement_with_audience_all_ignores_entity_and_role():
+    repository = FakeNotificationRepository()
+    repository.announcement_recipients = {("all", None, None): ["user-1", "user-2", "user-3"]}
+    use_case = NotifyUseCase(repository, FakeEmailSender())
+
+    notifications = await use_case.notify_announcement(
+        audience="all", entity_id=None, role_id=None, type="announcement_published", title="Nuevo anuncio"
+    )
+
+    assert {n.user_id for n in notifications} == {"user-1", "user-2", "user-3"}

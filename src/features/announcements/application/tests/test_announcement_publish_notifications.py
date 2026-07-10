@@ -1,8 +1,10 @@
-"""Cableado del disparador `announcement_published` — fan-out a toda la
-plantilla activa salvo `externo_invitado` (docs/permisos-roles.md § Inicio:
-❌ para externo). `NotifyUseCase.notify_team_excluding_role` en sí ya tiene
-su propia suite en `features/notifications`; aquí solo se verifica que
-`Create`/`UpdateAnnouncementUseCase` la invocan en el momento correcto."""
+"""Cableado del disparador `announcement_published` — fan-out ACOTADO A LA
+MISMA AUDIENCIA que el anuncio (`all`/`entity`/`role`), excluyendo siempre
+`externo_invitado` (docs/permisos-roles.md § Inicio: ❌ para externo).
+`NotifyUseCase.notify_announcement` en sí ya tiene su propia suite en
+`features/notifications`; aquí solo se verifica que `Create`/
+`UpdateAnnouncementUseCase` la invocan con la audiencia correcta y en el
+momento correcto."""
 
 import pytest
 
@@ -18,14 +20,14 @@ from .fakes import FakeAnnouncementRepository
 
 class _RecordingNotify:
     def __init__(self):
-        self.team_calls: list[dict] = []
+        self.announcement_calls: list[dict] = []
 
-    async def notify_team_excluding_role(self, role_code, **kwargs):
-        self.team_calls.append({"role_code": role_code, **kwargs})
+    async def notify_announcement(self, **kwargs):
+        self.announcement_calls.append(kwargs)
 
 
 @pytest.mark.asyncio
-async def test_creating_a_published_announcement_notifies_the_team():
+async def test_creating_a_published_announcement_notifies_its_audience():
     repository = FakeAnnouncementRepository()
     notify = _RecordingNotify()
     use_case = CreateAnnouncementUseCase(repository, notify)
@@ -41,9 +43,36 @@ async def test_creating_a_published_announcement_notifies_the_team():
         published=True,
     )
 
-    assert len(notify.team_calls) == 1
-    assert notify.team_calls[0]["role_code"] == "externo_invitado"
-    assert notify.team_calls[0]["type"] == "announcement_published"
+    assert len(notify.announcement_calls) == 1
+    call = notify.announcement_calls[0]
+    assert call["audience"] == "all"
+    assert call["entity_id"] is None
+    assert call["role_id"] is None
+    assert call["type"] == "announcement_published"
+
+
+@pytest.mark.asyncio
+async def test_creating_an_entity_scoped_announcement_notifies_with_its_entity_id():
+    repository = FakeAnnouncementRepository()
+    notify = _RecordingNotify()
+    use_case = CreateAnnouncementUseCase(repository, notify)
+
+    await use_case.execute(
+        title="Solo Hub",
+        body="cuerpo",
+        author_id="admin-1",
+        audience="entity",
+        entity_code="hub",
+        role_code=None,
+        is_pinned=False,
+        published=True,
+    )
+
+    assert len(notify.announcement_calls) == 1
+    call = notify.announcement_calls[0]
+    assert call["audience"] == "entity"
+    assert call["entity_id"] == "entity-hub"
+    assert call["role_id"] is None
 
 
 @pytest.mark.asyncio
@@ -63,19 +92,19 @@ async def test_creating_a_draft_does_not_notify_anyone():
         published=False,
     )
 
-    assert notify.team_calls == []
+    assert notify.announcement_calls == []
 
 
 @pytest.mark.asyncio
-async def test_publishing_a_previous_draft_notifies_the_team():
+async def test_publishing_a_previous_draft_notifies_its_audience():
     repository = FakeAnnouncementRepository()
     draft = await CreateAnnouncementUseCase(repository).execute(
         title="Borrador",
         body="cuerpo",
         author_id="admin-1",
-        audience="all",
+        audience="role",
         entity_code=None,
-        role_code=None,
+        role_code="empleado",
         is_pinned=False,
         published=False,
     )
@@ -84,7 +113,11 @@ async def test_publishing_a_previous_draft_notifies_the_team():
 
     await use_case.execute(draft.id, published=True)
 
-    assert len(notify.team_calls) == 1
+    assert len(notify.announcement_calls) == 1
+    call = notify.announcement_calls[0]
+    assert call["audience"] == "role"
+    assert call["role_id"] == "role-empleado"
+    assert call["entity_id"] is None
 
 
 @pytest.mark.asyncio
@@ -105,4 +138,4 @@ async def test_editing_an_already_published_announcement_does_not_renotify():
 
     await use_case.execute(published.id, title="Título editado")
 
-    assert notify.team_calls == []
+    assert notify.announcement_calls == []

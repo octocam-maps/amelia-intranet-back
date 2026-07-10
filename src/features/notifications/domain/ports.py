@@ -49,9 +49,20 @@ class INotificationRepository(Protocol):
         ...
 
     async def list_active_user_ids_excluding_role(self, role_code: str) -> list[str]:
-        """Toda la plantilla activa salvo el rol indicado — usado por el
-        fan-out de anuncios (excluye `externo_invitado`, docs/permisos-
-        roles.md § Inicio: ❌ para externo)."""
+        """Toda la plantilla activa salvo el rol indicado. Hoy solo la usa
+        `notify_team_excluding_role`, que se mantiene como atajo genérico
+        por si otro disparador necesita ese mismo recorte."""
+        ...
+
+    async def list_announcement_recipient_ids(
+        self, *, audience: str, entity_id: Optional[str], role_id: Optional[str]
+    ) -> list[str]:
+        """Destinatarios del fan-out de `announcement_published`, ya
+        acotados a la MISMA audiencia que el anuncio (`all`/`entity`/`role`)
+        — plantilla activa y SIEMPRE excluyendo `externo_invitado`
+        (docs/permisos-roles.md § Inicio: ❌ para externo). Si
+        `audience='role'` apunta justo a ese rol excluido, la lista sale
+        vacía — es el comportamiento correcto, no un bug."""
         ...
 
     # --- Proyecciones para los jobs por-tiempo (batch) ---

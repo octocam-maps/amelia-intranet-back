@@ -10,8 +10,6 @@ from ...domain.entities import Announcement
 from ...domain.errors import AnnouncementNotFoundError, InvalidAudienceTargetError
 from ...domain.ports import IAnnouncementRepository
 
-_EXCLUDED_ROLE = "externo_invitado"  # docs/permisos-roles.md § Inicio: ❌ para externo
-
 
 class UpdateAnnouncementUseCase:
     def __init__(self, repository: IAnnouncementRepository, notify: Optional[NotifyUseCase] = None):
@@ -72,11 +70,15 @@ class UpdateAnnouncementUseCase:
 
         # Solo dispara en la TRANSICIÓN a publicado — si ya estaba publicado
         # y solo se edita el título/cuerpo, no se vuelve a notificar a toda
-        # la plantilla por un cambio menor.
+        # la plantilla por un cambio menor. La audiencia se toma del
+        # anuncio YA actualizado (`updated`), no de los parámetros crudos —
+        # si no llegó `audience` en este PATCH, sigue siendo la vigente.
         just_published = existing.published_at is None and updated.published_at is not None
         if self._notify is not None and just_published:
-            await self._notify.notify_team_excluding_role(
-                _EXCLUDED_ROLE,
+            await self._notify.notify_announcement(
+                audience=updated.audience,
+                entity_id=updated.entity_id,
+                role_id=updated.role_id,
                 type="announcement_published",
                 title=f"Nuevo anuncio: {updated.title}",
                 data={"announcement_id": updated.id, "url": "/"},

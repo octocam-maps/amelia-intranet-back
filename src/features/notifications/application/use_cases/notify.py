@@ -89,10 +89,33 @@ class NotifyUseCase:
         body: Optional[str] = None,
         data: Optional[dict[str, Any]] = None,
     ) -> list[Notification]:
-        """Atajo para el fan-out a toda la plantilla activa salvo un rol
-        (`announcement_published` excluye `externo_invitado`, docs/permisos-
-        roles.md § Inicio: ❌ para externo)."""
+        """Atajo genérico para el fan-out a toda la plantilla activa salvo
+        un rol. `announcements` ya no lo usa para su propio disparador (ver
+        `notify_announcement`, que acota por audiencia) — se mantiene por si
+        otro disparador necesita este mismo recorte a futuro."""
         recipient_ids = await self._repository.list_active_user_ids_excluding_role(role_code)
+        return await self.execute(
+            recipient_ids=recipient_ids, type=type, title=title, body=body, data=data
+        )
+
+    async def notify_announcement(
+        self,
+        *,
+        audience: str,
+        entity_id: Optional[str],
+        role_id: Optional[str],
+        type: str,
+        title: str,
+        body: Optional[str] = None,
+        data: Optional[dict[str, Any]] = None,
+    ) -> list[Notification]:
+        """Atajo para `announcement_published` — resuelve destinatarios
+        acotados a la MISMA audiencia que el anuncio (`all`/`entity`/`role`)
+        en vez de avisar a toda la plantilla. `externo_invitado` queda
+        excluido siempre (ver `list_announcement_recipient_ids`)."""
+        recipient_ids = await self._repository.list_announcement_recipient_ids(
+            audience=audience, entity_id=entity_id, role_id=role_id
+        )
         return await self.execute(
             recipient_ids=recipient_ids, type=type, title=title, body=body, data=data
         )

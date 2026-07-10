@@ -103,6 +103,72 @@ async def test_list_anniversary_users_excludes_year_zero():
 
 
 @pytest.mark.asyncio
+async def test_list_announcement_recipient_ids_with_audience_all_only_excludes_externo_invitado():
+    pool = AsyncMock()
+    pool.fetch.return_value = [{"id": "user-1"}, {"id": "user-2"}]
+    repository = PostgresNotificationRepository(pool)
+
+    users = await repository.list_announcement_recipient_ids(
+        audience="all", entity_id=None, role_id=None
+    )
+
+    assert users == ["user-1", "user-2"]
+    query, *params = pool.fetch.call_args[0]
+    assert "externo_invitado" in query
+    assert params == []
+
+
+@pytest.mark.asyncio
+async def test_list_announcement_recipient_ids_with_audience_entity_filters_by_entity_id():
+    pool = AsyncMock()
+    pool.fetch.return_value = [{"id": "user-hub-1"}]
+    repository = PostgresNotificationRepository(pool)
+
+    users = await repository.list_announcement_recipient_ids(
+        audience="entity", entity_id="entity-hub", role_id=None
+    )
+
+    assert users == ["user-hub-1"]
+    query, *params = pool.fetch.call_args[0]
+    assert "externo_invitado" in query
+    assert "u.entity_id = $1" in query
+    assert params == ["entity-hub"]
+
+
+@pytest.mark.asyncio
+async def test_list_announcement_recipient_ids_with_audience_role_filters_by_role_id():
+    pool = AsyncMock()
+    pool.fetch.return_value = [{"id": "user-manager-1"}]
+    repository = PostgresNotificationRepository(pool)
+
+    users = await repository.list_announcement_recipient_ids(
+        audience="role", entity_id=None, role_id="role-empleado"
+    )
+
+    assert users == ["user-manager-1"]
+    query, *params = pool.fetch.call_args[0]
+    assert "externo_invitado" in query
+    assert "u.role_id = $1" in query
+    assert params == ["role-empleado"]
+
+
+@pytest.mark.asyncio
+async def test_list_announcement_recipient_ids_never_returns_externo_invitado_even_targeted():
+    """Si `audience='role'` apunta justo a `externo_invitado`, el AND de
+    exclusión deja la consulta sin resultados — no es un bug, es la regla
+    de docs/permisos-roles.md § Inicio: ❌ para externo."""
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresNotificationRepository(pool)
+
+    users = await repository.list_announcement_recipient_ids(
+        audience="role", entity_id=None, role_id="role-externo_invitado"
+    )
+
+    assert users == []
+
+
+@pytest.mark.asyncio
 async def test_list_user_ids_with_open_entry_filters_by_work_date_and_open_clock_out():
     pool = AsyncMock()
     pool.fetch.return_value = [{"user_id": "user-1"}]
