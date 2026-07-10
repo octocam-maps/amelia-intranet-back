@@ -1,5 +1,6 @@
 """Wiring de FastAPI: construye los casos de uso con sus adaptadores concretos."""
 
+from src.features.notifications.infrastructure.dependencies import get_notify_use_case
 from src.shared.database import get_database_pool
 
 from ..application.use_cases.create_announcement import CreateAnnouncementUseCase
@@ -18,11 +19,11 @@ def get_list_announcements_use_case() -> ListAnnouncementsUseCase:
 
 
 def get_create_announcement_use_case() -> CreateAnnouncementUseCase:
-    return CreateAnnouncementUseCase(_get_repository())
+    return CreateAnnouncementUseCase(_get_repository(), get_notify_use_case())
 
 
 def get_update_announcement_use_case() -> UpdateAnnouncementUseCase:
-    return UpdateAnnouncementUseCase(_get_repository())
+    return UpdateAnnouncementUseCase(_get_repository(), get_notify_use_case())
 
 
 def get_delete_announcement_use_case() -> DeleteAnnouncementUseCase:

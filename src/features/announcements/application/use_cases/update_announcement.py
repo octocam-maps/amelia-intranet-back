@@ -4,14 +4,19 @@ llegan informados."""
 
 from typing import Optional
 
+from src.features.notifications.application.use_cases.notify import NotifyUseCase
+
 from ...domain.entities import Announcement
 from ...domain.errors import AnnouncementNotFoundError, InvalidAudienceTargetError
 from ...domain.ports import IAnnouncementRepository
 
+_EXCLUDED_ROLE = "externo_invitado"  # docs/permisos-roles.md § Inicio: ❌ para externo
+
 
 class UpdateAnnouncementUseCase:
-    def __init__(self, repository: IAnnouncementRepository):
+    def __init__(self, repository: IAnnouncementRepository, notify: Optional[NotifyUseCase] = None):
         self._repository = repository
+        self._notify = notify  # opcional — ver ReviewAbsenceRequestUseCase
 
     async def execute(
         self,
@@ -64,4 +69,17 @@ class UpdateAnnouncementUseCase:
         )
         if updated is None:
             raise AnnouncementNotFoundError("El anuncio no existe.")
+
+        # Solo dispara en la TRANSICIÓN a publicado — si ya estaba publicado
+        # y solo se edita el título/cuerpo, no se vuelve a notificar a toda
+        # la plantilla por un cambio menor.
+        just_published = existing.published_at is None and updated.published_at is not None
+        if self._notify is not None and just_published:
+            await self._notify.notify_team_excluding_role(
+                _EXCLUDED_ROLE,
+                type="announcement_published",
+                title=f"Nuevo anuncio: {updated.title}",
+                data={"announcement_id": updated.id, "url": "/inicio"},
+            )
+
         return updated

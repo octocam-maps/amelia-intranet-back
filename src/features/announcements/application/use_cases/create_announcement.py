@@ -5,14 +5,19 @@ no hay flujo de borrador separado todavía)."""
 from datetime import datetime, timezone
 from typing import Optional
 
+from src.features.notifications.application.use_cases.notify import NotifyUseCase
+
 from ...domain.entities import Announcement
 from ...domain.errors import InvalidAudienceTargetError
 from ...domain.ports import IAnnouncementRepository
 
+_EXCLUDED_ROLE = "externo_invitado"  # docs/permisos-roles.md § Inicio: ❌ para externo
+
 
 class CreateAnnouncementUseCase:
-    def __init__(self, repository: IAnnouncementRepository):
+    def __init__(self, repository: IAnnouncementRepository, notify: Optional[NotifyUseCase] = None):
         self._repository = repository
+        self._notify = notify  # opcional — ver ReviewAbsenceRequestUseCase
 
     async def execute(
         self,
@@ -44,7 +49,7 @@ class CreateAnnouncementUseCase:
             if role_id is None:
                 raise InvalidAudienceTargetError(f"El rol '{role_code}' no existe.")
 
-        return await self._repository.create(
+        announcement = await self._repository.create(
             title=title,
             body=body,
             author_id=author_id,
@@ -54,3 +59,17 @@ class CreateAnnouncementUseCase:
             is_pinned=is_pinned,
             published_at=datetime.now(timezone.utc) if published else None,
         )
+
+        # Fan-out a toda la plantilla activa salvo externo_invitado — el
+        # requerimiento no acota el aviso a la audiencia del anuncio
+        # (entity/role), así que se notifica igual aunque el anuncio en sí
+        # solo sea visible para un subconjunto en el feed.
+        if self._notify is not None and announcement.published_at is not None:
+            await self._notify.notify_team_excluding_role(
+                _EXCLUDED_ROLE,
+                type="announcement_published",
+                title=f"Nuevo anuncio: {announcement.title}",
+                data={"announcement_id": announcement.id, "url": "/inicio"},
+            )
+
+        return announcement
