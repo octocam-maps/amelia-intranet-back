@@ -6,6 +6,8 @@ admin, docs/permisos-roles.md § Ausencias). Solo actúa sobre solicitudes en
 
 from typing import Literal, Optional
 
+from src.features.notifications.application.use_cases.notify import NotifyUseCase
+
 from ...domain.entities import AbsenceRequest
 from ...domain.errors import (
     AbsenceRequestAlreadyReviewedError,
@@ -16,10 +18,20 @@ from ...domain.ports import IAbsenceRepository
 
 Decision = Literal["approved", "rejected"]
 
+_TYPE_BY_DECISION = {"approved": "absence_approved", "rejected": "absence_rejected"}
+_TITLE_BY_DECISION = {
+    "approved": "Tu solicitud de ausencia fue aprobada",
+    "rejected": "Tu solicitud de ausencia fue rechazada",
+}
+
 
 class ReviewAbsenceRequestUseCase:
-    def __init__(self, repository: IAbsenceRepository):
+    def __init__(self, repository: IAbsenceRepository, notify: Optional[NotifyUseCase] = None):
         self._repository = repository
+        # Opcional para no romper los tests existentes que no lo pasan — sin
+        # `notify` el caso de uso sigue funcionando, solo no dispara la
+        # notificación (docs/permisos-roles.md § Ausencias).
+        self._notify = notify
 
     async def execute(
         self,
@@ -64,6 +76,15 @@ class ReviewAbsenceRequestUseCase:
                 request.start_date.year,
                 used_delta=used_delta,
                 pending_delta=-request.days_count,
+            )
+
+        if self._notify is not None:
+            await self._notify.execute(
+                recipient_ids=[request.user_id],
+                type=_TYPE_BY_DECISION[decision],
+                title=_TITLE_BY_DECISION[decision],
+                body=note,
+                data={"request_id": request_id, "url": "/ausencias"},
             )
 
         return updated

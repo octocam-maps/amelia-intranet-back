@@ -1,5 +1,6 @@
 """Wiring de FastAPI: construye los casos de uso con sus adaptadores concretos."""
 
+from src.features.notifications.infrastructure.dependencies import get_notify_use_case
 from src.shared.database import get_database_pool
 
 from ..application.use_cases.create_absence_request import CreateAbsenceRequestUseCase
@@ -38,7 +39,7 @@ def get_absence_balance_use_case() -> GetAbsenceBalanceUseCase:
 
 
 def get_create_absence_request_use_case() -> CreateAbsenceRequestUseCase:
-    return CreateAbsenceRequestUseCase(_get_repository())
+    return CreateAbsenceRequestUseCase(_get_repository(), get_notify_use_case())
 
 
 def get_list_absence_requests_use_case() -> ListAbsenceRequestsUseCase:
@@ -46,4 +47,4 @@ def get_list_absence_requests_use_case() -> ListAbsenceRequestsUseCase:
 
 
 def get_review_absence_request_use_case() -> ReviewAbsenceRequestUseCase:
-    return ReviewAbsenceRequestUseCase(_get_repository())
+    return ReviewAbsenceRequestUseCase(_get_repository(), get_notify_use_case())
