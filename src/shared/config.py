@@ -58,6 +58,13 @@ class Settings:
         self.sendgrid_from_email = os.getenv("SENDGRID_FROM_EMAIL", "no-reply@ameliahub.com")
         self.frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
+        # Fase 6 (notificaciones): "mock" es el único proveedor implementado
+        # hoy — escribe en `email_log` sin ninguna llamada de red real (ver
+        # src/shared/email). "sendgrid" está deliberadamente SIN implementar:
+        # la API key de SendGrid es de RRHH y no se toca en esta fase
+        # (docs/requerimientos-amelia-intranet.pdf §6).
+        self.email_provider = os.getenv("EMAIL_PROVIDER", "mock")
+
         # Nager.Date (https://date.nager.at) — festivos oficiales de España
         # para la importación automática de Festivos (Fase 6, ronda 2).
         # Configurable para poder apuntar a un stub en tests/staging sin
