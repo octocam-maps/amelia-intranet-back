@@ -58,3 +58,55 @@ def test_dev_keeps_cookie_insecure_default(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "dev")
     monkeypatch.delenv("REFRESH_TOKEN_COOKIE_SECURE", raising=False)
     assert Settings().refresh_token_cookie_secure is False
+
+
+# --- SWAGGER_ENABLED: solo dev/test por defecto (bug real, auditoría QA) ---
+
+
+@pytest.mark.parametrize("env", ["dev", "test"])
+def test_dev_and_test_enable_swagger_by_default(monkeypatch, env):
+    monkeypatch.setenv("ENVIRONMENT", env)
+    monkeypatch.delenv("SWAGGER_ENABLED", raising=False)
+    assert Settings().swagger_enabled is True
+
+
+@pytest.mark.parametrize("env", ["prod", "stage"])
+def test_protected_env_disables_swagger_by_default(monkeypatch, env):
+    monkeypatch.setenv("ENVIRONMENT", env)
+    monkeypatch.setenv("JWT_SECRET_KEY", _STRONG_SECRET)
+    monkeypatch.setenv("REFRESH_TOKEN_COOKIE_SECURE", "true")
+    monkeypatch.delenv("SWAGGER_ENABLED", raising=False)
+    assert Settings().swagger_enabled is False
+
+
+def test_protected_env_allows_explicit_swagger_override(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+    monkeypatch.setenv("JWT_SECRET_KEY", _STRONG_SECRET)
+    monkeypatch.setenv("REFRESH_TOKEN_COOKIE_SECURE", "true")
+    monkeypatch.setenv("SWAGGER_ENABLED", "true")
+    assert Settings().swagger_enabled is True
+
+
+# --- CORS wildcard + credenciales: fail-fast en prod/stage ---
+
+
+def test_protected_env_rejects_cors_wildcard(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+    monkeypatch.setenv("JWT_SECRET_KEY", _STRONG_SECRET)
+    monkeypatch.setenv("CORS_ORIGINS", "*")
+    with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+        Settings()
+
+
+def test_protected_env_accepts_explicit_cors_origins(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+    monkeypatch.setenv("JWT_SECRET_KEY", _STRONG_SECRET)
+    monkeypatch.setenv("REFRESH_TOKEN_COOKIE_SECURE", "true")
+    monkeypatch.setenv("CORS_ORIGINS", "https://intranet.ameliahub.com")
+    Settings()  # no debe lanzar
+
+
+def test_dev_tolerates_cors_wildcard(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    monkeypatch.setenv("CORS_ORIGINS", "*")
+    Settings()  # no debe lanzar

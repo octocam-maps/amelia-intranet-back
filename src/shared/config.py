@@ -22,7 +22,16 @@ _MIN_JWT_SECRET_LENGTH = 32
 class Settings:
     def __init__(self) -> None:
         self.environment = os.getenv("ENVIRONMENT", "dev")
-        self.swagger_enabled = _is_truthy(os.getenv("SWAGGER_ENABLED", "true"))
+        # Swagger/Redoc/openapi.json exponen el contrato completo de la API
+        # (rutas, esquemas, hasta ejemplos) — cómodo en dev, pero un default
+        # `true` en cualquier entorno lo deja abierto también en prod/stage si
+        # nadie lo desactiva a mano (bug real, auditoría QA). Default: solo
+        # `dev`/`test` lo activan; el resto lo desactiva salvo override
+        # explícito con `SWAGGER_ENABLED=true`.
+        _default_swagger_enabled = self.environment in {"dev", "test"}
+        self.swagger_enabled = _is_truthy(
+            os.getenv("SWAGGER_ENABLED", str(_default_swagger_enabled))
+        )
 
         self.database_url = os.getenv(
             "DATABASE_URL", "postgresql://postgres:postgres@localhost:5436/postgres"
@@ -130,6 +139,18 @@ class Settings:
             problems.append(
                 "REFRESH_TOKEN_COOKIE_SECURE=false: la cookie de refresh "
                 "viajaría sin el flag Secure (interceptable sobre HTTP)."
+            )
+
+        # CORS con wildcard + credenciales (cookies) habilitadas es una
+        # combinación insegura: `allow_credentials=True` es fijo en este
+        # proyecto (ver `main.py`), así que un `CORS_ORIGINS=*` olvidado en
+        # el despliegue dejaría cualquier origen leer respuestas autenticadas
+        # con la cookie de refresh adjunta.
+        if "*" in self.cors_origins:
+            problems.append(
+                "CORS_ORIGINS incluye '*' junto con allow_credentials=True: "
+                "cualquier origen podría hacer peticiones autenticadas con "
+                "la cookie de refresh."
             )
 
         if problems:
