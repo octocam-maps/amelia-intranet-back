@@ -63,3 +63,74 @@ class AdminDashboardSummary(EmployeeDashboardSummary):
 
     pending_absence_requests: list[PendingAbsenceRequestSummary]
     employees_clocked_in_now: int
+
+
+# --- `GET /dashboard/admin/metrics` -----------------------------------------
+# Proyecciones de solo lectura para las tarjetas KPI + sparklines + radar de
+# asistencia del Home del administrador. Mismo principio que el resto de este
+# archivo: agregan `time_clock_entries`/`absence_requests`, nunca escriben.
+
+
+@dataclass(frozen=True)
+class AdminMetricsKPIs:
+    absent_today: int
+    pending_approvals: int
+    clocked_in_now: int
+    punctuality_pct: int
+
+
+@dataclass(frozen=True)
+class DailyTrendPoint:
+    """Punto crudo por día, tal como lo devuelve el repositorio. El cálculo
+    de puntualidad (%) es regla de negocio y vive en `application`, nunca en
+    `infrastructure` — aquí solo viajan los contadores base."""
+
+    day: date
+    absences: int
+    clocked_in: int
+    punctual_entries: int
+    total_entries: int
+
+
+@dataclass(frozen=True)
+class MetricsTrends:
+    absences: list[int]
+    clocked_in: list[int]
+    punctuality: list[int]
+
+
+@dataclass(frozen=True)
+class EmployeeAttendanceStats:
+    """Proyección cruda por empleado en el periodo, SOLO sobre tramos de
+    fichaje cerrados (`clock_out IS NOT NULL`) — un tramo abierto no tiene
+    hora de salida con la que calcular horas extra ni saldo. La
+    clasificación en `kind` (radar de asistencia) y los umbrales de
+    desviación son regla de negocio → capa de aplicación."""
+
+    user_id: str
+    full_name: str
+    avatar_url: Optional[str]
+    days_clocked: int
+    worked_minutes_total: int
+    avg_clock_in_minutes: float
+    """Promedio de la hora de entrada en minutos desde medianoche, hora de
+    Madrid (p.ej. 555.0 = 09:15)."""
+    avg_clock_out_minutes: float
+    """Idem para la hora de salida."""
+
+
+@dataclass(frozen=True)
+class AttendanceRadarItem:
+    user_id: str
+    full_name: str
+    avatar_url: Optional[str]
+    kind: str  # "late_in" | "overtime_out" | "on_time" | "negative_balance"
+    value_minutes: int
+    detail: str
+
+
+@dataclass(frozen=True)
+class AdminDashboardMetrics:
+    kpis: AdminMetricsKPIs
+    trends: MetricsTrends
+    attendance_radar: list[AttendanceRadarItem]
