@@ -204,3 +204,36 @@ class PostgresNotificationRepository(INotificationRepository):
             work_date,
         )
         return [str(row["user_id"]) for row in rows]
+
+    async def exists_recipient_notification_with_data(
+        self, *, user_id: str, type: str, data_key: str, data_value: str
+    ) -> bool:
+        result = await self._db.fetchval(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM notifications
+                WHERE user_id = $1 AND type = $2 AND data->>$3 = $4
+            )
+            """,
+            user_id,
+            type,
+            data_key,
+            data_value,
+        )
+        return bool(result)
+
+    async def exists_event_notification_with_data(
+        self, *, type: str, data_key: str, data_value: str
+    ) -> bool:
+        result = await self._db.fetchval(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM notifications
+                WHERE type = $1 AND data->>$2 = $3
+            )
+            """,
+            type,
+            data_key,
+            data_value,
+        )
+        return bool(result)

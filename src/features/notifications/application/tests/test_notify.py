@@ -97,6 +97,26 @@ async def test_notify_team_excluding_role_resolves_recipients_from_the_repositor
 
 
 @pytest.mark.asyncio
+async def test_notify_team_excluding_role_also_excludes_explicit_user_ids():
+    """El cumpleaños la usa para que el propio cumpleañero no reciba su
+    notificación en tercera persona."""
+    repository = FakeNotificationRepository()
+    repository.active_user_ids_by_excluded_role = {
+        "externo_invitado": ["user-1", "user-2", "user-3"]
+    }
+    use_case = NotifyUseCase(repository, FakeEmailSender())
+
+    notifications = await use_case.notify_team_excluding_role(
+        "externo_invitado",
+        type="birthday",
+        title="¡Hoy es el cumpleaños de Ana!",
+        exclude_user_ids=["user-1"],
+    )
+
+    assert {n.user_id for n in notifications} == {"user-2", "user-3"}
+
+
+@pytest.mark.asyncio
 async def test_notify_announcement_resolves_recipients_scoped_to_the_audience():
     repository = FakeNotificationRepository()
     repository.announcement_recipients = {

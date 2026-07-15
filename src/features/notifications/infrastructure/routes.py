@@ -13,10 +13,11 @@ endpoint protegido.
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from src.shared.auth.dependencies import require_role
 from src.shared.errors.base import ValidationError
+from src.shared.middleware import limiter
 
 from ..application.use_cases.get_unread_count import GetUnreadCountUseCase
 from ..application.use_cases.list_notifications import ListNotificationsUseCase
@@ -88,7 +89,9 @@ def create_notifications_router() -> APIRouter:
         await use_case.execute(notification_id=notification_id, user_id=current_user["sub"])
 
     @router.post("/jobs/run", response_model=RunNotificationJobResponseDTO)
+    @limiter.limit("5/minute")
     async def run_job(
+        request: Request,
         job: str = Query(..., pattern="^(daily|clock_out)$"),
         current_user: dict = Depends(require_role("administrador")),
         daily_use_case: RunDailyNotificationJobUseCase = Depends(
@@ -100,7 +103,12 @@ def create_notifications_router() -> APIRouter:
     ):
         """Ejecución a demanda de la detección por-tiempo — pensado para un
         cron de ops (`curl -X POST .../notifications/jobs/run?job=daily`),
-        no hay scheduler montado en este servicio."""
+        no hay scheduler montado en este servicio.
+
+        Rate-limited (mismo patrón que `/auth/login`, `/mailbox/messages`):
+        aunque es exclusivo del admin, dispara un fan-out de emails a toda
+        la plantilla — sin límite, una llamada repetida (a mano o por error
+        de automatización) multiplica ese coste (bug real, auditoría QA)."""
         if job == "daily":
             result = await daily_use_case.execute()
         elif job == "clock_out":

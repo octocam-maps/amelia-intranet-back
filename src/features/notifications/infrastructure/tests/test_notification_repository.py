@@ -179,3 +179,35 @@ async def test_list_user_ids_with_open_entry_filters_by_work_date_and_open_clock
     assert users == ["user-1"]
     query = pool.fetch.call_args[0][0]
     assert "clock_out IS NULL" in query
+
+
+@pytest.mark.asyncio
+async def test_exists_recipient_notification_with_data_queries_by_user_type_and_data_field():
+    pool = AsyncMock()
+    pool.fetchval.return_value = True
+    repository = PostgresNotificationRepository(pool)
+
+    exists = await repository.exists_recipient_notification_with_data(
+        user_id="user-1", type="clock_out_missing", data_key="work_date", data_value="2026-07-09"
+    )
+
+    assert exists is True
+    query, *params = pool.fetchval.call_args[0]
+    assert "data->>$3" in query
+    assert params == ["user-1", "clock_out_missing", "work_date", "2026-07-09"]
+
+
+@pytest.mark.asyncio
+async def test_exists_event_notification_with_data_does_not_filter_by_recipient():
+    pool = AsyncMock()
+    pool.fetchval.return_value = False
+    repository = PostgresNotificationRepository(pool)
+
+    exists = await repository.exists_event_notification_with_data(
+        type="birthday", data_key="user_id", data_value="user-1"
+    )
+
+    assert exists is False
+    query, *params = pool.fetchval.call_args[0]
+    assert "user_id = $1" not in query
+    assert params == ["birthday", "user_id", "user-1"]

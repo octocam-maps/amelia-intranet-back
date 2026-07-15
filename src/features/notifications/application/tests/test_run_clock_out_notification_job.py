@@ -37,3 +37,24 @@ async def test_clock_out_job_defaults_to_yesterday_when_no_date_is_given():
     from datetime import timedelta
 
     assert result["work_date"] == (date.today() - timedelta(days=1)).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_clock_out_job_does_not_duplicate_notifications_if_run_twice_for_the_same_work_date():
+    """Idempotencia (bug real, auditoría QA): reejecutar el job el mismo día
+    para el mismo `work_date` no debe duplicar el aviso ni reenviar el
+    email."""
+    repository = FakeNotificationRepository()
+    repository.user_ids_with_open_entry = ["user-1", "user-2"]
+    notify = NotifyUseCase(repository, FakeEmailSender())
+    use_case = RunClockOutNotificationJobUseCase(repository, notify)
+
+    first_run = await use_case.execute(work_date=date(2026, 7, 9))
+    second_run = await use_case.execute(work_date=date(2026, 7, 9))
+
+    assert first_run["users_notified"] == 2
+    assert second_run["users_notified"] == 0
+    clock_out_notifications = [
+        n for n in repository.notifications.values() if n.type == "clock_out_missing"
+    ]
+    assert len(clock_out_notifications) == 2
