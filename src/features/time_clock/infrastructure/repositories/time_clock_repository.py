@@ -11,7 +11,7 @@ import asyncpg
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
 from ...domain.entities import TimeClockBreak, TimeClockEntry
-from ...domain.errors import TimeClockOverlapError
+from ...domain.errors import TimeClockBreakAlreadyOpenError, TimeClockOverlapError
 from ...domain.ports import ITimeClockRepository
 
 _ENTRY_SELECT = """
@@ -177,21 +177,33 @@ class PostgresTimeClockRepository(ITimeClockRepository):
         return _row_to_entry(row) if row else None
 
     async def find_open_break_for_entry(self, entry_id: str) -> Optional[TimeClockBreak]:
+        # `ORDER BY break_start DESC`: si por cualquier motivo hubiera más de una
+        # pausa abierta, se recupera la más reciente de forma determinista (el
+        # índice único parcial de la migración 021 impide que eso ocurra, pero
+        # el orden explícito evita comportamiento no determinista igualmente).
         row = await self._db.fetchrow(
-            f"{_BREAK_SELECT} WHERE entry_id = $1 AND break_end IS NULL LIMIT 1", entry_id
+            f"{_BREAK_SELECT} WHERE entry_id = $1 AND break_end IS NULL "
+            "ORDER BY break_start DESC LIMIT 1",
+            entry_id,
         )
         return _row_to_break(row) if row else None
 
     async def create_break(self, entry_id: str, break_start: datetime) -> TimeClockBreak:
-        row = await self._db.fetchrow(
-            """
-            INSERT INTO time_clock_breaks (entry_id, break_start)
-            VALUES ($1, $2)
-            RETURNING id, entry_id, break_start, break_end
-            """,
-            entry_id,
-            break_start,
-        )
+        try:
+            row = await self._db.fetchrow(
+                """
+                INSERT INTO time_clock_breaks (entry_id, break_start)
+                VALUES ($1, $2)
+                RETURNING id, entry_id, break_start, break_end
+                """,
+                entry_id,
+                break_start,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            # Backstop del índice único parcial (migración 021): dos "Pausa"
+            # concurrentes sobre el mismo tramo — el check-then-act del use case
+            # no basta bajo carrera; la BD garantiza una sola pausa abierta.
+            raise TimeClockBreakAlreadyOpenError("Ya tienes una pausa en curso.") from exc
         return _row_to_break(row)
 
     async def close_break(self, break_id: str, break_end: datetime) -> TimeClockBreak:

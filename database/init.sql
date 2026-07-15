@@ -245,6 +245,10 @@ CREATE TABLE IF NOT EXISTS time_clock_breaks (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_time_clock_breaks_entry_id ON time_clock_breaks(entry_id);
+-- Backstop anti-concurrencia (migración 021): una sola pausa abierta por tramo.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_time_clock_break_one_open_per_entry
+    ON time_clock_breaks (entry_id)
+    WHERE break_end IS NULL;
 
 -- Tipos de ausencia (configurable). default_entitled_days [010];
 -- requires_approval / requires_justification / max_days_per_year [019].
