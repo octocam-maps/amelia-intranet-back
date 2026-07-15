@@ -16,7 +16,11 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from main import app  # noqa: E402
-from src.features.team.domain.entities import TeamMember, VacationCalendarEntry  # noqa: E402
+from src.features.team.domain.entities import (  # noqa: E402
+    TeamBirthday,
+    TeamMember,
+    VacationCalendarEntry,
+)
 from src.features.team.infrastructure import dependencies as team_dependencies  # noqa: E402
 from src.shared.jwt import get_jwt_service  # noqa: E402
 
@@ -135,5 +139,82 @@ def test_vacation_calendar_rejects_malformed_month():
 def test_unauthenticated_request_is_rejected():
     with TestClient(app) as client:
         response = client.get("/team/directory")
+
+    assert response.status_code == 401
+
+
+class _FakeBirthdaysUseCase:
+    async def execute(self, *, days: int = 7):
+        return [
+            TeamBirthday(
+                user_id="user-1",
+                full_name="Ana García",
+                avatar_url=None,
+                birth_date=date(1990, 7, 15),
+                day=15,
+                month=7,
+                is_today=True,
+            )
+        ]
+
+
+@pytest.mark.parametrize("role", _ROLES)
+def test_any_authenticated_role_can_read_birthdays(role):
+    app.dependency_overrides[team_dependencies.get_upcoming_birthdays_use_case] = (
+        lambda: _FakeBirthdaysUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/team/birthdays", headers={"Authorization": f"Bearer {_token_for(role)}"}
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "birthdays": [
+            {
+                "user_id": "user-1",
+                "full_name": "Ana García",
+                "avatar_url": None,
+                "birth_date": "1990-07-15",
+                "day": 15,
+                "month": 7,
+                "is_today": True,
+            }
+        ]
+    }
+
+
+def test_birthdays_rejects_non_numeric_days():
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/team/birthdays?days=abc",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+
+
+def test_birthdays_rejects_out_of_range_days():
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/team/birthdays?days=0",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+
+
+def test_birthdays_unauthenticated_request_is_rejected():
+    with TestClient(app) as client:
+        response = client.get("/team/birthdays")
 
     assert response.status_code == 401

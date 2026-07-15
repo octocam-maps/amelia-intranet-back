@@ -109,3 +109,135 @@ async def test_list_approved_vacations_resolves_last_day_of_february_leap_year()
 
     args = pool.fetch.call_args[0][1:]
     assert args[2] == date(2028, 2, 29)
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_birthdays_filters_by_internal_not_deleted_not_suspended():
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresTeamRepository(pool)
+
+    await repository.list_upcoming_birthdays(today=date(2026, 7, 15), days=7)
+
+    query = pool.fetch.call_args[0][0]
+    assert "u.is_external = FALSE" in query
+    assert "u.status != 'suspended'" in query
+    assert "u.deleted_at IS NULL" in query
+    assert "p.birth_date IS NOT NULL" in query
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_birthdays_never_projects_sensitive_columns():
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresTeamRepository(pool)
+
+    await repository.list_upcoming_birthdays(today=date(2026, 7, 15), days=7)
+
+    query = pool.fetch.call_args[0][0]
+    for column in ("dni_nif", "iban", "address", "social_security_number"):
+        assert column not in query
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_birthdays_candidates_cover_window_without_year_wrap():
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresTeamRepository(pool)
+
+    await repository.list_upcoming_birthdays(today=date(2026, 7, 15), days=7)
+
+    candidates = pool.fetch.call_args[0][1]
+    assert candidates == ["07-15", "07-16", "07-17", "07-18", "07-19", "07-20", "07-21"]
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_birthdays_candidates_wrap_across_year_boundary():
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresTeamRepository(pool)
+
+    await repository.list_upcoming_birthdays(today=date(2026, 12, 29), days=7)
+
+    candidates = pool.fetch.call_args[0][1]
+    assert candidates == [
+        "12-29",
+        "12-30",
+        "12-31",
+        "01-01",
+        "01-02",
+        "01-03",
+        "01-04",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_birthdays_marks_todays_birthday_and_maps_fields():
+    pool = AsyncMock()
+    pool.fetch.return_value = [
+        {
+            "id": "user-1",
+            "full_name": "Ana García",
+            "avatar_url": None,
+            "birth_date": date(1990, 7, 15),
+        }
+    ]
+    repository = PostgresTeamRepository(pool)
+
+    entries = await repository.list_upcoming_birthdays(today=date(2026, 7, 15), days=7)
+
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.user_id == "user-1"
+    assert entry.full_name == "Ana García"
+    assert entry.day == 15
+    assert entry.month == 7
+    assert entry.birth_date == date(1990, 7, 15)
+    assert entry.is_today is True
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_birthdays_orders_by_proximity_today_first():
+    pool = AsyncMock()
+    pool.fetch.return_value = [
+        {
+            "id": "user-2",
+            "full_name": "Bruno Ruiz",
+            "avatar_url": None,
+            "birth_date": date(1985, 7, 20),
+        },
+        {
+            "id": "user-1",
+            "full_name": "Ana García",
+            "avatar_url": None,
+            "birth_date": date(1990, 7, 15),
+        },
+    ]
+    repository = PostgresTeamRepository(pool)
+
+    entries = await repository.list_upcoming_birthdays(today=date(2026, 7, 15), days=7)
+
+    assert [entry.full_name for entry in entries] == ["Ana García", "Bruno Ruiz"]
+    assert entries[0].is_today is True
+    assert entries[1].is_today is False
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_birthdays_across_year_wrap_marks_january_match():
+    pool = AsyncMock()
+    pool.fetch.return_value = [
+        {
+            "id": "user-1",
+            "full_name": "Carla Ibáñez",
+            "avatar_url": None,
+            "birth_date": date(1992, 1, 2),
+        }
+    ]
+    repository = PostgresTeamRepository(pool)
+
+    entries = await repository.list_upcoming_birthdays(today=date(2026, 12, 29), days=7)
+
+    assert len(entries) == 1
+    assert entries[0].month == 1
+    assert entries[0].day == 2
+    assert entries[0].is_today is False

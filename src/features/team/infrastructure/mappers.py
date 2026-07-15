@@ -1,5 +1,7 @@
-from ..domain.entities import TeamMember, VacationCalendarEntry
+from ..domain.entities import TeamBirthday, TeamMember, VacationCalendarEntry
 from .schemas import (
+    TeamBirthdayDTO,
+    TeamBirthdaysDTO,
     TeamDirectoryDTO,
     TeamMemberDTO,
     VacationCalendarDTO,
@@ -35,3 +37,19 @@ def calendar_entry_to_dto(entry: VacationCalendarEntry) -> VacationCalendarEntry
 
 def vacation_calendar_to_dto(entries: list[VacationCalendarEntry]) -> VacationCalendarDTO:
     return VacationCalendarDTO(entries=[calendar_entry_to_dto(e) for e in entries])
+
+
+def birthday_to_dto(birthday: TeamBirthday) -> TeamBirthdayDTO:
+    return TeamBirthdayDTO(
+        user_id=birthday.user_id,
+        full_name=birthday.full_name,
+        avatar_url=birthday.avatar_url,
+        birth_date=birthday.birth_date,
+        day=birthday.day,
+        month=birthday.month,
+        is_today=birthday.is_today,
+    )
+
+
+def birthdays_to_dto(birthdays: list[TeamBirthday]) -> TeamBirthdaysDTO:
+    return TeamBirthdaysDTO(birthdays=[birthday_to_dto(b) for b in birthdays])

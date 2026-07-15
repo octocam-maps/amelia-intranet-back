@@ -2,6 +2,7 @@
 
 from src.shared.database import get_database_pool
 
+from ..application.use_cases.get_upcoming_birthdays import GetUpcomingBirthdaysUseCase
 from ..application.use_cases.get_vacation_calendar import GetVacationCalendarUseCase
 from ..application.use_cases.list_team_directory import ListTeamDirectoryUseCase
 from .repositories.team_repository import PostgresTeamRepository
@@ -17,3 +18,7 @@ def get_list_team_directory_use_case() -> ListTeamDirectoryUseCase:
 
 def get_vacation_calendar_use_case() -> GetVacationCalendarUseCase:
     return GetVacationCalendarUseCase(_get_repository())
+
+
+def get_upcoming_birthdays_use_case() -> GetUpcomingBirthdaysUseCase:
+    return GetUpcomingBirthdaysUseCase(_get_repository())
