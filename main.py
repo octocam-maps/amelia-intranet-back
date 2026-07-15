@@ -21,6 +21,7 @@ from src.features.dashboard.infrastructure.routes import create_dashboard_router
 from src.features.holidays.infrastructure.routes import create_holidays_router
 from src.features.mailbox.infrastructure.routes import create_mailbox_router
 from src.features.notifications.infrastructure.routes import create_notifications_router
+from src.features.onboarding.infrastructure.routes import create_onboarding_router
 from src.features.staff.infrastructure.routes import create_staff_router
 from src.features.team.infrastructure.routes import create_team_router
 from src.features.time_clock.infrastructure.routes import create_time_clock_router
@@ -53,7 +54,9 @@ async def lifespan(app: FastAPI):
         await db_pool.initialize()
         logger.info("Database connected successfully")
     except Exception as e:
-        logger.error("Database connection failed", error_type=type(e).__name__, error=str(e))
+        logger.error(
+            "Database connection failed", error_type=type(e).__name__, error=str(e)
+        )
         logger.warning("Server will start without database. Auth endpoints will fail.")
 
     logger.info("Application startup complete", routes=len(app.routes))
@@ -112,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(create_holidays_router())
     app.include_router(create_notifications_router())
     app.include_router(create_team_router())
+    app.include_router(create_onboarding_router())
     logger.info(
         "Routers registered",
         routers=[
@@ -125,12 +129,17 @@ def create_app() -> FastAPI:
             "holidays",
             "notifications",
             "team",
+            "onboarding",
         ],
     )
 
     @app.get("/", include_in_schema=False)
     def read_root():
-        return {"service": "amelia-intranet-back", "version": "0.1.0", "environment": settings.environment}
+        return {
+            "service": "amelia-intranet-back",
+            "version": "0.1.0",
+            "environment": settings.environment,
+        }
 
     @app.get("/health", include_in_schema=False)
     def health_check():

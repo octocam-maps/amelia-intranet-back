@@ -27,6 +27,7 @@ una migración nueva.
 | `017_holidays_updated_at.sql` | `holidays.updated_at` (aditiva) — necesario para el CRUD admin de festivos (Fase 6, ronda 2) |
 | `018_holidays_source_scope.sql` | `holidays.source` (`oficial`/`manual`) + `scope` (aditivas) — importación automática de festivos oficiales desde Nager.Date sin pisar los añadidos a mano (Fase 6, ronda 2) |
 | `019_absence_types_policy_fields.sql` | `absence_types.requires_approval`/`requires_justification`/`max_days_per_year` (aditivas) — políticas configurables por tipo desde el form de gestión (Fase 6, ronda 2) |
+| `020_onboarding_steps_seed.sql` | Seed de Fase 2 (onboarding): los 5 `onboarding_steps` (vídeo, cuestionario "El Hincator", firma, manual, perfil) + los 2 `onboarding_documents` placeholder (firma/manual). |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero
