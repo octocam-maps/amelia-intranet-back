@@ -7,8 +7,16 @@ chequeo de "paso operable" en cada caso de uso.
 from datetime import datetime
 from typing import Optional
 
-from .entities import OnboardingProgress, OnboardingStep
+from typing import Any
+
+from .entities import (
+    EmployeeOnboardingSnapshot,
+    EmployeeOnboardingSummary,
+    OnboardingProgress,
+    OnboardingStep,
+)
 from .errors import (
+    InvalidStepConfigError,
     InvalidVideoProgressError,
     StepLockedError,
     StepNotAvailableForRoleError,
@@ -116,3 +124,119 @@ def ensure_video_progress_matches_elapsed_time(
             "El progreso reportado va por delante del tiempo real de "
             "reproducción — el vídeo no se puede saltar."
         )
+
+
+def validate_step_config(step_type: str, config: dict[str, Any]) -> None:
+    """Valida coherencia mínima del `config` (JSONB) que el admin edita vía
+    `PATCH /onboarding/admin/steps/{id}` — data-driven por `type`, así que
+    no hay columna/constraint de BD que lo garantice; se valida aquí antes
+    de persistir. Los tipos sin shape obligatorio (`signature`, `manual`,
+    `profile`) no se validan: su `config` hoy no se usa para nada crítico."""
+    if step_type == "quiz":
+        _validate_quiz_config(config)
+    elif step_type == "video":
+        _validate_video_config(config)
+
+
+def _validate_quiz_config(config: dict[str, Any]) -> None:
+    questions = config.get("questions")
+    if not isinstance(questions, list) or not questions:
+        raise InvalidStepConfigError(
+            "El cuestionario necesita al menos una pregunta en `questions`."
+        )
+
+    for question in questions:
+        if not isinstance(question, dict):
+            raise InvalidStepConfigError("Cada pregunta debe ser un objeto.")
+
+        missing = [
+            key for key in ("id", "text", "options", "correct") if key not in question
+        ]
+        if missing:
+            raise InvalidStepConfigError(
+                f"Falta el campo {', '.join(missing)} en una pregunta del cuestionario."
+            )
+
+        options = question["options"]
+        if not isinstance(options, list) or not options:
+            raise InvalidStepConfigError(
+                "Cada pregunta necesita al menos una opción en `options`."
+            )
+        if question["correct"] not in options:
+            raise InvalidStepConfigError(
+                "La respuesta correcta (`correct`) debe ser una de las `options`."
+            )
+
+    threshold = config.get("threshold")
+    if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+        raise InvalidStepConfigError(
+            "El cuestionario necesita un `threshold` numérico entre 0 y 1."
+        )
+    if not (0 <= threshold <= 1):
+        raise InvalidStepConfigError("El `threshold` debe estar entre 0 y 1.")
+
+
+def _validate_video_config(config: dict[str, Any]) -> None:
+    url = config.get("url")
+    if not isinstance(url, str) or not url:
+        raise InvalidStepConfigError("El vídeo necesita una `url` no vacía.")
+
+    duration = config.get("duration")
+    if (
+        not isinstance(duration, (int, float))
+        or isinstance(duration, bool)
+        or duration <= 0
+    ):
+        raise InvalidStepConfigError(
+            "El vídeo necesita una `duration` numérica positiva (segundos)."
+        )
+
+
+# Estados de progreso que cuentan como "todavía sin empezar" a efectos del
+# panel de admin — sin filas de progreso (nunca inicializado) o con todas
+# sus filas en `locked` (inicializado pero sin tocar ningún paso).
+_NOT_STARTED_STATUSES = frozenset({"locked"})
+_OPERABLE_STATUSES = frozenset({"available", "in_progress"})
+
+
+def summarize_employee_onboarding(
+    snapshot: EmployeeOnboardingSnapshot, *, total_steps: int
+) -> EmployeeOnboardingSummary:
+    """Resume el progreso de un empleado para `GET /onboarding/admin/progress`
+    — pura lógica de negocio sobre las filas ya unidas por el repositorio
+    (`domain` no toca SQL). `total_steps` viene de
+    `steps_applicable_to_role` sobre el catálogo — así el externo-invitado
+    (onboarding parcial) no aparece eternamente `in_progress` por comparar
+    contra los 5 pasos completos."""
+    completed_steps = sum(1 for s in snapshot.steps if s.status == "completed")
+
+    not_started = not snapshot.steps or all(
+        s.status in _NOT_STARTED_STATUSES for s in snapshot.steps
+    )
+
+    if not_started:
+        status = "not_started"
+    elif completed_steps >= total_steps:
+        status = "completed"
+    else:
+        status = "in_progress"
+
+    current_step = next(
+        (
+            s
+            for s in sorted(snapshot.steps, key=lambda s: s.step_order)
+            if s.status in _OPERABLE_STATUSES
+        ),
+        None,
+    )
+
+    return EmployeeOnboardingSummary(
+        user_id=snapshot.user_id,
+        full_name=snapshot.full_name,
+        email=snapshot.email,
+        avatar_url=snapshot.avatar_url,
+        status=status,
+        completed_steps=completed_steps,
+        total_steps=total_steps,
+        current_step_title=current_step.title if current_step else None,
+    )

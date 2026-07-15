@@ -9,10 +9,12 @@ from typing import Any, Optional
 from src.features.onboarding.domain.entities import (
     DocumentAcknowledgement,
     DocumentSignature,
+    EmployeeOnboardingSnapshot,
     OnboardingDocument,
     OnboardingProgress,
     OnboardingStep,
     QuizAttempt,
+    StepProgressSnapshot,
 )
 from src.features.onboarding.domain.errors import QuizAlreadyAttemptedError
 
@@ -22,6 +24,7 @@ class FakeOnboardingRepository:
         self,
         steps: Optional[list[OnboardingStep]] = None,
         documents: Optional[list[OnboardingDocument]] = None,
+        users: Optional[dict[str, dict]] = None,
     ):
         self.steps: dict[str, OnboardingStep] = {s.id: s for s in (steps or [])}
         self.documents: dict[str, OnboardingDocument] = {
@@ -31,14 +34,30 @@ class FakeOnboardingRepository:
         self.quiz_attempts: dict[tuple[str, str], QuizAttempt] = {}
         self.signatures: list[DocumentSignature] = []
         self.acknowledgements: list[DocumentAcknowledgement] = []
+        # user_id -> {full_name, email, avatar_url, role} — solo lo que
+        # necesita `list_employee_progress_snapshots` (panel de admin).
+        self.users: dict[str, dict] = users or {}
 
     async def list_active_steps(self) -> list[OnboardingStep]:
         return sorted(
             (s for s in self.steps.values() if s.is_active), key=lambda s: s.step_order
         )
 
+    async def list_all_steps(self) -> list[OnboardingStep]:
+        return sorted(self.steps.values(), key=lambda s: s.step_order)
+
     async def find_step_by_id(self, step_id: str) -> Optional[OnboardingStep]:
         return self.steps.get(step_id)
+
+    async def update_step(
+        self, step_id: str, *, title: str, is_active: bool, config: dict[str, Any]
+    ) -> Optional[OnboardingStep]:
+        current = self.steps.get(step_id)
+        if current is None:
+            return None
+        updated = replace(current, title=title, is_active=is_active, config=config)
+        self.steps[step_id] = updated
+        return updated
 
     async def list_progress_for_user(self, user_id: str) -> list[OnboardingProgress]:
         return [p for (uid, _), p in self.progress.items() if uid == user_id]
@@ -203,3 +222,51 @@ class FakeOnboardingRepository:
         )
         self.acknowledgements.append(acknowledgement)
         return acknowledgement
+
+    async def list_employee_progress_snapshots(self) -> list[EmployeeOnboardingSnapshot]:
+        snapshots = []
+        for user_id, info in self.users.items():
+            steps = sorted(
+                (
+                    StepProgressSnapshot(
+                        step_order=self.steps[step_id].step_order,
+                        title=self.steps[step_id].title,
+                        status=progress.status,
+                    )
+                    for (uid, step_id), progress in self.progress.items()
+                    if uid == user_id
+                ),
+                key=lambda s: s.step_order,
+            )
+            snapshots.append(
+                EmployeeOnboardingSnapshot(
+                    user_id=user_id,
+                    full_name=info["full_name"],
+                    email=info["email"],
+                    avatar_url=info.get("avatar_url"),
+                    role=info["role"],
+                    steps=steps,
+                )
+            )
+        return snapshots
+
+    async def reset_quiz_attempt(
+        self, user_id: str, step_id: str
+    ) -> Optional[OnboardingProgress]:
+        self.quiz_attempts.pop((user_id, step_id), None)
+
+        key = (user_id, step_id)
+        current = self.progress.get(key)
+        if current is None:
+            return None
+
+        updated = replace(
+            current,
+            status="available",
+            progress_pct=0,
+            data={},
+            started_at=None,
+            completed_at=None,
+        )
+        self.progress[key] = updated
+        return updated

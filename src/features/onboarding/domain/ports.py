@@ -10,6 +10,7 @@ from typing import Any, Optional, Protocol
 from .entities import (
     DocumentAcknowledgement,
     DocumentSignature,
+    EmployeeOnboardingSnapshot,
     OnboardingDocument,
     OnboardingProgress,
     OnboardingStep,
@@ -22,7 +23,24 @@ class IOnboardingRepository(Protocol):
         """Catálogo completo (los 5 pasos), ordenado por `step_order`."""
         ...
 
+    async def list_all_steps(self) -> list[OnboardingStep]:
+        """Catálogo COMPLETO sin filtrar por `is_active` — a diferencia de
+        `list_active_steps`, el admin (Fase 5) necesita ver también los
+        pasos desactivados para poder reactivarlos."""
+        ...
+
     async def find_step_by_id(self, step_id: str) -> Optional[OnboardingStep]: ...
+
+    async def update_step(
+        self, step_id: str, *, title: str, is_active: bool, config: dict[str, Any]
+    ) -> Optional[OnboardingStep]:
+        """UPDATE atómico del paso — el use case ya resolvió los valores
+        finales (merge de lo enviado con lo existente) antes de llamar
+        aquí, así que los tres campos son obligatorios y no hay ambigüedad
+        de "no tocar" vs. "poner NULL" en el `config` JSONB. `None` si el
+        `step_id` no existe (carrera con un borrado, no debería pasar hoy
+        porque no hay DELETE de pasos)."""
+        ...
 
     async def list_progress_for_user(
         self, user_id: str
@@ -110,3 +128,23 @@ class IOnboardingRepository(Protocol):
     async def create_acknowledgement(
         self, *, user_id: str, document_id: str, ip_address: Optional[str]
     ) -> DocumentAcknowledgement: ...
+
+    async def list_employee_progress_snapshots(self) -> list[EmployeeOnboardingSnapshot]:
+        """Una fila por usuario interno/externo-invitado (no borrado),
+        con SUS filas de progreso ya unidas a su paso (`LEFT JOIN` —
+        `steps=[]` si el usuario nunca inicializó su progreso). El cálculo
+        de `status`/`current_step_title` es lógica de dominio pura
+        (`summarize_employee_onboarding`), no vive aquí."""
+        ...
+
+    async def reset_quiz_attempt(
+        self, user_id: str, step_id: str
+    ) -> Optional[OnboardingProgress]:
+        """Override de admin: borra el intento de cuestionario de este
+        usuario (`onboarding_quiz_attempts`) y reabre su progreso en este
+        paso (`available`, `progress_pct=0`, `completed_at=NULL`) en UNA
+        transacción — el intento único (`UNIQUE(user_id, step_id)`) solo
+        se puede reabrir borrando la fila que lo bloquea. `None` si el
+        usuario no tenía progreso inicializado en este paso (nada que
+        reabrir)."""
+        ...

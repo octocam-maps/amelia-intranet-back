@@ -96,3 +96,44 @@ class DocumentAcknowledgement:
     document_id: str
     acknowledged_at: datetime
     ip_address: Optional[str]
+
+
+@dataclass(frozen=True)
+class StepProgressSnapshot:
+    """Progreso de UN usuario en UN paso, tal como lo necesita el panel de
+    administración (Fase 5): solo lo mínimo para calcular `status` y
+    `current_step_title` sin volver a tocar la BD — ver
+    `summarize_employee_onboarding` en `domain/policy.py`."""
+
+    step_order: int
+    title: str
+    status: str  # locked | available | in_progress | completed
+
+
+@dataclass(frozen=True)
+class EmployeeOnboardingSnapshot:
+    """Un empleado (o externo-invitado) con SUS filas de progreso ya unidas
+    a su paso — puede venir con `steps=[]` si todavía no visitó `GET
+    /onboarding/me` ni una vez (no inicializado)."""
+
+    user_id: str
+    full_name: str
+    email: str
+    avatar_url: Optional[str]
+    role: str
+    steps: list[StepProgressSnapshot]
+
+
+@dataclass(frozen=True)
+class EmployeeOnboardingSummary:
+    """Fila lista para `GET /onboarding/admin/progress` — ya resuelta por
+    `summarize_employee_onboarding` (domain, sin SQL)."""
+
+    user_id: str
+    full_name: str
+    email: str
+    avatar_url: Optional[str]
+    status: str  # not_started | in_progress | completed
+    completed_steps: int
+    total_steps: int
+    current_step_title: Optional[str]

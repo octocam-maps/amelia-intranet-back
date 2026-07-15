@@ -48,3 +48,15 @@ class QuizAlreadyAttemptedError(ValidationError):
     """Ya existe un intento de este cuestionario para este usuario — un
     único intento, garantizado por `UNIQUE(user_id, step_id)` en
     `onboarding_quiz_attempts`."""
+
+
+class InvalidStepConfigError(ValidationError):
+    """El `config` (JSONB) enviado por el admin no es coherente con el
+    `type` del paso — p.ej. un quiz sin `questions`/`threshold`, o una
+    pregunta sin `correct` entre sus `options`. Se valida en el backend
+    porque `config` es data-driven (JSONB, no tipado por columna)."""
+
+
+class OnboardingProgressNotFoundError(NotFoundError):
+    """El usuario no tiene una fila de progreso inicializada para este
+    paso (nunca llamó a `GET /onboarding/me`) — no hay nada que reabrir."""

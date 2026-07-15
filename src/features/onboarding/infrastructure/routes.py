@@ -17,37 +17,58 @@ from src.shared.utils.client_ip import get_client_ip
 from ..application.use_cases.acknowledge_manual import AcknowledgeManualUseCase
 from ..application.use_cases.complete_profile import CompleteProfileUseCase
 from ..application.use_cases.get_my_onboarding import GetMyOnboardingUseCase
+from ..application.use_cases.get_onboarding_progress_overview import (
+    GetOnboardingProgressOverviewUseCase,
+)
+from ..application.use_cases.list_onboarding_steps_admin import (
+    ListOnboardingStepsForAdminUseCase,
+)
+from ..application.use_cases.reset_quiz_attempt import ResetQuizAttemptUseCase
 from ..application.use_cases.sign_document import SignDocumentUseCase
 from ..application.use_cases.submit_quiz import SubmitQuizUseCase
+from ..application.use_cases.update_onboarding_step import UpdateOnboardingStepUseCase
 from ..application.use_cases.update_video_progress import UpdateVideoProgressUseCase
 from .dependencies import (
     get_acknowledge_manual_use_case,
     get_complete_profile_use_case,
+    get_list_onboarding_steps_admin_use_case,
     get_my_onboarding_use_case,
+    get_onboarding_progress_overview_use_case,
+    get_reset_quiz_attempt_use_case,
     get_sign_document_use_case,
     get_submit_quiz_use_case,
+    get_update_onboarding_step_use_case,
     get_update_video_progress_use_case,
 )
 from .mappers import (
     acknowledgement_to_dto,
+    progress_overview_to_dto,
     progress_to_dto,
     quiz_attempt_to_dto,
     signature_to_dto,
+    step_to_admin_dto,
+    steps_to_admin_dto,
     steps_with_progress_to_dto,
 )
 from .schemas import (
     AcknowledgementDTO,
+    AdminStepDTO,
+    AdminStepListDTO,
     CompleteProfileRequestDTO,
     OnboardingMeDTO,
     OnboardingProgressDTO,
+    OnboardingProgressOverviewDTO,
     QuizResultDTO,
     QuizSubmitRequestDTO,
+    ResetQuizRequestDTO,
     SignatureDTO,
+    UpdateOnboardingStepRequestDTO,
     VideoProgressRequestDTO,
 )
 
 _ALL_ROLES = ("administrador", "empleado", "externo_invitado")
 _INTERNAL_ONLY = ("administrador", "empleado")
+_ADMIN_ONLY = ("administrador",)
 
 
 def create_onboarding_router() -> APIRouter:
@@ -156,6 +177,63 @@ def create_onboarding_router() -> APIRouter:
             step_id=step_id,
             data=dto.model_dump(exclude_none=True),
         )
+        return progress_to_dto(progress)
+
+    @router.get("/admin/steps", response_model=AdminStepListDTO)
+    async def list_onboarding_steps_admin(
+        current_user: dict = Depends(require_role(*_ADMIN_ONLY)),
+        use_case: ListOnboardingStepsForAdminUseCase = Depends(
+            get_list_onboarding_steps_admin_use_case
+        ),
+    ):
+        """Catálogo completo (activos e inactivos), config SIN enmascarar —
+        el admin edita la respuesta correcta del quiz."""
+        steps = await use_case.execute()
+        return steps_to_admin_dto(steps)
+
+    @router.patch("/admin/steps/{step_id}", response_model=AdminStepDTO)
+    async def update_onboarding_step_admin(
+        step_id: str,
+        dto: UpdateOnboardingStepRequestDTO,
+        current_user: dict = Depends(require_role(*_ADMIN_ONLY)),
+        use_case: UpdateOnboardingStepUseCase = Depends(
+            get_update_onboarding_step_use_case
+        ),
+    ):
+        """Edición parcial — `config`, si se envía, reemplaza el JSONB
+        entero y se valida contra el `type` del paso (quiz/video)."""
+        step = await use_case.execute(
+            step_id=step_id,
+            title=dto.title,
+            is_active=dto.is_active,
+            config=dto.config,
+        )
+        return step_to_admin_dto(step)
+
+    @router.get("/admin/progress", response_model=OnboardingProgressOverviewDTO)
+    async def get_onboarding_progress_overview(
+        current_user: dict = Depends(require_role(*_ADMIN_ONLY)),
+        use_case: GetOnboardingProgressOverviewUseCase = Depends(
+            get_onboarding_progress_overview_use_case
+        ),
+    ):
+        """Progreso de onboarding de toda la plantilla — una fila por
+        usuario aunque no tenga progreso inicializado."""
+        summaries = await use_case.execute()
+        return progress_overview_to_dto(summaries)
+
+    @router.post(
+        "/admin/steps/{step_id}/reset-quiz", response_model=OnboardingProgressDTO
+    )
+    async def reset_quiz_attempt_admin(
+        step_id: str,
+        dto: ResetQuizRequestDTO,
+        current_user: dict = Depends(require_role(*_ADMIN_ONLY)),
+        use_case: ResetQuizAttemptUseCase = Depends(get_reset_quiz_attempt_use_case),
+    ):
+        """Override de admin: reabre el intento único de cuestionario de un
+        usuario que quedó bloqueado tras suspender."""
+        progress = await use_case.execute(step_id=step_id, user_id=dto.user_id)
         return progress_to_dto(progress)
 
     return router
