@@ -1,0 +1,46 @@
+"""Router de `/team`: directorio y calendario de vacaciones. Visible para
+los 3 roles (docs/permisos-roles.md § Equipo) — solo lectura."""
+
+from fastapi import APIRouter, Depends, Query
+
+from src.shared.auth.dependencies import require_role
+
+from ..application.use_cases.get_vacation_calendar import GetVacationCalendarUseCase
+from ..application.use_cases.list_team_directory import ListTeamDirectoryUseCase
+from .dependencies import get_list_team_directory_use_case, get_vacation_calendar_use_case
+from .mappers import directory_to_dto, vacation_calendar_to_dto
+from .schemas import TeamDirectoryDTO, VacationCalendarDTO
+
+_ALL_ROLES = ("administrador", "empleado", "externo_invitado")
+
+
+def create_team_router() -> APIRouter:
+    router = APIRouter(prefix="/team", tags=["team"])
+
+    @router.get("/directory", response_model=TeamDirectoryDTO)
+    async def get_directory(
+        current_user: dict = Depends(require_role(*_ALL_ROLES)),
+        use_case: ListTeamDirectoryUseCase = Depends(get_list_team_directory_use_case),
+    ):
+        """Directorio de la plantilla — campos seguros de cara al RGPD,
+        nunca datos sensibles de `user_profiles` (dni_nif/iban/etc.)."""
+        members = await use_case.execute()
+        return directory_to_dto(members)
+
+    @router.get("/vacation-calendar", response_model=VacationCalendarDTO)
+    async def get_vacation_calendar(
+        month: str = Query(
+            ...,
+            pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
+            description="Mes en formato YYYY-MM",
+        ),
+        current_user: dict = Depends(require_role(*_ALL_ROLES)),
+        use_case: GetVacationCalendarUseCase = Depends(get_vacation_calendar_use_case),
+    ):
+        """Solo vacaciones ya APROBADAS del equipo — nunca solicitudes
+        pendientes/rechazadas ni otros tipos de ausencia."""
+        year, month_number = (int(part) for part in month.split("-"))
+        entries = await use_case.execute(year=year, month=month_number)
+        return vacation_calendar_to_dto(entries)
+
+    return router
