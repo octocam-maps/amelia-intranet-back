@@ -17,7 +17,6 @@ async def test_returns_birthdays_from_repository():
             user_id="user-1",
             full_name="Ana García",
             avatar_url=None,
-            birth_date=date(1990, 7, 15),
             day=15,
             month=7,
             is_today=True,

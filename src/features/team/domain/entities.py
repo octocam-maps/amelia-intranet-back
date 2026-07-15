@@ -30,18 +30,15 @@ class TeamMember:
 @dataclass(frozen=True)
 class TeamBirthday:
     """Cumpleaños de un empleado interno dentro de la ventana consultada
-    (widget "Cumpleaños esta semana" del Inicio). A diferencia de
-    `TeamMember`, este endpoint SÍ proyecta `birth_date` porque es su
-    propio propósito (docs/brief-diseno.md C0) — pero el consumo real
-    (frontend) solo usa `day`/`month`; se incluye `birth_date` completo
-    por contrato explícito de producto. Solo plantilla interna
-    (`is_external = FALSE`): los externos-invitado no forman parte de
-    este widget."""
+    (widget "Cumpleaños esta semana" del Inicio). Por RGPD NUNCA expone el
+    año de nacimiento (no debe poder derivarse la edad de nadie desde este
+    endpoint): solo `day`/`month`, sin `birth_date` completo. Solo plantilla
+    interna (`is_external = FALSE`): los externos-invitado no forman parte
+    de este widget."""
 
     user_id: str
     full_name: str
     avatar_url: Optional[str]
-    birth_date: date
     day: int
     month: int
     is_today: bool

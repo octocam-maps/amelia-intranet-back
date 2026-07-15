@@ -150,7 +150,6 @@ class _FakeBirthdaysUseCase:
                 user_id="user-1",
                 full_name="Ana García",
                 avatar_url=None,
-                birth_date=date(1990, 7, 15),
                 day=15,
                 month=7,
                 is_today=True,
@@ -172,19 +171,20 @@ def test_any_authenticated_role_can_read_birthdays(role):
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    assert body == {
         "birthdays": [
             {
                 "user_id": "user-1",
                 "full_name": "Ana García",
                 "avatar_url": None,
-                "birth_date": "1990-07-15",
                 "day": 15,
                 "month": 7,
                 "is_today": True,
             }
         ]
     }
+    assert "birth_date" not in body["birthdays"][0]
 
 
 def test_birthdays_rejects_non_numeric_days():

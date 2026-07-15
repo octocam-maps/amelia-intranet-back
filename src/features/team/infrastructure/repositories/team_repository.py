@@ -104,7 +104,6 @@ class PostgresTeamRepository(ITeamRepository):
                 user_id=str(row["id"]),
                 full_name=row["full_name"],
                 avatar_url=row["avatar_url"],
-                birth_date=row["birth_date"],
                 day=row["birth_date"].day,
                 month=row["birth_date"].month,
                 is_today=offset_by_key[f"{row['birth_date'].month:02d}-{row['birth_date'].day:02d}"] == 0,

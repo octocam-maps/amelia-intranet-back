@@ -44,7 +44,6 @@ def birthday_to_dto(birthday: TeamBirthday) -> TeamBirthdayDTO:
         user_id=birthday.user_id,
         full_name=birthday.full_name,
         avatar_url=birthday.avatar_url,
-        birth_date=birthday.birth_date,
         day=birthday.day,
         month=birthday.month,
         is_today=birthday.is_today,

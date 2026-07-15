@@ -192,7 +192,7 @@ async def test_list_upcoming_birthdays_marks_todays_birthday_and_maps_fields():
     assert entry.full_name == "Ana García"
     assert entry.day == 15
     assert entry.month == 7
-    assert entry.birth_date == date(1990, 7, 15)
+    assert not hasattr(entry, "birth_date")
     assert entry.is_today is True
 
 

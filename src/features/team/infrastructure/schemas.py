@@ -36,7 +36,6 @@ class TeamBirthdayDTO(BaseModel):
     user_id: str
     full_name: str
     avatar_url: Optional[str] = None
-    birth_date: date
     day: int
     month: int
     is_today: bool
