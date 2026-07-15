@@ -41,7 +41,11 @@ async def test_find_profile_by_user_id_maps_all_joined_fields():
 
     query, *args = pool.fetchrow.call_args[0]
     assert "WHERE u.id = $1 AND u.deleted_at IS NULL" in query
-    assert "LEFT JOIN users m ON m.id = u.manager_id" in query
+    # Bug real (auditoría QA): el JOIN con el manager debe excluir a los
+    # dados de baja EN LA CONDICIÓN DEL JOIN, no solo en el WHERE del
+    # usuario principal — si no, un manager soft-eliminado seguía
+    # apareciendo como `manager_name`.
+    assert "LEFT JOIN users m ON m.id = u.manager_id AND m.deleted_at IS NULL" in query
     assert args == ["user-1"]
 
     assert profile is not None

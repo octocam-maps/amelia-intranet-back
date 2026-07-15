@@ -205,3 +205,15 @@ class FakeAbsenceRepository:
 
     async def list_holiday_dates(self, date_from: date, date_to: date) -> list[date]:
         return [d for d in self.holidays if date_from <= d <= date_to]
+
+    async def list_overlapping_requests(
+        self, user_id: str, *, start_date: date, end_date: date
+    ) -> list[AbsenceRequest]:
+        return [
+            r
+            for r in self.requests.values()
+            if r.user_id == user_id
+            and r.status in ("pending", "approved")
+            and r.start_date <= end_date
+            and r.end_date >= start_date
+        ]

@@ -11,7 +11,11 @@ import asyncpg
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
 from ...domain.entities import TimeClockBreak, TimeClockEntry
-from ...domain.errors import TimeClockBreakAlreadyOpenError, TimeClockOverlapError
+from ...domain.errors import (
+    TimeClockAlreadyClockedInError,
+    TimeClockBreakAlreadyOpenError,
+    TimeClockOverlapError,
+)
 from ...domain.ports import ITimeClockRepository
 
 _ENTRY_SELECT = """
@@ -76,6 +80,17 @@ class PostgresTimeClockRepository(ITimeClockRepository):
                 source,
             )
         except asyncpg.exceptions.ExclusionViolationError as e:
+            if clock_out is None:
+                # Rama de FICHAJE EN VIVO (botón play del dashboard): bajo
+                # carrera, un segundo clock-in choca con el mismo EXCLUDE que
+                # protege el alta manual de tramos, pero el mensaje correcto
+                # aquí NO es "se solapa" — es "ya tienes un fichaje en
+                # curso", el mismo que da el check-then-act del use case en
+                # el camino feliz (bug real, auditoría QA: bajo carrera el
+                # 2º clock-in mostraba el mensaje de solape en vez de este).
+                raise TimeClockAlreadyClockedInError(
+                    "Ya tienes un fichaje en curso — ficha salida antes de volver a entrar."
+                ) from e
             raise TimeClockOverlapError(
                 "Ese tramo se solapa con otro fichaje ya registrado ese día."
             ) from e

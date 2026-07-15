@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -60,3 +61,23 @@ async def test_logout_with_undecodable_token_does_not_raise():
     use_case = LogoutUseCase(FakeSessionRepository(), RaisingJWTService())
 
     await use_case.execute("garbage-token")
+
+
+@pytest.mark.asyncio
+async def test_logout_with_undecodable_token_logs_the_failure_at_debug_level():
+    """Bug real (auditoría QA): el fallo quedaba en silencio total — ni
+    siquiera un log para investigar un cliente mandando tokens corruptos de
+    forma sistemática. Mismo patrón que `AuthMiddleware` (`error_type`)."""
+
+    class RaisingJWTService(FakeJWTService):
+        def verify_token(self, token: str) -> dict:
+            raise ValueError("token expirado o corrupto")
+
+    use_case = LogoutUseCase(FakeSessionRepository(), RaisingJWTService())
+
+    with patch("src.features.auth.application.use_cases.logout.logger") as mock_logger:
+        await use_case.execute("garbage-token")
+
+    mock_logger.debug.assert_called_once()
+    _, kwargs = mock_logger.debug.call_args
+    assert kwargs["error_type"] == "ValueError"

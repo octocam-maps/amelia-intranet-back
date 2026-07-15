@@ -122,3 +122,23 @@ async def test_list_requests_for_user_leaves_user_full_name_none():
     requests = await repository.list_requests_for_user("user-1")
 
     assert requests[0].user_full_name is None
+
+
+@pytest.mark.asyncio
+async def test_list_overlapping_requests_filters_by_user_status_and_date_range():
+    """Anti-solape (bug real, auditoría QA): solo `pending`/`approved` del
+    mismo usuario, con el solape estándar de rangos en la propia query."""
+    pool = AsyncMock()
+    pool.fetch.return_value = [_row()]
+    repository = PostgresAbsenceRepository(pool)
+
+    requests = await repository.list_overlapping_requests(
+        "user-1", start_date=date(2026, 7, 22), end_date=date(2026, 7, 26)
+    )
+
+    assert requests[0].id == "req-1"
+    query, *params = pool.fetch.call_args[0]
+    assert "status IN ('pending', 'approved')" in query
+    assert "start_date <= $3" in query
+    assert "end_date >= $2" in query
+    assert params == ["user-1", date(2026, 7, 22), date(2026, 7, 26)]

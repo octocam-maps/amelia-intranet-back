@@ -24,7 +24,11 @@ _PROFILE_SELECT = """
     JOIN roles r ON r.id = u.role_id
     LEFT JOIN entities e ON e.id = u.entity_id
     LEFT JOIN departments d ON d.id = u.department_id
-    LEFT JOIN users m ON m.id = u.manager_id
+    -- `m.deleted_at IS NULL` en el propio JOIN (no en el WHERE, que ya
+    -- filtra `u.deleted_at`): sin esto, un manager dado de baja seguía
+    -- apareciendo como `manager_name` del perfil de su antiguo reporte
+    -- (bug real, auditoría QA).
+    LEFT JOIN users m ON m.id = u.manager_id AND m.deleted_at IS NULL
     WHERE u.id = $1 AND u.deleted_at IS NULL
 """
 

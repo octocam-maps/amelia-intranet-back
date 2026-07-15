@@ -367,3 +367,24 @@ class PostgresAbsenceRepository(IAbsenceRepository):
             "SELECT day FROM holidays WHERE day BETWEEN $1 AND $2", date_from, date_to
         )
         return [row["day"] for row in rows]
+
+    async def list_overlapping_requests(
+        self, user_id: str, *, start_date: date, end_date: date
+    ) -> list[AbsenceRequest]:
+        # Anti-solape (bug real, auditoría QA): solape estándar de rangos —
+        # [start_date, end_date] se pisa con [ar.start_date, ar.end_date] si
+        # ar.start_date <= end_date AND ar.end_date >= start_date. Solo
+        # `pending`/`approved` — una solicitud `rejected` no bloquea nada.
+        rows = await self._db.fetch(
+            """
+            SELECT * FROM absence_requests
+            WHERE user_id = $1
+              AND status IN ('pending', 'approved')
+              AND start_date <= $3
+              AND end_date >= $2
+            """,
+            user_id,
+            start_date,
+            end_date,
+        )
+        return [_row_to_request(row) for row in rows]

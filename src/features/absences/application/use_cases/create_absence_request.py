@@ -26,6 +26,7 @@ from src.features.notifications.application.use_cases.notify import NotifyUseCas
 
 from ...domain.entities import AbsenceRequest
 from ...domain.errors import (
+    AbsenceRequestOverlapError,
     AbsenceTypeNotFoundError,
     InsufficientBalanceError,
     InvalidDateRangeError,
@@ -49,6 +50,22 @@ class CreateAbsenceRequestUseCase:
     ) -> AbsenceRequest:
         if end_date < start_date:
             raise InvalidDateRangeError("La fecha de fin no puede ser anterior a la de inicio.")
+
+        # Anti-solape (bug real, auditoría QA): sin esto, nada impedía crear
+        # dos solicitudes `pending`/`approved` del mismo usuario para fechas
+        # que se pisan. Granularidad DEFAULT: se bloquea el solape contra
+        # CUALQUIER tipo de ausencia del usuario, no solo el mismo
+        # `absence_type_id` — pendiente de confirmar con RRHH si dos tipos
+        # distintos (p.ej. "vacaciones" y "asuntos propios") deberían poder
+        # coexistir el mismo día (ver `AbsenceRequestOverlapError`).
+        overlapping = await self._repository.list_overlapping_requests(
+            user_id, start_date=start_date, end_date=end_date
+        )
+        if overlapping:
+            raise AbsenceRequestOverlapError(
+                "Ya tienes una solicitud de ausencia pendiente o aprobada "
+                "que solapa con estas fechas."
+            )
 
         absence_type = await self._repository.find_type_by_id(absence_type_id)
         if absence_type is None:

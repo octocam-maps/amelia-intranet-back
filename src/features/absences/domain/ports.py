@@ -140,3 +140,15 @@ class IAbsenceRepository(Protocol):
         que el admin la configure (Fase 5) — no bloquea el cálculo de días
         laborables, simplemente no excluye nada todavía."""
         ...
+
+    async def list_overlapping_requests(
+        self, user_id: str, *, start_date: date, end_date: date
+    ) -> list[AbsenceRequest]:
+        """Solicitudes `pending`/`approved` del MISMO usuario cuyo rango
+        [`start_date`, `end_date`] solapa con el rango dado — anti-solape en
+        `CreateAbsenceRequestUseCase` (bug real, auditoría QA: sin esto, un
+        usuario podía tener dos solicitudes de vacaciones para las mismas
+        fechas). No filtra por `absence_type_id` — ver
+        `AbsenceRequestOverlapError` para la granularidad pendiente de
+        confirmar con RRHH."""
+        ...
