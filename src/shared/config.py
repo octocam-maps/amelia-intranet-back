@@ -53,8 +53,14 @@ class Settings:
         # ver SOFT-2170). `/auth` cubre `/auth/refresh` y `/auth/logout`
         # sin exponer la cookie a rutas fuera de auth.
         self.refresh_token_cookie_path = os.getenv("REFRESH_TOKEN_COOKIE_PATH", "/auth")
+        # Secure por defecto en entornos protegidos (HTTPS); en dev se permite
+        # HTTP local. Un override explícito a `false` en prod/stage lo rechaza
+        # el guardia de `_enforce_secure_defaults`.
+        _default_cookie_secure = (
+            "true" if self.environment in _SECURE_ENVIRONMENTS else "false"
+        )
         self.refresh_token_cookie_secure = _is_truthy(
-            os.getenv("REFRESH_TOKEN_COOKIE_SECURE", "false")
+            os.getenv("REFRESH_TOKEN_COOKIE_SECURE", _default_cookie_secure)
         )
 
         self.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -115,6 +121,15 @@ class Settings:
                 "JWT_SECRET_KEY sin configurar o demasiado corto "
                 f"(mínimo {_MIN_JWT_SECRET_LENGTH} caracteres aleatorios). "
                 "Con el valor por defecto se pueden forjar tokens."
+            )
+
+        # La cookie del refresh token (credencial de 7 días) debe viajar solo
+        # por HTTPS. El default ya es Secure aquí, pero un override explícito a
+        # false reintroduce el riesgo de interceptación en un downgrade a HTTP.
+        if not self.refresh_token_cookie_secure:
+            problems.append(
+                "REFRESH_TOKEN_COOKIE_SECURE=false: la cookie de refresh "
+                "viajaría sin el flag Secure (interceptable sobre HTTP)."
             )
 
         if problems:

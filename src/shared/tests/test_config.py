@@ -35,4 +35,26 @@ def test_protected_env_rejects_short_jwt_secret(monkeypatch):
 def test_protected_env_accepts_strong_jwt_secret(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "prod")
     monkeypatch.setenv("JWT_SECRET_KEY", _STRONG_SECRET)
+    monkeypatch.delenv("REFRESH_TOKEN_COOKIE_SECURE", raising=False)
     Settings()  # no debe lanzar
+
+
+def test_protected_env_defaults_cookie_secure_true(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+    monkeypatch.setenv("JWT_SECRET_KEY", _STRONG_SECRET)
+    monkeypatch.delenv("REFRESH_TOKEN_COOKIE_SECURE", raising=False)
+    assert Settings().refresh_token_cookie_secure is True
+
+
+def test_protected_env_rejects_explicit_insecure_cookie(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+    monkeypatch.setenv("JWT_SECRET_KEY", _STRONG_SECRET)
+    monkeypatch.setenv("REFRESH_TOKEN_COOKIE_SECURE", "false")
+    with pytest.raises(RuntimeError, match="REFRESH_TOKEN_COOKIE_SECURE"):
+        Settings()
+
+
+def test_dev_keeps_cookie_insecure_default(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    monkeypatch.delenv("REFRESH_TOKEN_COOKIE_SECURE", raising=False)
+    assert Settings().refresh_token_cookie_secure is False
