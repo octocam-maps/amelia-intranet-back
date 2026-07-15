@@ -6,7 +6,11 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from src.features.time_clock.domain.entities import TimeClockBreak, TimeClockEntry
+from src.features.time_clock.domain.entities import (
+    TimeClockBreak,
+    TimeClockEntry,
+    TimeClockExportRow,
+)
 
 
 @dataclass
@@ -17,9 +21,18 @@ class FakeTimeClockRepository:
         self,
         entries: Optional[list[TimeClockEntry]] = None,
         breaks: Optional[list[TimeClockBreak]] = None,
+        full_names: Optional[dict[str, str]] = None,
+        dni_by_user: Optional[dict[str, str]] = None,
+        phone_by_user: Optional[dict[str, str]] = None,
     ):
         self.entries = {e.id: e for e in (entries or [])}
         self.breaks: dict[str, TimeClockBreak] = {b.id: b for b in (breaks or [])}
+        # Identidad/contacto para `list_export_rows_for_all` — el fake no
+        # tiene una tabla `users`/`user_profiles` real, así que se pasan por
+        # fuera solo cuando un test necesita el informe XLSX.
+        self.full_names: dict[str, str] = full_names or {}
+        self.dni_by_user: dict[str, str] = dni_by_user or {}
+        self.phone_by_user: dict[str, str] = phone_by_user or {}
 
     async def create_entry(self, *, user_id, work_date, clock_in, clock_out, source) -> TimeClockEntry:
         entry_id = str(uuid.uuid4())
@@ -51,6 +64,23 @@ class FakeTimeClockRepository:
 
     async def list_entries_for_all(self, *, date_from: date, date_to: date) -> list[TimeClockEntry]:
         return [e for e in self.entries.values() if date_from <= e.work_date <= date_to]
+
+    async def list_export_rows_for_all(
+        self, *, date_from: date, date_to: date
+    ) -> list[TimeClockExportRow]:
+        return [
+            TimeClockExportRow(
+                user_id=e.user_id,
+                full_name=self.full_names.get(e.user_id, "Sin Nombre"),
+                dni_nif=self.dni_by_user.get(e.user_id),
+                phone=self.phone_by_user.get(e.user_id),
+                work_date=e.work_date,
+                clock_in=e.clock_in,
+                clock_out=e.clock_out,
+            )
+            for e in self.entries.values()
+            if date_from <= e.work_date <= date_to
+        ]
 
     async def find_overlapping_entry(
         self, user_id, work_date, clock_in, clock_out, *, exclude_entry_id=None

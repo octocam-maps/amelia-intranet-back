@@ -72,6 +72,46 @@ def test_externo_invitado_cannot_read_current_clock_status():
     assert response.status_code == 403
 
 
+def test_employee_cannot_export_time_clock_entries_xlsx():
+    """Solo el admin genera el informe XLSX (require_role("administrador"),
+    no "empleado") — es un listado de TODA la plantilla, no solo lo propio."""
+    response = None
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/time-clock/entries/export.xlsx",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_admin_can_export_time_clock_entries_xlsx():
+    class FakeExportUseCase:
+        async def execute(self, **kwargs):
+            return []
+
+    app.dependency_overrides[time_clock_dependencies.get_export_time_clock_entries_use_case] = (
+        lambda: FakeExportUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/time-clock/entries/export.xlsx",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+            assert response.status_code == 200
+            assert response.headers["content-type"] == (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            assert "attachment; filename=" in response.headers["content-disposition"]
+            assert ".xlsx" in response.headers["content-disposition"]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_employee_can_read_current_clock_status():
     from datetime import datetime, timezone
 

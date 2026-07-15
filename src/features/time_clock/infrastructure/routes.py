@@ -16,6 +16,7 @@ from ..application.use_cases.clock_out import ClockOutUseCase
 from ..application.use_cases.create_time_clock_entry import CreateTimeClockEntryUseCase
 from ..application.use_cases.delete_time_clock_entry import DeleteTimeClockEntryUseCase
 from ..application.use_cases.end_break import EndBreakUseCase
+from ..application.use_cases.export_time_clock_entries import ExportTimeClockEntriesUseCase
 from ..application.use_cases.get_live_status import GetLiveStatusUseCase
 from ..application.use_cases.list_time_clock_entries import ListTimeClockEntriesUseCase
 from ..application.use_cases.start_break import StartBreakUseCase
@@ -26,6 +27,7 @@ from .dependencies import (
     get_create_time_clock_entry_use_case,
     get_delete_time_clock_entry_use_case,
     get_end_break_use_case,
+    get_export_time_clock_entries_use_case,
     get_list_time_clock_entries_use_case,
     get_live_status_use_case,
     get_start_break_use_case,
@@ -39,6 +41,7 @@ from .schemas import (
     TimeClockEntryListDTO,
     UpdateTimeClockEntryDTO,
 )
+from .xlsx_export import build_time_clock_export_workbook
 
 _DEFAULT_WINDOW_DAYS = 30
 
@@ -127,6 +130,28 @@ def create_time_clock_router() -> APIRouter:
             iter([buffer.getvalue()]),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=fichaje.csv"},
+        )
+
+    @router.get("/entries/export.xlsx")
+    async def export_entries_xlsx(
+        current_user: dict = Depends(require_role("administrador")),
+        use_case: ExportTimeClockEntriesUseCase = Depends(get_export_time_clock_entries_use_case),
+    ):
+        """Informe XLSX con logo de marca de los fichajes de TODA la
+        plantilla interna, últimos 30 días — a diferencia de
+        `GET /entries/export` (CSV, alcance del propio usuario o consulta
+        puntual), este es un informe de RRHH fijo y solo el admin puede
+        generarlo (`require_role("administrador")`, no "empleado": es un
+        listado con datos de TODA la plantilla, no solo los propios)."""
+        today = today_in_madrid()
+        date_from = today - timedelta(days=_DEFAULT_WINDOW_DAYS)
+        rows = await use_case.execute(date_from=date_from, date_to=today)
+        workbook_bytes = build_time_clock_export_workbook(rows, date_from=date_from, date_to=today)
+        filename = f"fichajes-{today.isoformat()}.xlsx"
+        return StreamingResponse(
+            iter([workbook_bytes]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
     @router.patch("/entries/{entry_id}", response_model=TimeClockEntryDTO)

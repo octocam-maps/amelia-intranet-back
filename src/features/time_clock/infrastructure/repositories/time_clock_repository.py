@@ -10,7 +10,7 @@ import asyncpg
 
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
-from ...domain.entities import TimeClockBreak, TimeClockEntry
+from ...domain.entities import TimeClockBreak, TimeClockEntry, TimeClockExportRow
 from ...domain.errors import (
     TimeClockAlreadyClockedInError,
     TimeClockBreakAlreadyOpenError,
@@ -25,6 +25,39 @@ _ENTRY_SELECT = """
 
 _BREAK_SELECT = "SELECT id, entry_id, break_start, break_end FROM time_clock_breaks"
 
+# Informe admin XLSX: junta el tramo con identidad/contacto de `users` +
+# `user_profiles`. Solo plantilla INTERNA (`is_external = FALSE`) — el
+# externo-invitado no tiene Control horario en la matriz de permisos, así
+# que nunca debería aparecer aquí aunque algún día tuviera fichajes.
+#
+# El `ORDER BY` reparte `full_name` con la MISMA heurística que
+# `infrastructure/xlsx_export.py::_split_full_name` (Nombre = primera
+# palabra, Apellido = el resto) para que el orden de las filas del informe
+# coincida con lo que el admin lee en las columnas Nombre/Apellido.
+_EXPORT_SELECT = """
+    SELECT
+        u.id AS user_id,
+        u.full_name,
+        p.dni_nif,
+        p.phone,
+        e.work_date,
+        e.clock_in,
+        e.clock_out
+    FROM time_clock_entries e
+    JOIN users u ON u.id = e.user_id
+    LEFT JOIN user_profiles p ON p.user_id = u.id
+    WHERE e.work_date BETWEEN $1 AND $2
+      AND u.deleted_at IS NULL
+      AND u.is_external = FALSE
+    ORDER BY
+        CASE WHEN u.full_name LIKE '% %'
+             THEN SUBSTRING(u.full_name FROM POSITION(' ' IN u.full_name) + 1)
+             ELSE ''
+        END,
+        SPLIT_PART(u.full_name, ' ', 1),
+        e.work_date DESC
+"""
+
 
 def _row_to_entry(row) -> TimeClockEntry:
     return TimeClockEntry(
@@ -36,6 +69,18 @@ def _row_to_entry(row) -> TimeClockEntry:
         source=row["source"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _row_to_export_row(row) -> TimeClockExportRow:
+    return TimeClockExportRow(
+        user_id=str(row["user_id"]),
+        full_name=row["full_name"],
+        dni_nif=row["dni_nif"],
+        phone=row["phone"],
+        work_date=row["work_date"],
+        clock_in=row["clock_in"],
+        clock_out=row["clock_out"],
     )
 
 
@@ -128,6 +173,12 @@ class PostgresTimeClockRepository(ITimeClockRepository):
             date_to,
         )
         return [_row_to_entry(row) for row in rows]
+
+    async def list_export_rows_for_all(
+        self, *, date_from: date, date_to: date
+    ) -> list[TimeClockExportRow]:
+        rows = await self._db.fetch(_EXPORT_SELECT, date_from, date_to)
+        return [_row_to_export_row(row) for row in rows]
 
     async def find_overlapping_entry(
         self,

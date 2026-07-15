@@ -7,7 +7,7 @@ en `infrastructure` y se inyecta aquí por duck typing estructural.
 from datetime import date, datetime
 from typing import Optional, Protocol
 
-from .entities import TimeClockBreak, TimeClockEntry
+from .entities import TimeClockBreak, TimeClockEntry, TimeClockExportRow
 
 
 class ITimeClockRepository(Protocol):
@@ -31,6 +31,15 @@ class ITimeClockRepository(Protocol):
         self, *, date_from: date, date_to: date
     ) -> list[TimeClockEntry]:
         """Vista aumentada del admin: fichajes de TODA la plantilla."""
+        ...
+
+    async def list_export_rows_for_all(
+        self, *, date_from: date, date_to: date
+    ) -> list[TimeClockExportRow]:
+        """Informe admin (XLSX, `GET /time-clock/entries/export.xlsx`):
+        fichajes de TODA la plantilla INTERNA (excluye externos-invitado, que
+        no tienen Control horario en la matriz de permisos), con nombre/DNI/
+        teléfono ya resueltos vía `users` + `user_profiles`."""
         ...
 
     async def find_overlapping_entry(

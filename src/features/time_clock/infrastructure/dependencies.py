@@ -7,6 +7,7 @@ from ..application.use_cases.clock_out import ClockOutUseCase
 from ..application.use_cases.create_time_clock_entry import CreateTimeClockEntryUseCase
 from ..application.use_cases.delete_time_clock_entry import DeleteTimeClockEntryUseCase
 from ..application.use_cases.end_break import EndBreakUseCase
+from ..application.use_cases.export_time_clock_entries import ExportTimeClockEntriesUseCase
 from ..application.use_cases.get_live_status import GetLiveStatusUseCase
 from ..application.use_cases.list_time_clock_entries import ListTimeClockEntriesUseCase
 from ..application.use_cases.start_break import StartBreakUseCase
@@ -52,3 +53,7 @@ def get_end_break_use_case() -> EndBreakUseCase:
 
 def get_live_status_use_case() -> GetLiveStatusUseCase:
     return GetLiveStatusUseCase(_get_repository())
+
+
+def get_export_time_clock_entries_use_case() -> ExportTimeClockEntriesUseCase:
+    return ExportTimeClockEntriesUseCase(_get_repository())
