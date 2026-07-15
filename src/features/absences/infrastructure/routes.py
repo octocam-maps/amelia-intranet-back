@@ -7,25 +7,42 @@ from fastapi import APIRouter, Depends, Query
 from src.shared.auth.dependencies import require_role
 
 from ..application.use_cases.create_absence_request import CreateAbsenceRequestUseCase
+from ..application.use_cases.create_absence_type import CreateAbsenceTypeUseCase
 from ..application.use_cases.get_absence_balance import GetAbsenceBalanceUseCase
 from ..application.use_cases.list_absence_requests import ListAbsenceRequestsUseCase
 from ..application.use_cases.list_absence_types import ListAbsenceTypesUseCase
+from ..application.use_cases.list_all_absence_types import ListAllAbsenceTypesUseCase
 from ..application.use_cases.review_absence_request import ReviewAbsenceRequestUseCase
+from ..application.use_cases.update_absence_type import UpdateAbsenceTypeUseCase
 from .dependencies import (
     get_absence_balance_use_case,
     get_create_absence_request_use_case,
+    get_create_absence_type_use_case,
     get_list_absence_requests_use_case,
     get_list_absence_types_use_case,
+    get_list_all_absence_types_use_case,
     get_review_absence_request_use_case,
+    get_update_absence_type_use_case,
 )
-from .mappers import balances_to_dto, request_to_dto, requests_to_dto, types_to_dto
+from .mappers import (
+    balances_to_dto,
+    request_to_dto,
+    requests_to_dto,
+    type_to_admin_dto,
+    types_to_admin_dto,
+    types_to_dto,
+)
 from .schemas import (
     AbsenceBalanceListDTO,
     AbsenceRequestDTO,
     AbsenceRequestListDTO,
+    AbsenceTypeAdminDTO,
+    AbsenceTypeAdminListDTO,
     AbsenceTypeListDTO,
     CreateAbsenceRequestDTO,
+    CreateAbsenceTypeDTO,
     ReviewAbsenceRequestDTO,
+    UpdateAbsenceTypeDTO,
 )
 
 
@@ -42,6 +59,61 @@ def create_absences_router() -> APIRouter:
     ):
         types = await use_case.execute()
         return types_to_dto(types)
+
+    @router.get("/types/admin", response_model=AbsenceTypeAdminListDTO)
+    async def list_all_types(
+        current_user: dict = Depends(require_role("administrador")),
+        use_case: ListAllAbsenceTypesUseCase = Depends(get_list_all_absence_types_use_case),
+    ):
+        """Vista de gestión — incluye los tipos desactivados
+        (docs/permisos-roles.md § "Tipos de ausencia"), a diferencia de
+        `GET /types` (solo activos, para el modal de solicitud)."""
+        types = await use_case.execute()
+        return types_to_admin_dto(types)
+
+    @router.post("/types", response_model=AbsenceTypeAdminDTO, status_code=201)
+    async def create_type(
+        dto: CreateAbsenceTypeDTO,
+        current_user: dict = Depends(require_role("administrador")),
+        use_case: CreateAbsenceTypeUseCase = Depends(get_create_absence_type_use_case),
+    ):
+        absence_type = await use_case.execute(
+            code=dto.code,
+            name=dto.name,
+            is_paid=dto.is_paid,
+            affects_balance=dto.affects_balance,
+            default_entitled_days=dto.default_entitled_days,
+            color=dto.color,
+            requires_approval=dto.requires_approval,
+            requires_justification=dto.requires_justification,
+            max_days_per_year=dto.max_days_per_year,
+        )
+        return type_to_admin_dto(absence_type)
+
+    @router.patch("/types/{absence_type_id}", response_model=AbsenceTypeAdminDTO)
+    async def update_type(
+        absence_type_id: str,
+        dto: UpdateAbsenceTypeDTO,
+        current_user: dict = Depends(require_role("administrador")),
+        use_case: UpdateAbsenceTypeUseCase = Depends(get_update_absence_type_use_case),
+    ):
+        """No hay DELETE: desactivar (`is_active=false`) es el único
+        "borrado" — `absence_requests.absence_type_id` es `ON DELETE
+        RESTRICT`, un tipo con solicitudes asociadas no se puede eliminar
+        sin romper el histórico."""
+        absence_type = await use_case.execute(
+            absence_type_id,
+            name=dto.name,
+            is_paid=dto.is_paid,
+            affects_balance=dto.affects_balance,
+            default_entitled_days=dto.default_entitled_days,
+            color=dto.color,
+            is_active=dto.is_active,
+            requires_approval=dto.requires_approval,
+            requires_justification=dto.requires_justification,
+            max_days_per_year=dto.max_days_per_year,
+        )
+        return type_to_admin_dto(absence_type)
 
     @router.get("/balance", response_model=AbsenceBalanceListDTO)
     async def get_balance(

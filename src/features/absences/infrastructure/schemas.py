@@ -3,7 +3,7 @@
 from datetime import date
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AbsenceTypeDTO(BaseModel):
@@ -17,6 +17,45 @@ class AbsenceTypeDTO(BaseModel):
 
 class AbsenceTypeListDTO(BaseModel):
     types: list[AbsenceTypeDTO]
+
+
+class AbsenceTypeAdminDTO(AbsenceTypeDTO):
+    """Vista de gestión del admin — añade lo que `AbsenceTypeDTO` (usado al
+    elegir tipo en el modal de solicitud) no necesita mostrar al empleado."""
+
+    default_entitled_days: float
+    is_active: bool
+    requires_approval: bool
+    requires_justification: bool
+    max_days_per_year: Optional[int]
+
+
+class AbsenceTypeAdminListDTO(BaseModel):
+    types: list[AbsenceTypeAdminDTO]
+
+
+class CreateAbsenceTypeDTO(BaseModel):
+    code: str = Field(..., min_length=1, max_length=40, pattern=r"^[a-z0-9_]+$")
+    name: str = Field(..., min_length=1, max_length=120)
+    is_paid: bool = True
+    affects_balance: bool = True
+    default_entitled_days: float = Field(0, ge=0)
+    color: Optional[str] = None
+    requires_approval: bool = True
+    requires_justification: bool = False
+    max_days_per_year: Optional[int] = Field(None, ge=0)
+
+
+class UpdateAbsenceTypeDTO(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=120)
+    is_paid: Optional[bool] = None
+    affects_balance: Optional[bool] = None
+    default_entitled_days: Optional[float] = Field(None, ge=0)
+    color: Optional[str] = None
+    is_active: Optional[bool] = None
+    requires_approval: Optional[bool] = None
+    requires_justification: Optional[bool] = None
+    max_days_per_year: Optional[int] = Field(None, ge=0)
 
 
 class AbsenceBalanceDTO(BaseModel):

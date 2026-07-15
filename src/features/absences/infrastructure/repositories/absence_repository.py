@@ -23,6 +23,9 @@ def _row_to_type(row) -> AbsenceType:
         default_entitled_days=float(row["default_entitled_days"]),
         color=row["color"],
         is_active=row["is_active"],
+        requires_approval=row["requires_approval"],
+        requires_justification=row["requires_justification"],
+        max_days_per_year=row["max_days_per_year"],
     )
 
 
@@ -68,8 +71,95 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         )
         return [_row_to_type(row) for row in rows]
 
+    async def list_all_types(self) -> list[AbsenceType]:
+        # Gestión del admin: incluye los desactivados, a diferencia de
+        # `list_types` (que el empleado usa para elegir tipo al solicitar).
+        rows = await self._db.fetch("SELECT * FROM absence_types ORDER BY name")
+        return [_row_to_type(row) for row in rows]
+
     async def find_type_by_id(self, absence_type_id: str) -> Optional[AbsenceType]:
         row = await self._db.fetchrow("SELECT * FROM absence_types WHERE id = $1", absence_type_id)
+        return _row_to_type(row) if row else None
+
+    async def find_type_by_code(self, code: str) -> Optional[AbsenceType]:
+        row = await self._db.fetchrow("SELECT * FROM absence_types WHERE code = $1", code)
+        return _row_to_type(row) if row else None
+
+    async def create_type(
+        self,
+        *,
+        code: str,
+        name: str,
+        is_paid: bool,
+        affects_balance: bool,
+        default_entitled_days: float,
+        color: Optional[str],
+        requires_approval: bool = True,
+        requires_justification: bool = False,
+        max_days_per_year: Optional[int] = None,
+    ) -> AbsenceType:
+        row = await self._db.fetchrow(
+            """
+            INSERT INTO absence_types (
+                code, name, is_paid, affects_balance, default_entitled_days, color,
+                requires_approval, requires_justification, max_days_per_year
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING *
+            """,
+            code,
+            name,
+            is_paid,
+            affects_balance,
+            default_entitled_days,
+            color,
+            requires_approval,
+            requires_justification,
+            max_days_per_year,
+        )
+        return _row_to_type(row)
+
+    async def update_type(
+        self,
+        absence_type_id: str,
+        *,
+        name: Optional[str],
+        is_paid: Optional[bool],
+        affects_balance: Optional[bool],
+        default_entitled_days: Optional[float],
+        color: Optional[str],
+        is_active: Optional[bool],
+        requires_approval: Optional[bool] = None,
+        requires_justification: Optional[bool] = None,
+        max_days_per_year: Optional[int] = None,
+    ) -> Optional[AbsenceType]:
+        row = await self._db.fetchrow(
+            """
+            UPDATE absence_types
+            SET name = COALESCE($2, name),
+                is_paid = COALESCE($3, is_paid),
+                affects_balance = COALESCE($4, affects_balance),
+                default_entitled_days = COALESCE($5, default_entitled_days),
+                color = COALESCE($6, color),
+                is_active = COALESCE($7, is_active),
+                requires_approval = COALESCE($8, requires_approval),
+                requires_justification = COALESCE($9, requires_justification),
+                max_days_per_year = COALESCE($10, max_days_per_year),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            RETURNING *
+            """,
+            absence_type_id,
+            name,
+            is_paid,
+            affects_balance,
+            default_entitled_days,
+            color,
+            is_active,
+            requires_approval,
+            requires_justification,
+            max_days_per_year,
+        )
         return _row_to_type(row) if row else None
 
     async def get_or_create_balance(

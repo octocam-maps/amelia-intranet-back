@@ -4,6 +4,8 @@ from .schemas import (
     AbsenceBalanceListDTO,
     AbsenceRequestDTO,
     AbsenceRequestListDTO,
+    AbsenceTypeAdminDTO,
+    AbsenceTypeAdminListDTO,
     AbsenceTypeDTO,
     AbsenceTypeListDTO,
 )
@@ -22,6 +24,26 @@ def type_to_dto(absence_type: AbsenceType) -> AbsenceTypeDTO:
 
 def types_to_dto(types: list[AbsenceType]) -> AbsenceTypeListDTO:
     return AbsenceTypeListDTO(types=[type_to_dto(t) for t in types])
+
+
+def type_to_admin_dto(absence_type: AbsenceType) -> AbsenceTypeAdminDTO:
+    return AbsenceTypeAdminDTO(
+        id=absence_type.id,
+        code=absence_type.code,
+        name=absence_type.name,
+        is_paid=absence_type.is_paid,
+        affects_balance=absence_type.affects_balance,
+        color=absence_type.color,
+        default_entitled_days=absence_type.default_entitled_days,
+        is_active=absence_type.is_active,
+        requires_approval=absence_type.requires_approval,
+        requires_justification=absence_type.requires_justification,
+        max_days_per_year=absence_type.max_days_per_year,
+    )
+
+
+def types_to_admin_dto(types: list[AbsenceType]) -> AbsenceTypeAdminListDTO:
+    return AbsenceTypeAdminListDTO(types=[type_to_admin_dto(t) for t in types])
 
 
 def balance_to_dto(balance: AbsenceBalance) -> AbsenceBalanceDTO:

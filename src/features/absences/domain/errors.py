@@ -1,8 +1,17 @@
-from src.shared.errors.base import InsufficientPermissionsError, NotFoundError, ValidationError
+from src.shared.errors.base import (
+    AlreadyExistsError,
+    InsufficientPermissionsError,
+    NotFoundError,
+    ValidationError,
+)
 
 
 class AbsenceTypeNotFoundError(NotFoundError):
     """No existe un tipo de ausencia con ese id."""
+
+
+class AbsenceTypeCodeAlreadyExistsError(AlreadyExistsError):
+    """Ya existe un tipo de ausencia con ese `code` — viola `absence_types.code` UNIQUE."""
 
 
 class AbsenceRequestNotFoundError(NotFoundError):

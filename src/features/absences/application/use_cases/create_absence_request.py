@@ -22,6 +22,8 @@ de prorrateo entre años (cuestionario pendiente, ver README).
 from datetime import date, timedelta
 from typing import Optional
 
+from src.features.notifications.application.use_cases.notify import NotifyUseCase
+
 from ...domain.entities import AbsenceRequest
 from ...domain.errors import (
     AbsenceTypeNotFoundError,
@@ -32,8 +34,9 @@ from ...domain.ports import IAbsenceRepository
 
 
 class CreateAbsenceRequestUseCase:
-    def __init__(self, repository: IAbsenceRepository):
+    def __init__(self, repository: IAbsenceRepository, notify: Optional[NotifyUseCase] = None):
         self._repository = repository
+        self._notify = notify  # opcional — ver ReviewAbsenceRequestUseCase
 
     async def execute(
         self,
@@ -76,7 +79,7 @@ class CreateAbsenceRequestUseCase:
                     f"Saldo insuficiente para solicitar {days_count} día(s)."
                 )
 
-        return await self._repository.create_request(
+        request = await self._repository.create_request(
             user_id=user_id,
             absence_type_id=absence_type_id,
             start_date=start_date,
@@ -84,6 +87,15 @@ class CreateAbsenceRequestUseCase:
             days_count=days_count,
             reason=reason,
         )
+
+        if self._notify is not None:
+            await self._notify.notify_admins(
+                type="absence_requested",
+                title="Nueva solicitud de ausencia",
+                data={"request_id": request.id, "url": "/ausencias"},
+            )
+
+        return request
 
     async def _count_business_days(self, start_date: date, end_date: date) -> float:
         holidays = set(await self._repository.list_holiday_dates(start_date, end_date))
