@@ -1,7 +1,7 @@
 """DTOs de response (Pydantic) del feature `team`."""
 
 from datetime import date
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -21,15 +21,19 @@ class TeamDirectoryDTO(BaseModel):
     members: list[TeamMemberDTO]
 
 
-class VacationCalendarEntryDTO(BaseModel):
+class TeamAbsenceEntryDTO(BaseModel):
     user_id: str
     full_name: str
     start_date: date
     end_date: date
+    # NUNCA el `code` real del tipo de ausencia — solo el `kind` privacy-safe
+    # (ver `domain/entities.py::AbsenceKind`). `baja_medica`/`duelo`/etc. ya
+    # llegan aquí colapsados en `ausente` desde el repositorio.
+    kind: Literal["vacaciones", "remoto", "ausente"]
 
 
-class VacationCalendarDTO(BaseModel):
-    entries: list[VacationCalendarEntryDTO]
+class TeamAbsenceCalendarDTO(BaseModel):
+    entries: list[TeamAbsenceEntryDTO]
 
 
 class TeamBirthdayDTO(BaseModel):

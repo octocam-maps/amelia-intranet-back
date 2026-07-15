@@ -6,13 +6,19 @@ sobre tablas de otros features — ver la nota de diseño en
 
 import calendar
 from datetime import date, timedelta
+from typing import Optional
 
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
-from ...domain.entities import TeamBirthday, TeamMember, VacationCalendarEntry
+from ...domain.entities import TeamAbsenceEntry, TeamBirthday, TeamMember
 from ...domain.ports import ITeamRepository
 
-_VACATION_TYPE_CODE = "vacaciones"
+# Únicos `absence_types.code` que se muestran con su etiqueta real en el
+# calendario de equipo. CUALQUIER otro code (baja_medica, asuntos_propios,
+# justificada, duelo, otros...) cae en "ausente" vía el `ELSE` del `CASE` de
+# `list_team_absences` — nunca se añade aquí un code nuevo para "destaparlo"
+# sin decidirlo explícitamente (son datos sensibles / categoría especial RGPD).
+_PUBLIC_ABSENCE_KINDS = ("vacaciones", "remoto")
 
 
 class PostgresTeamRepository(ITeamRepository):
@@ -46,29 +52,56 @@ class PostgresTeamRepository(ITeamRepository):
             for row in rows
         ]
 
-    async def list_approved_vacations(self, year: int, month: int) -> list[VacationCalendarEntry]:
+    async def get_department_id(self, user_id: str) -> Optional[str]:
+        row = await self._db.fetchrow(
+            """
+            SELECT department_id
+            FROM users
+            WHERE id = $1::uuid AND deleted_at IS NULL
+            """,
+            user_id,
+        )
+        if row is None or row["department_id"] is None:
+            return None
+        return str(row["department_id"])
+
+    async def list_team_absences(
+        self, *, department_id: str, year: int, month: int
+    ) -> list[TeamAbsenceEntry]:
         first_day = date(year, month, 1)
         last_day = date(year, month, calendar.monthrange(year, month)[1])
         rows = await self._db.fetch(
             """
-            SELECT r.user_id, u.full_name, r.start_date, r.end_date
+            SELECT r.user_id, u.full_name, r.start_date, r.end_date,
+                   CASE t.code
+                       WHEN 'vacaciones' THEN 'vacaciones'
+                       WHEN 'remoto' THEN 'remoto'
+                       ELSE 'ausente'
+                   END AS kind
             FROM absence_requests r
             JOIN users u ON u.id = r.user_id
             JOIN absence_types t ON t.id = r.absence_type_id
-            WHERE t.code = $1 AND r.status = 'approved'
+            WHERE r.status = 'approved'
+              AND u.department_id = $1::uuid
               AND r.start_date <= $3 AND r.end_date >= $2
             ORDER BY r.start_date ASC
             """,
-            _VACATION_TYPE_CODE,
+            department_id,
             first_day,
             last_day,
         )
+        # El `CASE` de la query ya garantiza `kind ∈ {vacaciones, remoto,
+        # ausente}` — este `if` es una segunda barrera (defensa en
+        # profundidad) para que, si algún día alguien añade un `WHEN` nuevo
+        # en el SQL sin darse cuenta de la implicación RGPD, el `code` crudo
+        # siga sin poder llegar al DTO/cliente.
         return [
-            VacationCalendarEntry(
+            TeamAbsenceEntry(
                 user_id=str(row["user_id"]),
                 full_name=row["full_name"],
                 start_date=row["start_date"],
                 end_date=row["end_date"],
+                kind=row["kind"] if row["kind"] in _PUBLIC_ABSENCE_KINDS else "ausente",
             )
             for row in rows
         ]

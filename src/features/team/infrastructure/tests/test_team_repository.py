@@ -1,9 +1,12 @@
 """
 Regresión RGPD: el directorio nunca debe proyectar columnas sensibles de
 `user_profiles` (dni_nif/iban/address/social_security_number/birth_date) ni
-incluir plantilla suspendida/borrada. El calendario de vacaciones solo debe
-consultar tipo `vacaciones` en estado `approved`. Mismo patrón de mock de
-pool que `features/absences/infrastructure/tests/test_absences_repository.py`.
+incluir plantilla suspendida/borrada. El calendario de equipo solo debe
+consultar ausencias `approved` del MISMO departamento del solicitante, y
+NUNCA debe seleccionar el `code` real del tipo de ausencia — solo el `kind`
+privacy-safe calculado en el propio SQL (ver `domain/entities.py`). Mismo
+patrón de mock de pool que
+`features/absences/infrastructure/tests/test_absences_repository.py`.
 """
 
 from datetime import date
@@ -74,7 +77,7 @@ async def test_list_directory_maps_rows_to_team_member():
 
 
 @pytest.mark.asyncio
-async def test_list_approved_vacations_filters_by_type_and_status():
+async def test_list_team_absences_filters_by_department_and_approved_status():
     pool = AsyncMock()
     pool.fetch.return_value = [
         {
@@ -82,33 +85,140 @@ async def test_list_approved_vacations_filters_by_type_and_status():
             "full_name": "Ana García",
             "start_date": date(2026, 7, 20),
             "end_date": date(2026, 7, 24),
+            "kind": "vacaciones",
         }
     ]
     repository = PostgresTeamRepository(pool)
 
-    entries = await repository.list_approved_vacations(2026, 7)
+    entries = await repository.list_team_absences(department_id="dept-1", year=2026, month=7)
 
     query = pool.fetch.call_args[0][0]
     args = pool.fetch.call_args[0][1:]
-    assert "t.code = $1" in query
     assert "r.status = 'approved'" in query
-    assert args[0] == "vacaciones"
+    assert "u.department_id = $1::uuid" in query
+    assert args[0] == "dept-1"
     # El rango de solapamiento cubre todo julio 2026.
     assert args[1] == date(2026, 7, 1)
     assert args[2] == date(2026, 7, 31)
     assert entries[0].full_name == "Ana García"
+    assert entries[0].kind == "vacaciones"
 
 
 @pytest.mark.asyncio
-async def test_list_approved_vacations_resolves_last_day_of_february_leap_year():
+async def test_list_team_absences_never_selects_raw_absence_type_code():
+    """CRÍTICO: la query nunca debe proyectar `t.code` como columna propia
+    (solo puede aparecer dentro del `CASE ... END AS kind`) — así el tipo
+    real de ausencia (p.ej. baja médica/duelo) nunca sale de esta consulta."""
     pool = AsyncMock()
     pool.fetch.return_value = []
     repository = PostgresTeamRepository(pool)
 
-    await repository.list_approved_vacations(2028, 2)
+    await repository.list_team_absences(department_id="dept-1", year=2026, month=7)
+
+    query = pool.fetch.call_args[0][0]
+    assert "SELECT r.user_id, u.full_name, r.start_date, r.end_date" in query
+    # `t.code` solo puede aparecer una vez, y siempre dentro del `CASE`.
+    assert query.count("t.code") == 1
+    assert "CASE t.code" in query
+
+
+@pytest.mark.asyncio
+async def test_list_team_absences_maps_vacaciones_and_remoto_kinds_as_is():
+    pool = AsyncMock()
+    pool.fetch.return_value = [
+        {
+            "user_id": "user-1",
+            "full_name": "Ana García",
+            "start_date": date(2026, 7, 20),
+            "end_date": date(2026, 7, 24),
+            "kind": "vacaciones",
+        },
+        {
+            "user_id": "user-2",
+            "full_name": "Bruno Ruiz",
+            "start_date": date(2026, 7, 10),
+            "end_date": date(2026, 7, 12),
+            "kind": "remoto",
+        },
+    ]
+    repository = PostgresTeamRepository(pool)
+
+    entries = await repository.list_team_absences(department_id="dept-1", year=2026, month=7)
+
+    assert entries[0].kind == "vacaciones"
+    assert entries[1].kind == "remoto"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sensitive_kind", ["baja_medica", "duelo", "asuntos_propios", "otros"])
+async def test_list_team_absences_collapses_any_non_public_kind_into_ausente(sensitive_kind):
+    """Defensa en profundidad: aunque la fila del pool (mockeado) devuelva
+    directamente un `code` sensible en la columna `kind` — como pasaría si
+    el `CASE` del SQL se rompiera — el repositorio NUNCA debe propagarlo
+    tal cual al dominio; siempre lo colapsa en `ausente`."""
+    pool = AsyncMock()
+    pool.fetch.return_value = [
+        {
+            "user_id": "user-1",
+            "full_name": "Ana García",
+            "start_date": date(2026, 7, 20),
+            "end_date": date(2026, 7, 24),
+            "kind": sensitive_kind,
+        }
+    ]
+    repository = PostgresTeamRepository(pool)
+
+    entries = await repository.list_team_absences(department_id="dept-1", year=2026, month=7)
+
+    assert entries[0].kind == "ausente"
+    assert sensitive_kind not in {e.kind for e in entries}
+
+
+@pytest.mark.asyncio
+async def test_list_team_absences_resolves_last_day_of_february_leap_year():
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresTeamRepository(pool)
+
+    await repository.list_team_absences(department_id="dept-1", year=2028, month=2)
 
     args = pool.fetch.call_args[0][1:]
     assert args[2] == date(2028, 2, 29)
+
+
+@pytest.mark.asyncio
+async def test_get_department_id_returns_none_when_user_has_no_department():
+    pool = AsyncMock()
+    pool.fetchrow.return_value = {"department_id": None}
+    repository = PostgresTeamRepository(pool)
+
+    department_id = await repository.get_department_id("user-1")
+
+    assert department_id is None
+
+
+@pytest.mark.asyncio
+async def test_get_department_id_returns_none_when_user_does_not_exist():
+    pool = AsyncMock()
+    pool.fetchrow.return_value = None
+    repository = PostgresTeamRepository(pool)
+
+    department_id = await repository.get_department_id("user-ghost")
+
+    assert department_id is None
+
+
+@pytest.mark.asyncio
+async def test_get_department_id_returns_the_users_department():
+    pool = AsyncMock()
+    pool.fetchrow.return_value = {"department_id": "dept-1"}
+    repository = PostgresTeamRepository(pool)
+
+    department_id = await repository.get_department_id("user-1")
+
+    assert department_id == "dept-1"
+    query = pool.fetchrow.call_args[0][0]
+    assert "deleted_at IS NULL" in query
 
 
 @pytest.mark.asyncio

@@ -7,9 +7,9 @@ FastAPI.
 """
 
 from datetime import date
-from typing import Protocol
+from typing import Optional, Protocol
 
-from .entities import TeamBirthday, TeamMember, VacationCalendarEntry
+from .entities import TeamAbsenceEntry, TeamBirthday, TeamMember
 
 
 class ITeamRepository(Protocol):
@@ -19,9 +19,20 @@ class ITeamRepository(Protocol):
         parte del directorio aunque no hayan completado el onboarding."""
         ...
 
-    async def list_approved_vacations(self, year: int, month: int) -> list[VacationCalendarEntry]:
-        """Solo vacaciones (`absence_types.code = 'vacaciones'`) con
-        `status = 'approved'` cuyo rango solapa el mes `year`-`month`."""
+    async def get_department_id(self, user_id: str) -> Optional[str]:
+        """Departamento ACTUAL del usuario, resuelto en el backend (nunca
+        se confía en un claim del cliente/JWT para esto). `None` si el
+        usuario no tiene departamento asignado o no existe/está borrado."""
+        ...
+
+    async def list_team_absences(
+        self, *, department_id: str, year: int, month: int
+    ) -> list[TeamAbsenceEntry]:
+        """Ausencias `status = 'approved'` de compañeros del MISMO
+        `department_id`, cuyo rango solapa el mes `year`-`month`. El `kind`
+        de cada entrada ya viene mapeado a `AbsenceKind` — el `code` real
+        del tipo de ausencia nunca se selecciona/propaga fuera de esta
+        consulta (ver `domain/entities.py`)."""
         ...
 
     async def list_upcoming_birthdays(self, *, today: date, days: int) -> list[TeamBirthday]:

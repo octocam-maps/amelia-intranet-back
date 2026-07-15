@@ -5,16 +5,16 @@ from fastapi import APIRouter, Depends, Query
 
 from src.shared.auth.dependencies import require_role
 
+from ..application.use_cases.get_team_calendar import GetTeamCalendarUseCase
 from ..application.use_cases.get_upcoming_birthdays import GetUpcomingBirthdaysUseCase
-from ..application.use_cases.get_vacation_calendar import GetVacationCalendarUseCase
 from ..application.use_cases.list_team_directory import ListTeamDirectoryUseCase
 from .dependencies import (
     get_list_team_directory_use_case,
+    get_team_calendar_use_case,
     get_upcoming_birthdays_use_case,
-    get_vacation_calendar_use_case,
 )
-from .mappers import birthdays_to_dto, directory_to_dto, vacation_calendar_to_dto
-from .schemas import TeamBirthdaysDTO, TeamDirectoryDTO, VacationCalendarDTO
+from .mappers import birthdays_to_dto, directory_to_dto, team_calendar_to_dto
+from .schemas import TeamAbsenceCalendarDTO, TeamBirthdaysDTO, TeamDirectoryDTO
 
 _ALL_ROLES = ("administrador", "empleado", "externo_invitado")
 
@@ -32,7 +32,7 @@ def create_team_router() -> APIRouter:
         members = await use_case.execute()
         return directory_to_dto(members)
 
-    @router.get("/vacation-calendar", response_model=VacationCalendarDTO)
+    @router.get("/vacation-calendar", response_model=TeamAbsenceCalendarDTO)
     async def get_vacation_calendar(
         month: str = Query(
             ...,
@@ -40,13 +40,19 @@ def create_team_router() -> APIRouter:
             description="Mes en formato YYYY-MM",
         ),
         current_user: dict = Depends(require_role(*_ALL_ROLES)),
-        use_case: GetVacationCalendarUseCase = Depends(get_vacation_calendar_use_case),
+        use_case: GetTeamCalendarUseCase = Depends(get_team_calendar_use_case),
     ):
-        """Solo vacaciones ya APROBADAS del equipo — nunca solicitudes
-        pendientes/rechazadas ni otros tipos de ausencia."""
+        """Ausencias ya APROBADAS de los compañeros del MISMO departamento
+        que el solicitante (`current_user["sub"]`, resuelto en backend) —
+        nunca de toda la plantilla ni de otro departamento, y nunca
+        solicitudes pendientes/rechazadas. Cada entrada expone un `kind`
+        privacy-safe (`vacaciones`/`remoto`/`ausente`), nunca el tipo real
+        de ausencia (RGPD: baja médica/duelo/etc. son datos sensibles)."""
         year, month_number = (int(part) for part in month.split("-"))
-        entries = await use_case.execute(year=year, month=month_number)
-        return vacation_calendar_to_dto(entries)
+        entries = await use_case.execute(
+            requester_id=current_user["sub"], year=year, month=month_number
+        )
+        return team_calendar_to_dto(entries)
 
     @router.get("/birthdays", response_model=TeamBirthdaysDTO)
     async def get_birthdays(

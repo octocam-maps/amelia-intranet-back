@@ -8,7 +8,14 @@ parte de gestión) y de `absences`.
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Literal, Optional
+
+# Kind privacy-safe expuesto por el calendario de equipo. El backend MAPEA
+# el `absence_types.code` real a uno de estos 3 valores y nunca propaga el
+# code crudo — `baja_medica`/`duelo`/`asuntos_propios`/`justificada`/`otros`
+# caen todos en "ausente" para no exponer datos sensibles (salud, motivos
+# personales → categoría especial RGPD) al resto de la plantilla.
+AbsenceKind = Literal["vacaciones", "remoto", "ausente"]
 
 
 @dataclass(frozen=True)
@@ -45,13 +52,20 @@ class TeamBirthday:
 
 
 @dataclass(frozen=True)
-class VacationCalendarEntry:
-    """Tramo de vacaciones APROBADAS de un miembro del equipo, para pintar
-    el calendario mensual — nunca ausencias pendientes/rechazadas de otros
-    tipos (baja médica, asuntos propios): eso sería un dato sensible de
-    cara al resto de la plantilla."""
+class TeamAbsenceEntry:
+    """Tramo de ausencia APROBADA de un compañero del MISMO departamento que
+    el solicitante, para pintar el calendario mensual del equipo — nunca
+    ausencias pendientes/rechazadas, y nunca de otros departamentos.
+
+    `kind` es SIEMPRE uno de `AbsenceKind` (nunca el `code` real del tipo de
+    ausencia): `vacaciones` y `remoto` se muestran tal cual, y CUALQUIER
+    otro tipo (baja médica, asuntos propios, justificada, duelo, otros...)
+    se colapsa en `ausente` — ese mapeo ocurre en el repositorio/SQL, nunca
+    aquí ni en infrastructure/routes, así que el dato sensible jamás sale
+    de la capa de persistencia."""
 
     user_id: str
     full_name: str
     start_date: date
     end_date: date
+    kind: AbsenceKind
