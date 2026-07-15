@@ -4,10 +4,16 @@ Reglas de negocio puras del onboarding — sin SQL, sin FastAPI. Se usan desde
 chequeo de "paso operable" en cada caso de uso.
 """
 
+from datetime import datetime
 from typing import Optional
 
 from .entities import OnboardingProgress, OnboardingStep
-from .errors import StepLockedError, StepNotAvailableForRoleError, StepNotOperableError
+from .errors import (
+    InvalidVideoProgressError,
+    StepLockedError,
+    StepNotAvailableForRoleError,
+    StepNotOperableError,
+)
 
 # El externo-invitado hace onboarding PARCIAL: solo vídeo + manual
 # (docs/permisos-roles.md § Onboarding: "parcial, sin firma/cuestionario/perfil").
@@ -22,6 +28,17 @@ _EXTERNAL_GUEST_ALLOWED_TYPES = frozenset({"video", "manual"})
 # progreso frecuentes (cada pocos segundos de un vídeo corto) y dejamos
 # margen para picos de red, sin permitir terminar el vídeo en un único salto.
 MAX_VIDEO_PROGRESS_JUMP_PCT = 30
+
+# Margen (en puntos de `progress_pct`) que se admite POR ENCIMA de lo que el
+# tiempo real transcurrido justificaría, para absorber picos de red/buffer
+# del reproductor y el desfase entre el evento de "play" y el primer
+# `POST /video-progress`. Es deliberadamente generoso (no una medición
+# exacta del reproductor) para no reventar de falsos positivos con una
+# conexión lenta — pero acota el bypass real: 4 requests sin esperar
+# (0->29->58->87->100) violan el % de salto máximo por request o, si se
+# reparten en llamadas más pequeñas, violan este techo por tiempo real,
+# porque entre request y request casi no pasa tiempo de reloj.
+VIDEO_PROGRESS_TIME_MARGIN_PCT = 20
 
 
 def steps_applicable_to_role(
@@ -58,3 +75,44 @@ def ensure_step_operable(progress: Optional[OnboardingProgress]) -> OnboardingPr
     if progress.status == "completed":
         raise StepNotOperableError("Este paso ya está completado.")
     return progress
+
+
+def ensure_video_progress_matches_elapsed_time(
+    *,
+    progress: OnboardingProgress,
+    step: OnboardingStep,
+    new_pct: int,
+    now: datetime,
+) -> None:
+    """Valida el `new_pct` reportado contra el TIEMPO REAL transcurrido desde
+    `progress.started_at` — el chequeo de salto máximo por request
+    (`MAX_VIDEO_PROGRESS_JUMP_PCT`) por sí solo no evita el bypass real: 4
+    requests rápidas y consecutivas (0->29->58->87->100), cada una dentro del
+    30% permitido, completan el vídeo sin haberlo visto.
+
+    `progress.started_at is None` significa que este es el PRIMER reporte de
+    progreso de este usuario para este paso — todavía no hay una base
+    temporal contra la que medir, así que aquí no se valida nada (solo aplica
+    el chequeo de salto de `ensure_step_operable`/`MAX_VIDEO_PROGRESS_JUMP_PCT`
+    en el use case). El propio UPDATE del repositorio es quien fija
+    `started_at` en ese primer reporte.
+
+    Si el paso no trae `duration` en su `config` (no debería pasar para
+    `type=video`, pero `config` es JSONB data-driven y no lo garantiza el
+    tipo), no se puede calcular el techo — se deja pasar sin validar en vez
+    de romper el flujo por un dato de catálogo mal cargado.
+    """
+    if progress.started_at is None:
+        return
+
+    duration_seconds = step.config.get("duration")
+    if not duration_seconds:
+        return
+
+    elapsed_seconds = (now - progress.started_at).total_seconds()
+    allowed_pct = (elapsed_seconds / duration_seconds) * 100 + VIDEO_PROGRESS_TIME_MARGIN_PCT
+    if new_pct > allowed_pct:
+        raise InvalidVideoProgressError(
+            "El progreso reportado va por delante del tiempo real de "
+            "reproducción — el vídeo no se puede saltar."
+        )

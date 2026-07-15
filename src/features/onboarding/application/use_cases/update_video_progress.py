@@ -1,11 +1,15 @@
 """
 Caso de uso: reportar el progreso del vídeo del paso 1 (Opción A del
-requerimiento: "no-skip"). Solo acepta progreso monotónico creciente y con
-saltos razonables — un salto de golpe a 100 desde un valor bajo (el caso
-explícito del requerimiento: 0 -> 100) se rechaza como intento de saltar el
-vídeo sin verlo. Al llegar a ~100 marca el paso `completed` y desbloquea el
-siguiente.
+requerimiento: "no-skip"). Solo acepta progreso monotónico creciente, con
+saltos razonables por request Y acorde al tiempo real transcurrido desde que
+empezó a reportarse — un salto de golpe a 100 desde un valor bajo (el caso
+explícito del requerimiento: 0 -> 100), o varias requests rápidas que
+encadenan saltos pequeños sin dejar pasar tiempo real, se rechazan como
+intento de saltar el vídeo sin verlo. Al llegar a ~100 marca el paso
+`completed` y desbloquea el siguiente.
 """
+
+from datetime import datetime, timezone
 
 from ...domain.entities import OnboardingProgress
 from ...domain.errors import (
@@ -17,6 +21,7 @@ from ...domain.policy import (
     MAX_VIDEO_PROGRESS_JUMP_PCT,
     ensure_step_allowed_for_role,
     ensure_step_operable,
+    ensure_video_progress_matches_elapsed_time,
 )
 from ...domain.ports import IOnboardingRepository
 
@@ -50,6 +55,13 @@ class UpdateVideoProgressUseCase:
                 "El salto de progreso reportado no es válido"
                 " — el vídeo no se puede saltar."
             )
+
+        ensure_video_progress_matches_elapsed_time(
+            progress=current,
+            step=step,
+            new_pct=new_pct,
+            now=datetime.now(timezone.utc),
+        )
 
         updated = await self._repository.update_video_progress(
             user_id, step_id, new_pct=new_pct
