@@ -11,6 +11,14 @@ def _is_truthy(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Entornos donde un default inseguro NO es tolerable: el arranque debe abortar
+# (fail-fast) en vez de dejar que un olvido de configuración se convierta en
+# una brecha. En `dev`/`test` los defaults cómodos siguen valiendo.
+_SECURE_ENVIRONMENTS = {"prod", "production", "stage", "staging"}
+_INSECURE_JWT_SECRET_DEFAULT = "change-me-in-production"
+_MIN_JWT_SECRET_LENGTH = 32
+
+
 class Settings:
     def __init__(self) -> None:
         self.environment = os.getenv("ENVIRONMENT", "dev")
@@ -83,6 +91,37 @@ class Settings:
             for ip in os.getenv("TRUSTED_PROXY_IPS", "").split(",")
             if ip.strip()
         }
+
+        self._enforce_secure_defaults()
+
+    def _enforce_secure_defaults(self) -> None:
+        """Fail-fast en entornos protegidos (prod/stage): un default inseguro
+        olvidado en el despliegue no debe convertir un error de configuración
+        en una brecha. Se acumulan TODOS los problemas para reportarlos juntos,
+        no solo el primero."""
+        if self.environment not in _SECURE_ENVIRONMENTS:
+            return
+
+        problems: list[str] = []
+
+        # JWT_SECRET_KEY firma access y refresh tokens. Con el default público
+        # (o un secreto trivialmente corto) cualquiera podría forjar un JWT con
+        # role="administrador" y el `sub` de cualquier usuario.
+        if (
+            self.jwt_secret_key == _INSECURE_JWT_SECRET_DEFAULT
+            or len(self.jwt_secret_key) < _MIN_JWT_SECRET_LENGTH
+        ):
+            problems.append(
+                "JWT_SECRET_KEY sin configurar o demasiado corto "
+                f"(mínimo {_MIN_JWT_SECRET_LENGTH} caracteres aleatorios). "
+                "Con el valor por defecto se pueden forjar tokens."
+            )
+
+        if problems:
+            detail = "\n".join(f"  - {p}" for p in problems)
+            raise RuntimeError(
+                f"Configuración insegura para ENVIRONMENT='{self.environment}':\n{detail}"
+            )
 
 
 @lru_cache
