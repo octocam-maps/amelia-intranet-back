@@ -41,7 +41,11 @@ from .schemas import (
     TimeClockEntryListDTO,
     UpdateTimeClockEntryDTO,
 )
-from .xlsx_export import build_time_clock_export_workbook
+from .xlsx_export import (
+    TITLE_ADMIN as XLSX_TITLE_ADMIN,
+    TITLE_EMPLOYEE as XLSX_TITLE_EMPLOYEE,
+    build_time_clock_export_workbook,
+)
 
 _DEFAULT_WINDOW_DAYS = 30
 
@@ -134,19 +138,33 @@ def create_time_clock_router() -> APIRouter:
 
     @router.get("/entries/export.xlsx")
     async def export_entries_xlsx(
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role("administrador", "empleado")),
         use_case: ExportTimeClockEntriesUseCase = Depends(get_export_time_clock_entries_use_case),
     ):
-        """Informe XLSX con logo de marca de los fichajes de TODA la
-        plantilla interna, últimos 30 días — a diferencia de
-        `GET /entries/export` (CSV, alcance del propio usuario o consulta
-        puntual), este es un informe de RRHH fijo y solo el admin puede
-        generarlo (`require_role("administrador")`, no "empleado": es un
-        listado con datos de TODA la plantilla, no solo los propios)."""
+        """Informe XLSX con logo de marca de los fichajes, últimos 30 días —
+        a diferencia de `GET /entries/export` (CSV, alcance del propio
+        usuario o consulta puntual), este es un informe de RRHH fijo. El
+        ALCANCE se decide aquí según el rol, NUNCA a partir de un parámetro
+        del cliente (RGPD — un empleado no puede pedir el informe de otro
+        usuario cambiando un query param):
+
+        - administrador -> TODA la plantilla interna (`user_id=None`).
+        - empleado -> SOLO sus propios fichajes (`user_id=current_user["sub"]`).
+
+        El externo-invitado sigue rechazado por `require_role` (no tiene
+        "Control horario" en la matriz de permisos)."""
+        is_admin = current_user["role"] == "administrador"
+        scoped_user_id = None if is_admin else current_user["sub"]
+        title = XLSX_TITLE_ADMIN if is_admin else XLSX_TITLE_EMPLOYEE
+
         today = today_in_madrid()
         date_from = today - timedelta(days=_DEFAULT_WINDOW_DAYS)
-        rows = await use_case.execute(date_from=date_from, date_to=today)
-        workbook_bytes = build_time_clock_export_workbook(rows, date_from=date_from, date_to=today)
+        rows = await use_case.execute(
+            date_from=date_from, date_to=today, user_id=scoped_user_id
+        )
+        workbook_bytes = build_time_clock_export_workbook(
+            rows, date_from=date_from, date_to=today, title=title
+        )
         filename = f"fichajes-{today.isoformat()}.xlsx"
         return StreamingResponse(
             iter([workbook_bytes]),

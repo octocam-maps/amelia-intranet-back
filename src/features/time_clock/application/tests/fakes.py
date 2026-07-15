@@ -82,6 +82,23 @@ class FakeTimeClockRepository:
             if date_from <= e.work_date <= date_to
         ]
 
+    async def list_export_rows_for_user(
+        self, user_id: str, *, date_from: date, date_to: date
+    ) -> list[TimeClockExportRow]:
+        return [
+            TimeClockExportRow(
+                user_id=e.user_id,
+                full_name=self.full_names.get(e.user_id, "Sin Nombre"),
+                dni_nif=self.dni_by_user.get(e.user_id),
+                phone=self.phone_by_user.get(e.user_id),
+                work_date=e.work_date,
+                clock_in=e.clock_in,
+                clock_out=e.clock_out,
+            )
+            for e in self.entries.values()
+            if e.user_id == user_id and date_from <= e.work_date <= date_to
+        ]
+
     async def find_overlapping_entry(
         self, user_id, work_date, clock_in, clock_out, *, exclude_entry_id=None
     ) -> Optional[TimeClockEntry]:

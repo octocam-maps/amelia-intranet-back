@@ -42,6 +42,15 @@ class ITimeClockRepository(Protocol):
         teléfono ya resueltos vía `users` + `user_profiles`."""
         ...
 
+    async def list_export_rows_for_user(
+        self, user_id: str, *, date_from: date, date_to: date
+    ) -> list[TimeClockExportRow]:
+        """Informe empleado (mismo XLSX, mismo endpoint): SOLO los fichajes
+        del propio `user_id` — alcance RGPD. Mismo join con `users` +
+        `user_profiles` que `list_export_rows_for_all`, pero acotado a un
+        único usuario."""
+        ...
+
     async def find_overlapping_entry(
         self,
         user_id: str,

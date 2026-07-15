@@ -61,3 +61,23 @@ async def test_export_open_entry_has_no_worked_minutes():
 
     assert rows[0].clock_out is None
     assert rows[0].worked_minutes is None
+
+
+@pytest.mark.asyncio
+async def test_export_with_user_id_returns_only_that_users_rows():
+    """RGPD: pasar `user_id` acota el informe a ESE usuario, aunque haya
+    fichajes de otros en el mismo rango."""
+    repository = FakeTimeClockRepository(
+        entries=[
+            _entry("e1", "user-1", date(2026, 7, 9)),
+            _entry("e2", "user-2", date(2026, 7, 9)),
+        ],
+        full_names={"user-1": "Ana García", "user-2": "Luis Pérez Ruiz"},
+    )
+    use_case = ExportTimeClockEntriesUseCase(repository)
+
+    rows = await use_case.execute(
+        date_from=date(2026, 7, 1), date_to=date(2026, 7, 31), user_id="user-1"
+    )
+
+    assert {row.user_id for row in rows} == {"user-1"}

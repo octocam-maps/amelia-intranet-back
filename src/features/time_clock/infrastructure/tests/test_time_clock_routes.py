@@ -72,15 +72,15 @@ def test_externo_invitado_cannot_read_current_clock_status():
     assert response.status_code == 403
 
 
-def test_employee_cannot_export_time_clock_entries_xlsx():
-    """Solo el admin genera el informe XLSX (require_role("administrador"),
-    no "empleado") — es un listado de TODA la plantilla, no solo lo propio."""
+def test_externo_invitado_cannot_export_time_clock_entries_xlsx():
+    """El externo-invitado sigue rechazado — no tiene "Control horario" en la
+    matriz de permisos, sin importar el alcance."""
     response = None
     try:
         with TestClient(app) as client:
             response = client.get(
                 "/time-clock/entries/export.xlsx",
-                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+                headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
             )
     finally:
         app.dependency_overrides.clear()
@@ -91,10 +91,12 @@ def test_employee_cannot_export_time_clock_entries_xlsx():
 def test_admin_can_export_time_clock_entries_xlsx():
     class FakeExportUseCase:
         async def execute(self, **kwargs):
+            self.received_kwargs = kwargs
             return []
 
+    use_case = FakeExportUseCase()
     app.dependency_overrides[time_clock_dependencies.get_export_time_clock_entries_use_case] = (
-        lambda: FakeExportUseCase()
+        lambda: use_case
     )
     try:
         with TestClient(app) as client:
@@ -108,6 +110,35 @@ def test_admin_can_export_time_clock_entries_xlsx():
             )
             assert "attachment; filename=" in response.headers["content-disposition"]
             assert ".xlsx" in response.headers["content-disposition"]
+            # RGPD: el admin recibe el informe de TODA la plantilla, no
+            # acotado a un `user_id` (el router no lo restringe).
+            assert use_case.received_kwargs["user_id"] is None
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_employee_can_export_only_their_own_time_clock_entries_xlsx():
+    """RGPD: un empleado SÍ puede generar el XLSX, pero el router debe pasar
+    `user_id=current_user["sub"]` al caso de uso — nunca `None` (que
+    devolvería toda la plantilla) ni el `user_id` de otra persona."""
+
+    class FakeExportUseCase:
+        async def execute(self, **kwargs):
+            self.received_kwargs = kwargs
+            return []
+
+    use_case = FakeExportUseCase()
+    app.dependency_overrides[time_clock_dependencies.get_export_time_clock_entries_use_case] = (
+        lambda: use_case
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/time-clock/entries/export.xlsx",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+            assert response.status_code == 200
+            assert use_case.received_kwargs["user_id"] == "user-1"
     finally:
         app.dependency_overrides.clear()
 

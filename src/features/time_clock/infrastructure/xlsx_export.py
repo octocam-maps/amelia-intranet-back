@@ -90,11 +90,11 @@ def _insert_logo(ws: Worksheet) -> None:
     ws.add_image(image, "A1")
 
 
-def _write_title(ws: Worksheet, date_from: date, date_to: date) -> None:
+def _write_title(ws: Worksheet, title: str, date_from: date, date_to: date) -> None:
     last_column = len(_COLUMN_TITLES)
 
     ws.merge_cells(start_row=_TITLE_ROW, start_column=1, end_row=_TITLE_ROW, end_column=last_column)
-    title_cell = ws.cell(row=_TITLE_ROW, column=1, value="Registro de fichajes — últimos 30 días")
+    title_cell = ws.cell(row=_TITLE_ROW, column=1, value=title)
     title_cell.font = Font(name="Calibri", size=14, bold=True, color=_BRAND_NAVY)
 
     ws.merge_cells(
@@ -145,17 +145,29 @@ def _apply_column_widths(ws: Worksheet) -> None:
         ws.column_dimensions[get_column_letter(col_index)].width = width
 
 
+# Públicos (sin `_`): el router (`infrastructure/routes.py`) los importa
+# para decidir qué rótulo pasar según el rol del requester.
+TITLE_ADMIN = "Registro de fichajes — toda la plantilla (últimos 30 días)"
+TITLE_EMPLOYEE = "Mis fichajes — últimos 30 días"
+
+
 def build_time_clock_export_workbook(
-    rows: list[TimeClockExportRow], *, date_from: date, date_to: date
+    rows: list[TimeClockExportRow],
+    *,
+    date_from: date,
+    date_to: date,
+    title: str = TITLE_ADMIN,
 ) -> bytes:
     """Genera el `.xlsx` completo en memoria (nunca toca disco salvo para
-    leer el PNG estático del logo)."""
+    leer el PNG estático del logo). `title` distingue el alcance del informe
+    (admin: toda la plantilla / empleado: solo lo propio) — el resto del
+    formato (logo, columnas, cabecera navy) es idéntico para ambos roles."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Fichajes"
 
     _insert_logo(ws)
-    _write_title(ws, date_from, date_to)
+    _write_title(ws, title, date_from, date_to)
     _write_header(ws)
     _write_rows(ws, rows)
     _apply_column_widths(ws)

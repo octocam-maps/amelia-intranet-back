@@ -58,6 +58,28 @@ _EXPORT_SELECT = """
         e.work_date DESC
 """
 
+# Informe empleado XLSX: mismo join que `_EXPORT_SELECT`, acotado a
+# `u.id = $1` (RGPD — cada trabajador exporta SOLO sus propios fichajes,
+# nunca los de otro). No filtra por `is_external`: si algún día un
+# externo-invitado tuviera fichajes, seguiría viendo únicamente los suyos.
+_EXPORT_SELECT_FOR_USER = """
+    SELECT
+        u.id AS user_id,
+        u.full_name,
+        p.dni_nif,
+        p.phone,
+        e.work_date,
+        e.clock_in,
+        e.clock_out
+    FROM time_clock_entries e
+    JOIN users u ON u.id = e.user_id
+    LEFT JOIN user_profiles p ON p.user_id = u.id
+    WHERE u.id = $1
+      AND e.work_date BETWEEN $2 AND $3
+      AND u.deleted_at IS NULL
+    ORDER BY e.work_date DESC
+"""
+
 
 def _row_to_entry(row) -> TimeClockEntry:
     return TimeClockEntry(
@@ -178,6 +200,12 @@ class PostgresTimeClockRepository(ITimeClockRepository):
         self, *, date_from: date, date_to: date
     ) -> list[TimeClockExportRow]:
         rows = await self._db.fetch(_EXPORT_SELECT, date_from, date_to)
+        return [_row_to_export_row(row) for row in rows]
+
+    async def list_export_rows_for_user(
+        self, user_id: str, *, date_from: date, date_to: date
+    ) -> list[TimeClockExportRow]:
+        rows = await self._db.fetch(_EXPORT_SELECT_FOR_USER, user_id, date_from, date_to)
         return [_row_to_export_row(row) for row in rows]
 
     async def find_overlapping_entry(

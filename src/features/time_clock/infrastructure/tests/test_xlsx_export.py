@@ -9,6 +9,8 @@ from openpyxl import load_workbook
 
 from src.features.time_clock.domain.entities import TimeClockExportRow
 from src.features.time_clock.infrastructure.xlsx_export import (
+    TITLE_ADMIN,
+    TITLE_EMPLOYEE,
     _split_full_name,
     build_time_clock_export_workbook,
 )
@@ -68,6 +70,27 @@ def test_workbook_has_header_and_data_rows():
     open_entry_row = [cell.value for cell in ws[7]]
     assert not open_entry_row[6]  # sin salida (openpyxl relee "" como None)
     assert open_entry_row[7] == 0.0  # tramo en curso no suma horas al informe
+
+
+def test_workbook_title_defaults_to_admin_scope():
+    workbook_bytes = build_time_clock_export_workbook(
+        [_row("Ana García")], date_from=date(2026, 6, 15), date_to=date(2026, 7, 15)
+    )
+
+    wb = load_workbook(io.BytesIO(workbook_bytes))
+    assert wb.active["A2"].value == TITLE_ADMIN
+
+
+def test_workbook_title_uses_employee_scope_when_passed():
+    workbook_bytes = build_time_clock_export_workbook(
+        [_row("Ana García")],
+        date_from=date(2026, 6, 15),
+        date_to=date(2026, 7, 15),
+        title=TITLE_EMPLOYEE,
+    )
+
+    wb = load_workbook(io.BytesIO(workbook_bytes))
+    assert wb.active["A2"].value == TITLE_EMPLOYEE
 
 
 def test_workbook_has_logo_image_and_frozen_header():
