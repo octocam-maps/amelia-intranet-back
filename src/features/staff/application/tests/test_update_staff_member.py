@@ -56,3 +56,20 @@ async def test_updating_missing_member_raises_not_found():
 
     with pytest.raises(StaffMemberNotFoundError):
         await use_case.execute("does-not-exist", job_title="Nuevo puesto")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "role_code", ["administrador", "empleado", "externo_invitado", "socio"]
+)
+async def test_updates_a_members_role_to_each_assignable_role(role_code):
+    """Misma regresión que `test_create_staff_member.py` pero para
+    `PATCH /staff/{id}` — editar a alguien (aunque sea solo el puesto) no
+    debe rechazar ni degradar ningún rol de la tabla `roles`."""
+    repository = FakeStaffRepository()
+    member = await _seed_member(repository)
+    use_case = UpdateStaffMemberUseCase(repository)
+
+    updated = await use_case.execute(member.id, role_code=role_code)
+
+    assert updated.role_code == role_code

@@ -84,6 +84,32 @@ async def test_unknown_entity_code_is_rejected():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "role_code", ["administrador", "empleado", "externo_invitado", "socio"]
+)
+async def test_creates_a_member_with_each_assignable_role(role_code):
+    """Los 4 roles de la tabla `roles` (migración 024 sumó `socio`) deben
+    poder darse de alta desde "Plantilla" — regresión del refactor que quitó
+    el `Literal[...]` fijo de `staff/infrastructure/schemas.py`: la única
+    validación real vive aquí, contra `resolve_role_id`."""
+    repository = FakeStaffRepository()
+    use_case = CreateStaffMemberUseCase(repository)
+
+    member = await use_case.execute(
+        full_name="Persona de Prueba",
+        email=f"prueba-{role_code}@ameliahub.com",
+        job_title=None,
+        department=None,
+        entity_code="hub",
+        role_code=role_code,
+        hire_date=None,
+        vacation_days_per_year=None,
+    )
+
+    assert member.role_code == role_code
+
+
+@pytest.mark.asyncio
 async def test_unknown_role_code_is_rejected():
     repository = FakeStaffRepository()
     use_case = CreateStaffMemberUseCase(repository)

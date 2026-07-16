@@ -13,6 +13,7 @@ _ROLES = {
     "administrador": "role-administrador",
     "empleado": "role-empleado",
     "externo_invitado": "role-externo_invitado",
+    "socio": "role-socio",
 }
 
 
