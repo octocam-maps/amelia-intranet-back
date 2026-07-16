@@ -119,6 +119,23 @@ async def test_list_announcement_recipient_ids_with_audience_all_only_excludes_e
 
 
 @pytest.mark.asyncio
+async def test_list_announcement_recipient_ids_with_audience_all_does_not_exclude_socio():
+    """Verificación (migración 024, sin cambios de código): el rol `socio`
+    es interno y NO debe quedar excluido de las audiencias team/all de
+    anuncios/cumpleaños — a diferencia de `externo_invitado`, la exclusión
+    es por lista explícita, no por allow-list, así que un rol nuevo queda
+    incluido automáticamente salvo que se añada aquí."""
+    pool = AsyncMock()
+    pool.fetch.return_value = [{"id": "user-1"}]
+    repository = PostgresNotificationRepository(pool)
+
+    await repository.list_announcement_recipient_ids(audience="all", entity_id=None, role_id=None)
+
+    query, *_params = pool.fetch.call_args[0]
+    assert "socio" not in query
+
+
+@pytest.mark.asyncio
 async def test_list_announcement_recipient_ids_with_audience_entity_filters_by_entity_id():
     pool = AsyncMock()
     pool.fetch.return_value = [{"id": "user-hub-1"}]

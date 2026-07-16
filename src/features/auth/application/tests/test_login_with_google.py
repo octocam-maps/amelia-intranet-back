@@ -51,6 +51,32 @@ async def test_auto_provisions_internal_user_without_invitation():
 
 
 @pytest.mark.asyncio
+async def test_auto_provisions_second_internal_domain_user_as_empleado_not_socio():
+    """octocam-maps.com se agregó como segundo dominio interno
+    (GOOGLE_WORKSPACE_HOSTED_DOMAINS). El auto-alta sigue siendo SIEMPRE
+    `empleado` por defecto — el rol `socio` no se otorga automáticamente por
+    dominio, lo asigna RRHH a mano después."""
+    identity = FakeGoogleIdentity(
+        sub="google-sub-octocam-1",
+        email="nuevo.socio@octocam-maps.com",
+        email_verified=True,
+        full_name="Nuevo Colaborador",
+        avatar_url=None,
+        hosted_domain="octocam-maps.com",
+        is_internal=True,
+    )
+    user_repo = FakeUserRepository()
+    use_case, session_repo = _build_use_case(user_repo, identity)
+
+    result = await use_case.execute("fake-id-token")
+
+    assert result.user.role_code == "empleado"
+    assert result.user.status == "active"
+    assert result.user.is_external is False
+    assert len(user_repo.users) == 1
+
+
+@pytest.mark.asyncio
 async def test_external_without_invitation_is_rejected():
     """hd ausente (Gmail personal) y sin invitación -> 403 NotInvitedError."""
     identity = FakeGoogleIdentity(
@@ -60,6 +86,26 @@ async def test_external_without_invitation_is_rejected():
         full_name="Colaborador Externo",
         avatar_url=None,
         hosted_domain=None,
+        is_internal=False,
+    )
+    use_case, _ = _build_use_case(FakeUserRepository(), identity)
+
+    with pytest.raises(NotInvitedError):
+        await use_case.execute("fake-id-token")
+
+
+@pytest.mark.asyncio
+async def test_unlisted_hosted_domain_without_invitation_is_rejected():
+    """`hd` presente pero fuera de GOOGLE_WORKSPACE_HOSTED_DOMAINS (Workspace
+    de otra empresa) y sin invitación -> 403 NotInvitedError. Distinto del
+    caso Gmail personal: aquí SÍ hay `hd`, solo que no está en la lista."""
+    identity = FakeGoogleIdentity(
+        sub="google-sub-otra-empresa",
+        email="alguien@otra-empresa.com",
+        email_verified=True,
+        full_name="Alguien de Otra Empresa",
+        avatar_url=None,
+        hosted_domain="otra-empresa.com",
         is_internal=False,
     )
     use_case, _ = _build_use_case(FakeUserRepository(), identity)

@@ -382,7 +382,7 @@ class PostgresOnboardingRepository(IOnboardingRepository):
             LEFT JOIN onboarding_progress op ON op.user_id = u.id
             LEFT JOIN onboarding_steps os ON os.id = op.step_id
             WHERE u.deleted_at IS NULL
-              AND r.code IN ('administrador', 'empleado', 'externo_invitado')
+              AND r.code IN ('administrador', 'empleado', 'externo_invitado', 'socio')
             ORDER BY u.full_name, os.step_order
             """
         )

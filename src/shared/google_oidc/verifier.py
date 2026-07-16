@@ -7,9 +7,10 @@ las claves públicas de Google (JWKS, gestionado por la librería oficial),
 `aud` (nuestro GOOGLE_CLIENT_ID) e `iss`. No se hace ningún intercambio de
 código ni se guarda ningún token de Google — es un verificador puro.
 
-El claim `hd` (hosted domain) es lo que distingue una cuenta de Workspace del
-dominio de la empresa (interno) de una cuenta Gmail personal (solo posible
-como externo-invitado vía `invitations`). Ver docs/permisos-roles.md.
+El claim `hd` (hosted domain) es lo que distingue una cuenta de Workspace de
+alguno de los dominios internos del grupo (`GOOGLE_WORKSPACE_HOSTED_DOMAINS`)
+de una cuenta Gmail personal (solo posible como externo-invitado vía
+`invitations`). Ver docs/permisos-roles.md.
 """
 
 from dataclasses import dataclass
@@ -48,11 +49,14 @@ class GoogleIdentity:
 
     @property
     def is_internal(self) -> bool:
-        """True si el claim `hd` coincide con el Workspace de la empresa."""
+        """True si el claim `hd` (VERIFICADO por Google, nunca el sufijo del
+        email) coincide con alguno de los Workspace internos configurados en
+        `GOOGLE_WORKSPACE_HOSTED_DOMAINS`. Sin `hd` no hay forma de que esto
+        sea True — un Gmail personal con un sufijo de email falseado no basta."""
+        if not self.hosted_domain:
+            return False
         settings = get_settings()
-        return bool(self.hosted_domain) and self.hosted_domain == (
-            settings.google_workspace_hosted_domain
-        )
+        return self.hosted_domain.lower() in settings.google_workspace_hosted_domains
 
 
 class GoogleOIDCVerifier:

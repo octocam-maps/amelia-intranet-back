@@ -44,7 +44,9 @@ def create_holidays_router() -> APIRouter:
     async def list_holidays(
         year: Optional[int] = Query(None),
         entity: Optional[str] = Query(None, description="Filtra por código de entidad (hub/lab/ops)"),
-        current_user: dict = Depends(require_role("administrador", "empleado")),
+        # `socio` [migración 024] = igual que empleado -> consulta el
+        # calendario laboral, sigue sin poder marcar/editar festivos.
+        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
         use_case: ListHolidaysUseCase = Depends(get_list_holidays_use_case),
     ):
         holidays = await use_case.execute(year=year, entity_code=entity)

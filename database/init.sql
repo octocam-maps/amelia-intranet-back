@@ -30,11 +30,13 @@ CREATE TABLE IF NOT EXISTS entities (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Roles del sistema (administrador / empleado / externo_invitado)
+-- Roles del sistema (administrador / empleado / externo_invitado / socio).
+-- socio [024]: igual que un empleado + visión global del calendario de
+-- vacaciones (ver + exportar); NO es admin.
 CREATE TABLE IF NOT EXISTS roles (
     id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     code       VARCHAR(30) NOT NULL UNIQUE
-                 CHECK (code IN ('administrador', 'empleado', 'externo_invitado')),
+                 CHECK (code IN ('administrador', 'empleado', 'externo_invitado', 'socio')),
     name       VARCHAR(80) NOT NULL,
     is_system  BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -445,7 +447,8 @@ CREATE INDEX IF NOT EXISTS idx_email_log_user_id ON email_log(user_id);
 INSERT INTO roles (code, name) VALUES
     ('administrador',    'Administrador'),
     ('empleado',         'Empleado'),
-    ('externo_invitado', 'Externo-invitado')
+    ('externo_invitado', 'Externo-invitado'),
+    ('socio',            'Socio')
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO entities (code, name) VALUES

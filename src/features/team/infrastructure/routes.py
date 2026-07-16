@@ -1,5 +1,6 @@
 """Router de `/team`: directorio y calendario de vacaciones. Visible para
-los 3 roles (docs/permisos-roles.md § Equipo) — solo lectura."""
+los 3 roles del producto (docs/permisos-roles.md § Equipo) — solo lectura.
+`socio` [migración 024] = igual que empleado, se suma a `_ALL_ROLES`."""
 
 from fastapi import APIRouter, Depends, Query
 
@@ -16,7 +17,7 @@ from .dependencies import (
 from .mappers import birthdays_to_dto, directory_to_dto, team_calendar_to_dto
 from .schemas import TeamAbsenceCalendarDTO, TeamBirthdaysDTO, TeamDirectoryDTO
 
-_ALL_ROLES = ("administrador", "empleado", "externo_invitado")
+_ALL_ROLES = ("administrador", "empleado", "externo_invitado", "socio")
 
 
 def create_team_router() -> APIRouter:

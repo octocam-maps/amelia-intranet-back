@@ -27,7 +27,7 @@ from src.features.team.domain.entities import (  # noqa: E402
 from src.features.team.infrastructure import dependencies as team_dependencies  # noqa: E402
 from src.shared.jwt import get_jwt_service  # noqa: E402
 
-_ROLES = ("administrador", "empleado", "externo_invitado")
+_ROLES = ("administrador", "empleado", "externo_invitado", "socio")
 
 
 def _token_for(role: str) -> str:

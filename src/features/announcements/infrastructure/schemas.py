@@ -7,7 +7,15 @@ from pydantic import BaseModel, Field
 
 Audience = Literal["all", "entity", "role"]
 EntityCode = Literal["hub", "lab", "ops"]
-RoleCode = Literal["administrador", "empleado", "externo_invitado"]
+# `role` NO es un `Literal` fijo (mismo criterio que `staff/infrastructure/
+# schemas.py`): la fuente única de qué roles existen es la tabla `roles`
+# (`GET /roles`, feature `roles`). `CreateAnnouncementUseCase`/
+# `UpdateAnnouncementUseCase` ya resuelven `role_code` contra esa tabla
+# (`resolve_role_id`) y devuelven `InvalidAudienceTargetError` (422) si no
+# existe. Este `Literal` se había quedado desactualizado tras la migración
+# 024 (nunca incluyó `socio`) — un admin no podía segmentar un anuncio por
+# `audience=role, role=socio` aunque el dominio ya lo soportaba: Pydantic
+# rechazaba el body con 422 antes de que el caso de uso llegara a mirarlo.
 
 
 class AnnouncementDTO(BaseModel):
@@ -36,7 +44,7 @@ class CreateAnnouncementDTO(BaseModel):
     body: str = Field(..., min_length=1)
     audience: Audience = "all"
     entity: Optional[EntityCode] = None
-    role: Optional[RoleCode] = None
+    role: Optional[str] = Field(None, min_length=1)
     is_pinned: bool = False
     published: bool = True
 
@@ -46,6 +54,6 @@ class UpdateAnnouncementDTO(BaseModel):
     body: Optional[str] = Field(None, min_length=1)
     audience: Optional[Audience] = None
     entity: Optional[EntityCode] = None
-    role: Optional[RoleCode] = None
+    role: Optional[str] = Field(None, min_length=1)
     is_pinned: Optional[bool] = None
     published: Optional[bool] = None

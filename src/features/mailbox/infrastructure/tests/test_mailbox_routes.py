@@ -83,6 +83,50 @@ def test_empleado_can_submit_a_message_and_only_gets_a_reference_code_back():
         app.dependency_overrides.clear()
 
 
+def test_socio_cannot_open_the_reception_tray():
+    """socio [migración 024] = igual que empleado + calendario global de
+    ausencias — NO hereda la recepción del buzón anónimo, exclusiva del
+    admin."""
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/mailbox/messages",
+                headers={"Authorization": f"Bearer {_token_for('socio')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_socio_can_submit_a_message_like_any_employee():
+    """socio [migración 024] = igual que empleado -> puede ENVIAR al buzón
+    anónimo igual que cualquier trabajador (el rol solo gatea spam)."""
+
+    class FakeSubmitUseCase:
+        async def execute(self, *, category, subject, body):
+            class _Message:
+                reference_code = "ABCDEF654321"
+
+            return _Message()
+
+    app.dependency_overrides[mailbox_dependencies.get_submit_anonymous_message_use_case] = (
+        lambda: FakeSubmitUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/mailbox/messages",
+                json={"category": "sugerencia", "body": "¿Habrá plazas de parking?"},
+                headers={"Authorization": f"Bearer {_token_for('socio')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 201
+    assert response.json() == {"reference_code": "ABCDEF654321"}
+
+
 def test_admin_can_open_the_reception_tray():
     class FakeListUseCase:
         async def execute(self, *, status_filter):

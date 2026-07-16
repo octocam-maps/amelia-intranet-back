@@ -36,7 +36,9 @@ def create_announcements_router() -> APIRouter:
     @router.get("", response_model=AnnouncementListDTO)
     async def list_announcements(
         limit: Optional[int] = Query(None, ge=1, le=50),
-        current_user: dict = Depends(require_role("administrador", "empleado")),
+        # `socio` [migración 024] = igual que empleado en TODA la app — lee
+        # el tablón igual que cualquier empleado, sigue sin poder publicar.
+        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
         use_case: ListAnnouncementsUseCase = Depends(get_list_announcements_use_case),
     ):
         announcements = await use_case.execute(

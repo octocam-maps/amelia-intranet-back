@@ -96,6 +96,73 @@ def test_externo_invitado_can_reach_get_me():
         app.dependency_overrides.clear()
 
 
+def test_socio_can_reach_get_me_like_any_internal_role():
+    """socio [migración 024] = igual que empleado -> onboarding COMPLETO,
+    no el parcial del externo-invitado."""
+
+    class FakeGetMyOnboardingUseCase:
+        async def execute(self, *, user_id, role):
+            return []
+
+    app.dependency_overrides[onboarding_dependencies.get_my_onboarding_use_case] = (
+        lambda: FakeGetMyOnboardingUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/onboarding/me",
+                headers={"Authorization": f"Bearer {_token_for('socio')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+
+
+def test_socio_can_submit_quiz_like_any_internal_role():
+    class FakeSubmitQuizUseCase:
+        async def execute(self, *, user_id, role, step_id, answers):
+            class _Attempt:
+                pass
+
+            attempt = _Attempt()
+            attempt.step_id = step_id
+            attempt.score = 1.0
+            attempt.passed = True
+            attempt.submitted_at = "2026-07-16T10:00:00Z"
+            return attempt
+
+    app.dependency_overrides[onboarding_dependencies.get_submit_quiz_use_case] = (
+        lambda: FakeSubmitQuizUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/onboarding/steps/step-quiz/quiz",
+                json={"answers": {"q1": "7"}},
+                headers={"Authorization": f"Bearer {_token_for('socio')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+
+
+def test_socio_cannot_reach_any_admin_endpoint():
+    """socio no hereda "Administración" — ni siquiera el catálogo de
+    onboarding en modo lectura de gestión."""
+    try:
+        with TestClient(app) as client:
+            headers = {"Authorization": f"Bearer {_token_for('socio')}"}
+            list_response = client.get("/onboarding/admin/steps", headers=headers)
+            progress_response = client.get("/onboarding/admin/progress", headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert list_response.status_code == 403
+    assert progress_response.status_code == 403
+
+
 def test_unauthenticated_request_is_rejected():
     try:
         with TestClient(app) as client:

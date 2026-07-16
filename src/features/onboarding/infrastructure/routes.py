@@ -66,8 +66,10 @@ from .schemas import (
     VideoProgressRequestDTO,
 )
 
-_ALL_ROLES = ("administrador", "empleado", "externo_invitado")
-_INTERNAL_ONLY = ("administrador", "empleado")
+_ALL_ROLES = ("administrador", "empleado", "externo_invitado", "socio")
+# `socio` [migración 024] = igual que empleado -> onboarding COMPLETO (5
+# pasos), no el parcial del externo-invitado.
+_INTERNAL_ONLY = ("administrador", "empleado", "socio")
 _ADMIN_ONLY = ("administrador",)
 
 

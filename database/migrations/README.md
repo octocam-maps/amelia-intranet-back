@@ -29,6 +29,9 @@ una migración nueva.
 | `019_absence_types_policy_fields.sql` | `absence_types.requires_approval`/`requires_justification`/`max_days_per_year` (aditivas) — políticas configurables por tipo desde el form de gestión (Fase 6, ronda 2) |
 | `020_onboarding_steps_seed.sql` | Seed de Fase 2 (onboarding): los 5 `onboarding_steps` (vídeo, cuestionario "El Hincator", firma, manual, perfil) + los 2 `onboarding_documents` placeholder (firma/manual). |
 | `021_time_clock_break_no_concurrent.sql` | Índice único parcial `uq_time_clock_break_one_open_per_entry` — impide dos pausas de fichaje abiertas a la vez en el mismo tramo (backstop anti-doble-clic que corrompía el contador semanal). |
+| `022_user_profiles_city.sql` | `user_profiles.city` (aditiva) — "Mi perfil" editable (Lote 2): el usuario edita su propio teléfono (`user_profiles.phone`, ya existía) y ciudad desde `PATCH /profile/me`. |
+| `023_time_clock_entry_notes.sql` | `time_clock_entry_notes` — incidencias/comentarios admin sobre un tramo de fichaje (B-2b, alta admin-only, lectura acotada al dueño del tramo o al admin). |
+| `024_socio_role.sql` | Amplía `roles.code` CHECK + seed del rol `socio` — igual que un empleado en toda la app + visión global del calendario de vacaciones (ver/exportar PDF/Excel), sin permisos de administración. |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero

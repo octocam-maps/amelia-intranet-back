@@ -110,3 +110,43 @@ def test_dev_tolerates_cors_wildcard(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "dev")
     monkeypatch.setenv("CORS_ORIGINS", "*")
     Settings()  # no debe lanzar
+
+
+# --- GOOGLE_WORKSPACE_HOSTED_DOMAINS: lista CSV de dominios internos ---
+
+
+def test_google_workspace_hosted_domains_defaults_to_ameliahub(monkeypatch):
+    monkeypatch.delenv("GOOGLE_WORKSPACE_HOSTED_DOMAINS", raising=False)
+    monkeypatch.delenv("GOOGLE_WORKSPACE_HOSTED_DOMAIN", raising=False)
+    assert Settings().google_workspace_hosted_domains == {"ameliahub.com"}
+
+
+def test_google_workspace_hosted_domains_parses_csv(monkeypatch):
+    monkeypatch.setenv(
+        "GOOGLE_WORKSPACE_HOSTED_DOMAINS", "ameliahub.com,octocam-maps.com"
+    )
+    domains = Settings().google_workspace_hosted_domains
+    assert domains == {"ameliahub.com", "octocam-maps.com"}
+
+
+def test_google_workspace_hosted_domains_normalizes_case_and_whitespace(monkeypatch):
+    monkeypatch.setenv(
+        "GOOGLE_WORKSPACE_HOSTED_DOMAINS", " AmeliaHub.com , Octocam-Maps.COM "
+    )
+    domains = Settings().google_workspace_hosted_domains
+    assert domains == {"ameliahub.com", "octocam-maps.com"}
+
+
+def test_google_workspace_hosted_domains_falls_back_to_legacy_singular_var(monkeypatch):
+    """Retrocompatibilidad: si la variable plural no está seteada pero sí la
+    singular histórica (Fase 1), se sigue respetando sin romper despliegues/CI
+    que todavía la exporten."""
+    monkeypatch.delenv("GOOGLE_WORKSPACE_HOSTED_DOMAINS", raising=False)
+    monkeypatch.setenv("GOOGLE_WORKSPACE_HOSTED_DOMAIN", "ameliahub.com")
+    assert Settings().google_workspace_hosted_domains == {"ameliahub.com"}
+
+
+def test_google_workspace_hosted_domains_plural_var_takes_precedence(monkeypatch):
+    monkeypatch.setenv("GOOGLE_WORKSPACE_HOSTED_DOMAINS", "octocam-maps.com")
+    monkeypatch.setenv("GOOGLE_WORKSPACE_HOSTED_DOMAIN", "ameliahub.com")
+    assert Settings().google_workspace_hosted_domains == {"octocam-maps.com"}

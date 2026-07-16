@@ -113,6 +113,34 @@ def test_empleado_cannot_run_notification_jobs():
     assert response.status_code == 403
 
 
+def test_socio_can_read_their_own_notifications_but_not_run_jobs():
+    """socio [migración 024] = igual que empleado -> su propio buzón
+    in-app, nunca `jobs/run` (exclusivo del admin)."""
+
+    class FakeListUseCase:
+        async def execute(self, *, user_id, limit, before):
+            from src.features.notifications.application.use_cases.list_notifications import (
+                NotificationPage,
+            )
+
+            assert user_id == "user-1"
+            return NotificationPage(items=[], next_before=None)
+
+    app.dependency_overrides[notification_dependencies.get_list_notifications_use_case] = (
+        lambda: FakeListUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            headers = {"Authorization": f"Bearer {_token_for('socio')}"}
+            list_response = client.get("/notifications", headers=headers)
+            job_response = client.post("/notifications/jobs/run?job=daily", headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert list_response.status_code == 200
+    assert job_response.status_code == 403
+
+
 def test_admin_can_run_the_daily_notification_job():
     class FakeDailyJobUseCase:
         async def execute(self):

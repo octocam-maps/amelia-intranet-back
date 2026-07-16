@@ -21,11 +21,14 @@ def create_dashboard_router() -> APIRouter:
     async def get_summary(
         # El externo-invitado no tiene "Inicio" en la matriz de permisos
         # (docs/permisos-roles.md § Inicio: ❌) — se rechaza aquí, en el
-        # backend, no solo ocultando el ítem del navbar.
-        current_user: dict = Depends(require_role("administrador", "empleado")),
+        # backend, no solo ocultando el ítem del navbar. `socio` [migración
+        # 024] = igual que empleado -> mismos widgets, nunca la bandeja/vista
+        # global del admin (`GetDashboardSummaryUseCase` solo la añade si
+        # `role == "administrador"`).
+        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
         use_case: GetDashboardSummaryUseCase = Depends(get_dashboard_summary_use_case),
     ):
-        """Empleado: sus widgets. Admin: + bandeja de pendientes y vista global."""
+        """Empleado (y socio): sus widgets. Admin: + bandeja de pendientes y vista global."""
         summary = await use_case.execute(user_id=current_user["sub"], role=current_user["role"])
         return summary_to_dto(summary)
 

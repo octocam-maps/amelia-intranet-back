@@ -12,7 +12,7 @@ from ...domain.entities import EmployeeOnboardingSummary
 from ...domain.policy import steps_applicable_to_role, summarize_employee_onboarding
 from ...domain.ports import IOnboardingRepository
 
-_ROLES = ("administrador", "empleado", "externo_invitado")
+_ROLES = ("administrador", "empleado", "externo_invitado", "socio")
 
 
 class GetOnboardingProgressOverviewUseCase:

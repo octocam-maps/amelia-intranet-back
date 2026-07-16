@@ -43,7 +43,7 @@ from .schemas import (
     UnreadCountDTO,
 )
 
-_ANY_AUTHENTICATED_ROLE = ("administrador", "empleado", "externo_invitado")
+_ANY_AUTHENTICATED_ROLE = ("administrador", "empleado", "externo_invitado", "socio")
 
 
 def create_notifications_router() -> APIRouter:

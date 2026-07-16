@@ -73,8 +73,27 @@ class Settings:
         )
 
         self.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
-        self.google_workspace_hosted_domain = os.getenv(
-            "GOOGLE_WORKSPACE_HOSTED_DOMAIN", "ameliahub.com"
+
+        # Dominios de Google Workspace considerados "internos" — determinan
+        # quién puede auto-provisionarse como `empleado` sin invitación (ver
+        # LoginWithGoogleUseCase e IGoogleIdentityVerifier.is_internal). CSV
+        # para soportar más de una entidad del grupo Amelia con Workspace
+        # propio (p.ej. ameliahub.com + octocam-maps.com) sin tocar código.
+        #
+        # Retrocompatibilidad: si la variable plural no está seteada, se cae
+        # a la singular histórica `GOOGLE_WORKSPACE_HOSTED_DOMAIN` (Fase 1)
+        # para no romper despliegues/CI que todavía la exporten.
+        _raw_hosted_domains = os.getenv("GOOGLE_WORKSPACE_HOSTED_DOMAINS")
+        if _raw_hosted_domains is None:
+            _raw_hosted_domains = os.getenv(
+                "GOOGLE_WORKSPACE_HOSTED_DOMAIN", "ameliahub.com"
+            )
+        # Normalizados a minúsculas: el claim `hd` de Google es un hostname,
+        # que se compara sin distinguir mayúsculas/minúsculas.
+        self.google_workspace_hosted_domains = frozenset(
+            domain.strip().lower()
+            for domain in _raw_hosted_domains.split(",")
+            if domain.strip()
         )
 
         self.sendgrid_api_key = os.getenv("SENDGRID_API_KEY", "")
