@@ -1,7 +1,9 @@
-from ..domain.entities import AbsenceBalance, AbsenceRequest, AbsenceType
+from ..domain.entities import AbsenceBalance, AbsenceCalendarEntry, AbsenceRequest, AbsenceType
 from .schemas import (
     AbsenceBalanceDTO,
     AbsenceBalanceListDTO,
+    AbsenceCalendarEntryDTO,
+    AbsenceCalendarEntryListDTO,
     AbsenceRequestDTO,
     AbsenceRequestListDTO,
     AbsenceTypeAdminDTO,
@@ -79,3 +81,22 @@ def request_to_dto(request: AbsenceRequest) -> AbsenceRequestDTO:
 
 def requests_to_dto(requests: list[AbsenceRequest]) -> AbsenceRequestListDTO:
     return AbsenceRequestListDTO(requests=[request_to_dto(r) for r in requests])
+
+
+def calendar_entry_to_dto(entry: AbsenceCalendarEntry) -> AbsenceCalendarEntryDTO:
+    return AbsenceCalendarEntryDTO(
+        request_id=entry.request_id,
+        user_id=entry.user_id,
+        user_full_name=entry.user_full_name,
+        absence_type_id=entry.absence_type_id,
+        absence_type_name=entry.absence_type_name,
+        absence_type_color=entry.absence_type_color,
+        start_date=entry.start_date,
+        end_date=entry.end_date,
+        days_count=entry.days_count,
+        status=entry.status,
+    )
+
+
+def calendar_entries_to_dto(entries: list[AbsenceCalendarEntry]) -> AbsenceCalendarEntryListDTO:
+    return AbsenceCalendarEntryListDTO(entries=[calendar_entry_to_dto(e) for e in entries])

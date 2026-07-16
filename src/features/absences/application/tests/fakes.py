@@ -156,6 +156,18 @@ class FakeAbsenceRepository:
         self.balances[key] = replace(existing, pending_days=existing.pending_days + pending_delta)
         return True
 
+    async def try_consume_balance(self, user_id, absence_type_id, year, *, used_delta) -> bool:
+        # Mismo contrato que `try_reserve_balance`, escribiendo en
+        # `used_days` — autoaprobación del administrador (B-1c).
+        key = (user_id, absence_type_id, year)
+        existing = self.balances.get(key)
+        if existing is None:
+            return False
+        if existing.available_days < used_delta:
+            return False
+        self.balances[key] = replace(existing, used_days=existing.used_days + used_delta)
+        return True
+
     async def create_request(
         self, *, user_id, absence_type_id, start_date, end_date, days_count, reason
     ) -> AbsenceRequest:
@@ -173,6 +185,28 @@ class FakeAbsenceRepository:
             reviewed_at=None,
             review_note=None,
             created_at=datetime.now(timezone.utc),
+        )
+        self.requests[request_id] = request
+        return request
+
+    async def create_approved_request(
+        self, *, user_id, absence_type_id, start_date, end_date, days_count, reason, review_note
+    ) -> AbsenceRequest:
+        request_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        request = AbsenceRequest(
+            id=request_id,
+            user_id=user_id,
+            absence_type_id=absence_type_id,
+            start_date=start_date,
+            end_date=end_date,
+            days_count=days_count,
+            reason=reason,
+            status="approved",
+            reviewed_by=user_id,
+            reviewed_at=now,
+            review_note=review_note,
+            created_at=now,
         )
         self.requests[request_id] = request
         return request

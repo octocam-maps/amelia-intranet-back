@@ -51,6 +51,7 @@ async def test_creating_a_request_notifies_the_admin_tray():
 
     await use_case.execute(
         user_id="user-1",
+        requester_role="empleado",
         absence_type_id="type-vacaciones",
         start_date=_monday(30),
         end_date=_friday(30),
@@ -62,12 +63,34 @@ async def test_creating_a_request_notifies_the_admin_tray():
 
 
 @pytest.mark.asyncio
+async def test_admin_self_approved_request_does_not_notify_the_admin_tray():
+    """Autoaprobación (B-1c): la solicitud del admin nace ya `approved`, así
+    que no tiene sentido avisar a la bandeja de "nueva solicitud" sobre algo
+    que ya resolvió el propio admin al crearla."""
+    repository = FakeAbsenceRepository(types=[_VACACIONES])
+    notify = _RecordingNotify()
+    use_case = CreateAbsenceRequestUseCase(repository, notify)
+
+    await use_case.execute(
+        user_id="admin-1",
+        requester_role="administrador",
+        absence_type_id="type-vacaciones",
+        start_date=_monday(30),
+        end_date=_friday(30),
+        reason=None,
+    )
+
+    assert notify.admin_calls == []
+
+
+@pytest.mark.asyncio
 async def test_create_without_a_notify_dependency_still_works():
     repository = FakeAbsenceRepository(types=[_VACACIONES])
     use_case = CreateAbsenceRequestUseCase(repository)
 
     request = await use_case.execute(
         user_id="user-1",
+        requester_role="empleado",
         absence_type_id="type-vacaciones",
         start_date=_monday(30),
         end_date=_friday(30),
