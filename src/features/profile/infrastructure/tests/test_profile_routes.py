@@ -34,8 +34,8 @@ def _token_for(role: str, *, sub: str = "user-1") -> str:
     )
 
 
-def _profile() -> UserProfile:
-    return UserProfile(
+def _profile(**overrides) -> UserProfile:
+    defaults = dict(
         id="user-1",
         email="sandra@ameliahub.com",
         full_name="Sandra Ramírez",
@@ -47,7 +47,11 @@ def _profile() -> UserProfile:
         department_name="Operaciones",
         manager_name="Beatriz Luna",
         is_external=False,
+        phone="+34 600 111 222",
+        city="Madrid",
     )
+    defaults.update(overrides)
+    return UserProfile(**defaults)
 
 
 def test_get_my_profile_returns_the_requesting_users_profile():
@@ -82,6 +86,8 @@ def test_get_my_profile_returns_the_requesting_users_profile():
         "department_name": "Operaciones",
         "manager_name": "Beatriz Luna",
         "is_external": False,
+        "phone": "+34 600 111 222",
+        "city": "Madrid",
     }
 
 
@@ -145,6 +151,28 @@ def test_externo_invitado_can_read_its_own_profile():
     assert body["manager_name"] is None
 
 
+def test_socio_can_read_its_own_profile():
+    """socio [migración 024] = igual que empleado -> "Mi perfil" sin
+    ningún dato extra ni restringido."""
+
+    class FakeGetMyProfileUseCase:
+        async def execute(self, user_id: str):
+            return _profile(role_code="socio")
+
+    app.dependency_overrides[profile_dependencies.get_my_profile_use_case] = (
+        lambda: FakeGetMyProfileUseCase()
+    )
+    token = _token_for("socio", sub="user-1")
+    try:
+        with TestClient(app) as client:
+            response = client.get("/profile/me", headers={"Authorization": f"Bearer {token}"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "socio"
+
+
 def test_requires_authentication():
     with TestClient(app) as client:
         response = client.get("/profile/me")
@@ -164,6 +192,165 @@ def test_get_my_profile_propagates_not_found_when_user_has_no_profile():
         with TestClient(app) as client:
             response = client.get(
                 "/profile/me",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_update_my_profile_updates_only_the_requesting_users_contact_data():
+    """RGPD: `PATCH /profile/me` no acepta ningún id en el body — el use
+    case siempre se llama con `current_user['sub']`, nunca con nada que
+    llegue en el payload (aunque el DTO ni siquiera define ese campo)."""
+
+    received: dict = {}
+
+    class FakeUpdateMyProfileUseCase:
+        async def execute(self, user_id: str, *, phone=None, city=None):
+            received["user_id"] = user_id
+            received["phone"] = phone
+            received["city"] = city
+            return _profile(phone=phone, city=city)
+
+    app.dependency_overrides[profile_dependencies.get_update_my_profile_use_case] = (
+        lambda: FakeUpdateMyProfileUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.patch(
+                "/profile/me",
+                json={"phone": "+34 611 222 333", "city": "Valencia"},
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert received == {
+        "user_id": "user-1",
+        "phone": "+34 611 222 333",
+        "city": "Valencia",
+    }
+    body = response.json()
+    assert body["phone"] == "+34 611 222 333"
+    assert body["city"] == "Valencia"
+
+
+def test_update_my_profile_ignores_any_id_and_always_uses_the_token_subject():
+    received_ids = []
+
+    class FakeUpdateMyProfileUseCase:
+        async def execute(self, user_id: str, *, phone=None, city=None):
+            received_ids.append(user_id)
+            return _profile(phone=phone, city=city)
+
+    app.dependency_overrides[profile_dependencies.get_update_my_profile_use_case] = (
+        lambda: FakeUpdateMyProfileUseCase()
+    )
+    token = _token_for("administrador", sub="admin-42")
+    try:
+        with TestClient(app) as client:
+            client.patch(
+                "/profile/me",
+                json={"city": "Bilbao"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert received_ids == ["admin-42"]
+
+
+def test_update_my_profile_accepts_partial_body_with_only_one_field():
+    class FakeUpdateMyProfileUseCase:
+        async def execute(self, user_id: str, *, phone=None, city=None):
+            assert phone is None
+            assert city == "Sevilla"
+            return _profile(phone=None, city="Sevilla")
+
+    app.dependency_overrides[profile_dependencies.get_update_my_profile_use_case] = (
+        lambda: FakeUpdateMyProfileUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.patch(
+                "/profile/me",
+                json={"city": "Sevilla"},
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+
+
+def test_update_my_profile_rejects_an_invalid_phone_format():
+    """Formato "razonable" de teléfono — letras o un número demasiado corto
+    se rechazan en el propio DTO (422), sin llegar al caso de uso."""
+
+    class FakeUpdateMyProfileUseCase:
+        async def execute(self, user_id: str, *, phone=None, city=None):
+            raise AssertionError("No debería llegar a ejecutarse con un teléfono inválido")
+
+    app.dependency_overrides[profile_dependencies.get_update_my_profile_use_case] = (
+        lambda: FakeUpdateMyProfileUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.patch(
+                "/profile/me",
+                json={"phone": "no-es-un-telefono"},
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+
+
+def test_update_my_profile_rejects_a_too_short_city():
+    class FakeUpdateMyProfileUseCase:
+        async def execute(self, user_id: str, *, phone=None, city=None):
+            raise AssertionError("No debería llegar a ejecutarse con una ciudad inválida")
+
+    app.dependency_overrides[profile_dependencies.get_update_my_profile_use_case] = (
+        lambda: FakeUpdateMyProfileUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.patch(
+                "/profile/me",
+                json={"city": "M"},
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+
+
+def test_update_my_profile_requires_authentication():
+    with TestClient(app) as client:
+        response = client.patch("/profile/me", json={"city": "Madrid"})
+
+    assert response.status_code in (401, 403)
+
+
+def test_update_my_profile_propagates_not_found_when_user_has_no_profile():
+    class FakeUpdateMyProfileUseCase:
+        async def execute(self, user_id: str, *, phone=None, city=None):
+            raise ProfileNotFoundError("No se encontró el perfil del usuario.")
+
+    app.dependency_overrides[profile_dependencies.get_update_my_profile_use_case] = (
+        lambda: FakeUpdateMyProfileUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.patch(
+                "/profile/me",
+                json={"city": "Madrid"},
                 headers={"Authorization": f"Bearer {_token_for('empleado')}"},
             )
     finally:

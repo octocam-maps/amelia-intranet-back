@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     emergency_contact_phone VARCHAR(30),
     iban                    VARCHAR(34),                  -- para volcado de nóminas
     social_security_number  VARCHAR(30),
+    city                    VARCHAR(120),                 -- 022_user_profiles_city.sql: editable en "Mi perfil"
     completed_at            TIMESTAMPTZ,                  -- paso 5 del onboarding
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
