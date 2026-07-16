@@ -43,6 +43,9 @@ class UpdateTimeClockEntryDTO(BaseModel):
 class TimeClockEntryDTO(BaseModel):
     id: str
     user_id: str
+    # `None` fuera de los listados paginados (alta, edición, fichaje en
+    # vivo...) — solo `GET /entries` lo rellena vía JOIN a `users`.
+    full_name: Optional[str] = None
     work_date: date
     clock_in: datetime
     clock_out: Optional[datetime]
@@ -52,12 +55,36 @@ class TimeClockEntryDTO(BaseModel):
 
 class TimeClockEntryListDTO(BaseModel):
     entries: list[TimeClockEntryDTO]
+    total: int
+    limit: int
+    offset: int
 
 
 class OpenTimeClockEntryDTO(BaseModel):
     id: str
     clock_in: datetime
     on_break: bool
+
+
+class AddTimeClockEntryNoteDTO(BaseModel):
+    """Alta de una incidencia/comentario sobre un tramo (B-2b, admin-only —
+    el guard de rol vive en el router)."""
+
+    body: str
+
+
+class TimeClockEntryNoteDTO(BaseModel):
+    id: str
+    entry_id: str
+    # `None` si el autor fue eliminado (`ON DELETE SET NULL`).
+    author_id: Optional[str]
+    author_full_name: Optional[str]
+    body: str
+    created_at: datetime
+
+
+class TimeClockEntryNoteListDTO(BaseModel):
+    notes: list[TimeClockEntryNoteDTO]
 
 
 class TimeClockCurrentStatusDTO(BaseModel):

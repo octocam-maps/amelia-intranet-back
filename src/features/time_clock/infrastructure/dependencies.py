@@ -2,6 +2,7 @@
 
 from src.shared.database import get_database_pool
 
+from ..application.use_cases.add_time_clock_entry_note import AddTimeClockEntryNoteUseCase
 from ..application.use_cases.clock_in import ClockInUseCase
 from ..application.use_cases.clock_out import ClockOutUseCase
 from ..application.use_cases.create_time_clock_entry import CreateTimeClockEntryUseCase
@@ -10,6 +11,7 @@ from ..application.use_cases.end_break import EndBreakUseCase
 from ..application.use_cases.export_time_clock_entries import ExportTimeClockEntriesUseCase
 from ..application.use_cases.get_live_status import GetLiveStatusUseCase
 from ..application.use_cases.list_time_clock_entries import ListTimeClockEntriesUseCase
+from ..application.use_cases.list_time_clock_entry_notes import ListTimeClockEntryNotesUseCase
 from ..application.use_cases.start_break import StartBreakUseCase
 from ..application.use_cases.update_time_clock_entry import UpdateTimeClockEntryUseCase
 from .repositories.time_clock_repository import PostgresTimeClockRepository
@@ -57,3 +59,11 @@ def get_live_status_use_case() -> GetLiveStatusUseCase:
 
 def get_export_time_clock_entries_use_case() -> ExportTimeClockEntriesUseCase:
     return ExportTimeClockEntriesUseCase(_get_repository())
+
+
+def get_add_time_clock_entry_note_use_case() -> AddTimeClockEntryNoteUseCase:
+    return AddTimeClockEntryNoteUseCase(_get_repository())
+
+
+def get_list_time_clock_entry_notes_use_case() -> ListTimeClockEntryNotesUseCase:
+    return ListTimeClockEntryNotesUseCase(_get_repository())

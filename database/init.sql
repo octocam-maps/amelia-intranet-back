@@ -251,6 +251,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_time_clock_break_one_open_per_entry
     ON time_clock_breaks (entry_id)
     WHERE break_end IS NULL;
 
+-- Incidencias/comentarios admin sobre un tramo [023]: registro add-only, sin
+-- `updated_at` (mismo criterio que `time_clock_breaks`). `author_id` en
+-- `ON DELETE SET NULL` para no perder la incidencia si se borra al autor.
+CREATE TABLE IF NOT EXISTS time_clock_entry_notes (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entry_id   UUID NOT NULL REFERENCES time_clock_entries(id) ON DELETE CASCADE,
+    author_id  UUID REFERENCES users(id) ON DELETE SET NULL,
+    body       TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_time_clock_entry_notes_entry_id ON time_clock_entry_notes(entry_id);
+
 -- Tipos de ausencia (configurable). default_entitled_days [010];
 -- requires_approval / requires_justification / max_days_per_year [019].
 CREATE TABLE IF NOT EXISTS absence_types (
