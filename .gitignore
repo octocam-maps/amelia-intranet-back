@@ -13,3 +13,6 @@ htmlcov/
 dist/
 build/
 .DS_Store
+
+# Credenciales locales (service account Drive, etc.) — nunca commitear
+secrets/
