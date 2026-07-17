@@ -9,7 +9,7 @@ from typing import Optional
 
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
-from ...domain.entities import AbsenceBalance, AbsenceRequest, AbsenceType
+from ...domain.entities import AbsenceBalance, AbsenceCalendarEntry, AbsenceRequest, AbsenceType
 from ...domain.ports import IAbsenceRepository
 
 
@@ -38,6 +38,21 @@ def _row_to_balance(row) -> AbsenceBalance:
         entitled_days=float(row["entitled_days"]),
         used_days=float(row["used_days"]),
         pending_days=float(row["pending_days"]),
+    )
+
+
+def _row_to_calendar_entry(row) -> AbsenceCalendarEntry:
+    return AbsenceCalendarEntry(
+        request_id=str(row["request_id"]),
+        user_id=str(row["user_id"]),
+        user_full_name=row["user_full_name"],
+        absence_type_id=str(row["absence_type_id"]),
+        absence_type_name=row["absence_type_name"],
+        absence_type_color=row["absence_type_color"],
+        start_date=row["start_date"],
+        end_date=row["end_date"],
+        days_count=float(row["days_count"]),
+        status=row["status"],
     )
 
 
@@ -268,6 +283,34 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         )
         return row is not None
 
+    async def try_consume_balance(
+        self,
+        user_id: str,
+        absence_type_id: str,
+        year: int,
+        *,
+        used_delta: float,
+    ) -> bool:
+        # Mismo contrato atómico que `try_reserve_balance` (RACE-1), pero
+        # escribe en `used_days` en lugar de `pending_days` — lo usa la
+        # autoaprobación del administrador (B-1c), que consume saldo
+        # directamente sin pasar por `pending`.
+        row = await self._db.fetchrow(
+            """
+            UPDATE absence_balances
+            SET used_days = used_days + $4,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = $1 AND absence_type_id = $2 AND year = $3
+              AND (entitled_days - used_days - pending_days) >= $4
+            RETURNING id
+            """,
+            user_id,
+            absence_type_id,
+            year,
+            used_delta,
+        )
+        return row is not None
+
     async def create_request(
         self,
         *,
@@ -291,6 +334,38 @@ class PostgresAbsenceRepository(IAbsenceRepository):
             end_date,
             days_count,
             reason,
+        )
+        return _row_to_request(row)
+
+    async def create_approved_request(
+        self,
+        *,
+        user_id: str,
+        absence_type_id: str,
+        start_date: date,
+        end_date: date,
+        days_count: float,
+        reason: Optional[str],
+        review_note: str,
+    ) -> AbsenceRequest:
+        # Autoaprobación del administrador (B-1c): nace en `approved`, con
+        # `reviewed_by = user_id` (se autoaprueba) y `reviewed_at` ya
+        # informado — nunca aparece en `list_pending_requests`.
+        row = await self._db.fetchrow(
+            """
+            INSERT INTO absence_requests
+                (user_id, absence_type_id, start_date, end_date, days_count, reason,
+                 status, reviewed_by, reviewed_at, review_note)
+            VALUES ($1, $2, $3, $4, $5, $6, 'approved', $1, CURRENT_TIMESTAMP, $7)
+            RETURNING *
+            """,
+            user_id,
+            absence_type_id,
+            start_date,
+            end_date,
+            days_count,
+            reason,
+            review_note,
         )
         return _row_to_request(row)
 
@@ -362,8 +437,65 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         )
         return _row_to_request(row) if row else None
 
+    async def list_calendar_entries(
+        self, *, date_from: date, date_to: date
+    ) -> list[AbsenceCalendarEntry]:
+        # "Calendario general de la plantilla" (LOTE 4): JOIN con `users` +
+        # `absence_types` en la misma query — la pantalla y los exports
+        # (XLSX/PDF) necesitan siempre el nombre real de la persona y del
+        # tipo de ausencia, nunca solo los IDs. Solo `pending`/`approved`:
+        # una solicitud `rejected`/`cancelled` no describe una ausencia real
+        # (mismo criterio que `list_overlapping_requests`). Solape estándar
+        # de rangos contra [date_from, date_to].
+        rows = await self._db.fetch(
+            """
+            SELECT
+                ar.id AS request_id,
+                ar.user_id,
+                u.full_name AS user_full_name,
+                ar.absence_type_id,
+                at.name AS absence_type_name,
+                at.color AS absence_type_color,
+                ar.start_date,
+                ar.end_date,
+                ar.days_count,
+                ar.status
+            FROM absence_requests ar
+            JOIN users u ON u.id = ar.user_id
+            JOIN absence_types at ON at.id = ar.absence_type_id
+            WHERE ar.status IN ('pending', 'approved')
+              AND ar.start_date <= $2
+              AND ar.end_date >= $1
+            ORDER BY u.full_name ASC, ar.start_date ASC
+            """,
+            date_from,
+            date_to,
+        )
+        return [_row_to_calendar_entry(row) for row in rows]
+
     async def list_holiday_dates(self, date_from: date, date_to: date) -> list[date]:
         rows = await self._db.fetch(
             "SELECT day FROM holidays WHERE day BETWEEN $1 AND $2", date_from, date_to
         )
         return [row["day"] for row in rows]
+
+    async def list_overlapping_requests(
+        self, user_id: str, *, start_date: date, end_date: date
+    ) -> list[AbsenceRequest]:
+        # Anti-solape (bug real, auditoría QA): solape estándar de rangos —
+        # [start_date, end_date] se pisa con [ar.start_date, ar.end_date] si
+        # ar.start_date <= end_date AND ar.end_date >= start_date. Solo
+        # `pending`/`approved` — una solicitud `rejected` no bloquea nada.
+        rows = await self._db.fetch(
+            """
+            SELECT * FROM absence_requests
+            WHERE user_id = $1
+              AND status IN ('pending', 'approved')
+              AND start_date <= $3
+              AND end_date >= $2
+            """,
+            user_id,
+            start_date,
+            end_date,
+        )
+        return [_row_to_request(row) for row in rows]

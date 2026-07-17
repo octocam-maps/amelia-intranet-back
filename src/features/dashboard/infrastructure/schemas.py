@@ -40,3 +40,17 @@ class DashboardSummaryDTO(BaseModel):
     # Solo presentes si el rol es administrador — `None` para empleado.
     pending_absence_requests: Optional[list[PendingAbsenceRequestDTO]] = None
     employees_clocked_in_now: Optional[int] = None
+
+
+# --- `GET /dashboard/admin/metrics` -----------------------------------------
+
+
+class AdminMetricsKPIsDTO(BaseModel):
+    absent_today: int
+    pending_approvals: int
+    clocked_in_now: int
+    punctuality_pct: int
+
+
+class AdminMetricsDTO(BaseModel):
+    kpis: AdminMetricsKPIsDTO

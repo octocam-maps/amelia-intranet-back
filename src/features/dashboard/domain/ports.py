@@ -9,6 +9,7 @@ from datetime import date
 from typing import Optional, Protocol
 
 from .entities import (
+    DailyTrendPoint,
     PendingAbsenceRequestSummary,
     TodayClockStatus,
     UpcomingHoliday,
@@ -36,4 +37,37 @@ class IDashboardRepository(Protocol):
 
     async def count_employees_clocked_in_now(self) -> int:
         """Vista aumentada del admin: tramos abiertos hoy (`clock_out IS NULL`)."""
+        ...
+
+    # --- `GET /dashboard/admin/metrics` --------------------------------
+    # `entity_id`/`department_id` en `None` significa "sin filtrar" — se
+    # traduce a SQL como `($n::uuid IS NULL OR ...)`, nunca se resuelve aquí.
+
+    async def count_absent_today(
+        self, today: date, entity_id: Optional[str], department_id: Optional[str]
+    ) -> int:
+        """Empleados con una ausencia `approved` cuyo rango incluye `today`."""
+        ...
+
+    async def count_pending_absence_approvals(
+        self, entity_id: Optional[str], department_id: Optional[str]
+    ) -> int: ...
+
+    async def count_clocked_in_now_filtered(
+        self, today: date, entity_id: Optional[str], department_id: Optional[str]
+    ) -> int:
+        """Como `count_employees_clocked_in_now`, pero acotado por
+        entidad/departamento — método propio de `admin/metrics` para no
+        alterar el contrato de `/dashboard/summary`."""
+        ...
+
+    async def list_daily_trends(
+        self,
+        from_date: date,
+        to_date: date,
+        entity_id: Optional[str],
+        department_id: Optional[str],
+    ) -> list[DailyTrendPoint]:
+        """Un punto por cada día del rango (inclusive), en orden cronológico
+        — incluye los días sin fichajes/ausencias con contadores en 0."""
         ...

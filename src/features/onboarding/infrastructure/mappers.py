@@ -3,14 +3,19 @@ from typing import Any
 from ..domain.entities import (
     DocumentAcknowledgement,
     DocumentSignature,
+    EmployeeOnboardingSummary,
     OnboardingProgress,
     OnboardingStep,
     QuizAttempt,
 )
 from .schemas import (
     AcknowledgementDTO,
+    AdminStepDTO,
+    AdminStepListDTO,
+    EmployeeOnboardingSummaryDTO,
     OnboardingMeDTO,
     OnboardingProgressDTO,
+    OnboardingProgressOverviewDTO,
     OnboardingStepDTO,
     QuizResultDTO,
     SignatureDTO,
@@ -95,4 +100,44 @@ def acknowledgement_to_dto(
         step_id=step_id,
         document_id=acknowledgement.document_id,
         acknowledged_at=acknowledgement.acknowledged_at,
+    )
+
+
+def step_to_admin_dto(step: OnboardingStep) -> AdminStepDTO:
+    """A diferencia de `step_with_progress_to_dto`, NUNCA enmascara
+    `config` — el admin es quien edita la respuesta correcta del quiz."""
+    return AdminStepDTO(
+        id=step.id,
+        step_order=step.step_order,
+        type=step.type,
+        title=step.title,
+        config=step.config,
+        is_active=step.is_active,
+    )
+
+
+def steps_to_admin_dto(steps: list[OnboardingStep]) -> AdminStepListDTO:
+    return AdminStepListDTO(steps=[step_to_admin_dto(step) for step in steps])
+
+
+def employee_summary_to_dto(
+    summary: EmployeeOnboardingSummary,
+) -> EmployeeOnboardingSummaryDTO:
+    return EmployeeOnboardingSummaryDTO(
+        user_id=summary.user_id,
+        full_name=summary.full_name,
+        email=summary.email,
+        avatar_url=summary.avatar_url,
+        status=summary.status,
+        completed_steps=summary.completed_steps,
+        total_steps=summary.total_steps,
+        current_step_title=summary.current_step_title,
+    )
+
+
+def progress_overview_to_dto(
+    summaries: list[EmployeeOnboardingSummary],
+) -> OnboardingProgressOverviewDTO:
+    return OnboardingProgressOverviewDTO(
+        employees=[employee_summary_to_dto(summary) for summary in summaries]
     )

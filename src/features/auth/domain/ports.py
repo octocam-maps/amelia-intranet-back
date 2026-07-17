@@ -103,11 +103,13 @@ class ISessionRepository(Protocol):
 
     async def revoke_family(self, family_id: str) -> int:
         """
-        Revoca TODAS las sesiones (activas o no) de una familia. Se dispara
-        cuando se detecta reuso de un `jti` ya revocado (posible robo de
-        refresh token): no basta con revocar el `jti` reusado, hay que matar
-        también cualquier descendiente que la rotación legítima ya hubiera
-        creado, porque no sabemos hasta dónde llegó el atacante.
+        Revoca TODAS las sesiones todavía ACTIVAS de una familia (el UPDATE
+        real está condicionado a `revoked_at IS NULL` — las ya revocadas no
+        se vuelven a tocar, es idempotente). Se dispara cuando se detecta
+        reuso de un `jti` ya revocado (posible robo de refresh token): no
+        basta con revocar el `jti` reusado, hay que matar también cualquier
+        descendiente que la rotación legítima ya hubiera creado, porque no
+        sabemos hasta dónde llegó el atacante.
         """
         ...
 

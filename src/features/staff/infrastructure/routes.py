@@ -33,7 +33,15 @@ def create_staff_router() -> APIRouter:
         entity: Optional[str] = Query(None, description="Filtra por código de entidad (hub/lab/ops)"),
         search: Optional[str] = Query(None, description="Busca por nombre"),
         page: int = Query(1, ge=1),
-        page_size: int = Query(20, ge=1, le=100),
+        # BUG-2: el frontend (`StaffPage`/`TimeClockPage`, selector de persona)
+        # pide una página "generosa" de hasta 200 para filtrar/paginar del
+        # lado del cliente mientras no hay un contrato de paginación real
+        # acordado — con `le=100` esa request de 200 devolvía 422 y la
+        # pantalla de Plantilla se veía vacía (0 de 39 personas) sin ningún
+        # aviso. 500 da margen sobre el techo actual del frontend (200) y
+        # sobre la plantilla real (39) sin abrir la puerta a un page_size
+        # arbitrariamente grande.
+        page_size: int = Query(20, ge=1, le=500),
         current_user: dict = Depends(require_role("administrador")),
         use_case: ListStaffUseCase = Depends(get_list_staff_use_case),
     ):
@@ -57,6 +65,7 @@ def create_staff_router() -> APIRouter:
             role_code=dto.role,
             hire_date=dto.hire_date,
             vacation_days_per_year=dto.vacation_days_per_year,
+            invited_by=current_user["sub"],
         )
         return member_to_dto(member)
 

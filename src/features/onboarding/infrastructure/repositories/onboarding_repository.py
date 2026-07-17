@@ -15,10 +15,12 @@ from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 from ...domain.entities import (
     DocumentAcknowledgement,
     DocumentSignature,
+    EmployeeOnboardingSnapshot,
     OnboardingDocument,
     OnboardingProgress,
     OnboardingStep,
     QuizAttempt,
+    StepProgressSnapshot,
 )
 from ...domain.errors import QuizAlreadyAttemptedError
 from ...domain.ports import IOnboardingRepository
@@ -106,9 +108,33 @@ class PostgresOnboardingRepository(IOnboardingRepository):
         )
         return [_row_to_step(row) for row in rows]
 
+    async def list_all_steps(self) -> list[OnboardingStep]:
+        rows = await self._db.fetch("SELECT * FROM onboarding_steps ORDER BY step_order")
+        return [_row_to_step(row) for row in rows]
+
     async def find_step_by_id(self, step_id: str) -> Optional[OnboardingStep]:
         row = await self._db.fetchrow(
             "SELECT * FROM onboarding_steps WHERE id = $1", step_id
+        )
+        return _row_to_step(row) if row else None
+
+    async def update_step(
+        self, step_id: str, *, title: str, is_active: bool, config: dict[str, Any]
+    ) -> Optional[OnboardingStep]:
+        row = await self._db.fetchrow(
+            """
+            UPDATE onboarding_steps
+            SET title = $2,
+                is_active = $3,
+                config = $4,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            RETURNING *
+            """,
+            step_id,
+            title,
+            is_active,
+            config,
         )
         return _row_to_step(row) if row else None
 
@@ -334,3 +360,90 @@ class PostgresOnboardingRepository(IOnboardingRepository):
             ip_address,
         )
         return _row_to_acknowledgement(row)
+
+    async def list_employee_progress_snapshots(self) -> list[EmployeeOnboardingSnapshot]:
+        # LEFT JOIN: un usuario que nunca llamó a `GET /onboarding/me`
+        # aparece con una única fila con `step_id IS NULL` (agrupada abajo
+        # en `steps=[]`) — así el panel de admin muestra "no iniciado" en
+        # vez de omitirlo.
+        rows = await self._db.fetch(
+            """
+            SELECT
+                u.id          AS user_id,
+                u.full_name   AS full_name,
+                u.email       AS email,
+                u.avatar_url  AS avatar_url,
+                r.code        AS role,
+                os.step_order AS step_order,
+                os.title      AS step_title,
+                op.status     AS step_status
+            FROM users u
+            JOIN roles r ON r.id = u.role_id
+            LEFT JOIN onboarding_progress op ON op.user_id = u.id
+            LEFT JOIN onboarding_steps os ON os.id = op.step_id
+            WHERE u.deleted_at IS NULL
+              AND r.code IN ('administrador', 'empleado', 'externo_invitado', 'socio')
+            ORDER BY u.full_name, os.step_order
+            """
+        )
+
+        snapshots_by_user: dict[str, EmployeeOnboardingSnapshot] = {}
+        for row in rows:
+            user_id = str(row["user_id"])
+            snapshot = snapshots_by_user.get(user_id)
+            if snapshot is None:
+                snapshot = EmployeeOnboardingSnapshot(
+                    user_id=user_id,
+                    full_name=row["full_name"],
+                    email=row["email"],
+                    avatar_url=row["avatar_url"],
+                    role=row["role"],
+                    steps=[],
+                )
+                snapshots_by_user[user_id] = snapshot
+
+            if row["step_order"] is not None:
+                snapshot.steps.append(
+                    StepProgressSnapshot(
+                        step_order=row["step_order"],
+                        title=row["step_title"],
+                        status=row["step_status"],
+                    )
+                )
+
+        return list(snapshots_by_user.values())
+
+    async def reset_quiz_attempt(
+        self, user_id: str, step_id: str
+    ) -> Optional[OnboardingProgress]:
+        # Borrado + reapertura en UNA transacción: si el UPDATE de abajo no
+        # afecta ninguna fila (usuario sin progreso inicializado en este
+        # paso), el DELETE del intento también se revierte — no queremos
+        # borrar el intento y dejar el progreso en `completed` a medias.
+        async with self._db.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    """
+                    DELETE FROM onboarding_quiz_attempts
+                    WHERE user_id = $1 AND step_id = $2
+                    """,
+                    user_id,
+                    step_id,
+                )
+                row = await connection.fetchrow(
+                    """
+                    UPDATE onboarding_progress
+                    SET status = 'available',
+                        progress_pct = 0,
+                        data = $3,
+                        started_at = NULL,
+                        completed_at = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = $1 AND step_id = $2
+                    RETURNING *
+                    """,
+                    user_id,
+                    step_id,
+                    {},
+                )
+        return _row_to_progress(row) if row else None

@@ -26,6 +26,17 @@ class InsufficientBalanceError(ValidationError):
     """El saldo disponible del tipo de ausencia no cubre los días solicitados."""
 
 
+class AbsenceRequestOverlapError(ValidationError):
+    """Ya existe una solicitud `pending`/`approved` del mismo usuario que
+    solapa con el rango de fechas solicitado.
+
+    Granularidad (pendiente de confirmar con RRHH, ver README): el chequeo
+    actual bloquea el solape contra CUALQUIER tipo de ausencia del usuario,
+    no solo contra el mismo `absence_type_id` — no está confirmado si dos
+    tipos distintos (p.ej. "vacaciones" y "asuntos propios") deberían poder
+    coexistir el mismo día."""
+
+
 class AbsenceRequestAlreadyReviewedError(ValidationError):
     """La solicitud ya fue aprobada/rechazada — no admite una segunda revisión."""
 

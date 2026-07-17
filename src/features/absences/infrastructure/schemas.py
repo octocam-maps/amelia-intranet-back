@@ -101,3 +101,25 @@ class AbsenceRequestDTO(BaseModel):
 
 class AbsenceRequestListDTO(BaseModel):
     requests: list[AbsenceRequestDTO]
+
+
+class AbsenceCalendarEntryDTO(BaseModel):
+    """Fila del "Calendario general de la plantilla" (LOTE 4) — a diferencia
+    de `AbsenceRequestDTO`, ya trae `absence_type_name`/`absence_type_color`
+    resueltos (JOIN en el repositorio), porque tanto la pantalla como los
+    exports PDF/XLSX los necesitan siempre."""
+
+    request_id: str
+    user_id: str
+    user_full_name: str
+    absence_type_id: str
+    absence_type_name: str
+    absence_type_color: Optional[str] = None
+    start_date: date
+    end_date: date
+    days_count: float
+    status: str
+
+
+class AbsenceCalendarEntryListDTO(BaseModel):
+    entries: list[AbsenceCalendarEntryDTO]

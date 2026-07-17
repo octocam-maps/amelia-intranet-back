@@ -21,6 +21,10 @@ class TimeClockForbiddenError(InsufficientPermissionsError):
     """
 
 
+class TimeClockNoteBodyRequiredError(ValidationError):
+    """La incidencia/comentario no puede estar vacía (B-2b)."""
+
+
 # --- Fichaje en vivo (modelo "ambos" — botón play/pausa/salida del dashboard) ---
 
 

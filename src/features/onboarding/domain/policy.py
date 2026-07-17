@@ -4,10 +4,24 @@ Reglas de negocio puras del onboarding — sin SQL, sin FastAPI. Se usan desde
 chequeo de "paso operable" en cada caso de uso.
 """
 
+from datetime import datetime
 from typing import Optional
 
-from .entities import OnboardingProgress, OnboardingStep
-from .errors import StepLockedError, StepNotAvailableForRoleError, StepNotOperableError
+from typing import Any
+
+from .entities import (
+    EmployeeOnboardingSnapshot,
+    EmployeeOnboardingSummary,
+    OnboardingProgress,
+    OnboardingStep,
+)
+from .errors import (
+    InvalidStepConfigError,
+    InvalidVideoProgressError,
+    StepLockedError,
+    StepNotAvailableForRoleError,
+    StepNotOperableError,
+)
 
 # El externo-invitado hace onboarding PARCIAL: solo vídeo + manual
 # (docs/permisos-roles.md § Onboarding: "parcial, sin firma/cuestionario/perfil").
@@ -22,6 +36,17 @@ _EXTERNAL_GUEST_ALLOWED_TYPES = frozenset({"video", "manual"})
 # progreso frecuentes (cada pocos segundos de un vídeo corto) y dejamos
 # margen para picos de red, sin permitir terminar el vídeo en un único salto.
 MAX_VIDEO_PROGRESS_JUMP_PCT = 30
+
+# Margen (en puntos de `progress_pct`) que se admite POR ENCIMA de lo que el
+# tiempo real transcurrido justificaría, para absorber picos de red/buffer
+# del reproductor y el desfase entre el evento de "play" y el primer
+# `POST /video-progress`. Es deliberadamente generoso (no una medición
+# exacta del reproductor) para no reventar de falsos positivos con una
+# conexión lenta — pero acota el bypass real: 4 requests sin esperar
+# (0->29->58->87->100) violan el % de salto máximo por request o, si se
+# reparten en llamadas más pequeñas, violan este techo por tiempo real,
+# porque entre request y request casi no pasa tiempo de reloj.
+VIDEO_PROGRESS_TIME_MARGIN_PCT = 20
 
 
 def steps_applicable_to_role(
@@ -58,3 +83,160 @@ def ensure_step_operable(progress: Optional[OnboardingProgress]) -> OnboardingPr
     if progress.status == "completed":
         raise StepNotOperableError("Este paso ya está completado.")
     return progress
+
+
+def ensure_video_progress_matches_elapsed_time(
+    *,
+    progress: OnboardingProgress,
+    step: OnboardingStep,
+    new_pct: int,
+    now: datetime,
+) -> None:
+    """Valida el `new_pct` reportado contra el TIEMPO REAL transcurrido desde
+    `progress.started_at` — el chequeo de salto máximo por request
+    (`MAX_VIDEO_PROGRESS_JUMP_PCT`) por sí solo no evita el bypass real: 4
+    requests rápidas y consecutivas (0->29->58->87->100), cada una dentro del
+    30% permitido, completan el vídeo sin haberlo visto.
+
+    `progress.started_at is None` significa que este es el PRIMER reporte de
+    progreso de este usuario para este paso — todavía no hay una base
+    temporal contra la que medir, así que aquí no se valida nada (solo aplica
+    el chequeo de salto de `ensure_step_operable`/`MAX_VIDEO_PROGRESS_JUMP_PCT`
+    en el use case). El propio UPDATE del repositorio es quien fija
+    `started_at` en ese primer reporte.
+
+    Si el paso no trae `duration` en su `config` (no debería pasar para
+    `type=video`, pero `config` es JSONB data-driven y no lo garantiza el
+    tipo), no se puede calcular el techo — se deja pasar sin validar en vez
+    de romper el flujo por un dato de catálogo mal cargado.
+    """
+    if progress.started_at is None:
+        return
+
+    duration_seconds = step.config.get("duration")
+    if not duration_seconds:
+        return
+
+    elapsed_seconds = (now - progress.started_at).total_seconds()
+    allowed_pct = (elapsed_seconds / duration_seconds) * 100 + VIDEO_PROGRESS_TIME_MARGIN_PCT
+    if new_pct > allowed_pct:
+        raise InvalidVideoProgressError(
+            "El progreso reportado va por delante del tiempo real de "
+            "reproducción — el vídeo no se puede saltar."
+        )
+
+
+def validate_step_config(step_type: str, config: dict[str, Any]) -> None:
+    """Valida coherencia mínima del `config` (JSONB) que el admin edita vía
+    `PATCH /onboarding/admin/steps/{id}` — data-driven por `type`, así que
+    no hay columna/constraint de BD que lo garantice; se valida aquí antes
+    de persistir. Los tipos sin shape obligatorio (`signature`, `manual`,
+    `profile`) no se validan: su `config` hoy no se usa para nada crítico."""
+    if step_type == "quiz":
+        _validate_quiz_config(config)
+    elif step_type == "video":
+        _validate_video_config(config)
+
+
+def _validate_quiz_config(config: dict[str, Any]) -> None:
+    questions = config.get("questions")
+    if not isinstance(questions, list) or not questions:
+        raise InvalidStepConfigError(
+            "El cuestionario necesita al menos una pregunta en `questions`."
+        )
+
+    for question in questions:
+        if not isinstance(question, dict):
+            raise InvalidStepConfigError("Cada pregunta debe ser un objeto.")
+
+        missing = [
+            key for key in ("id", "text", "options", "correct") if key not in question
+        ]
+        if missing:
+            raise InvalidStepConfigError(
+                f"Falta el campo {', '.join(missing)} en una pregunta del cuestionario."
+            )
+
+        options = question["options"]
+        if not isinstance(options, list) or not options:
+            raise InvalidStepConfigError(
+                "Cada pregunta necesita al menos una opción en `options`."
+            )
+        if question["correct"] not in options:
+            raise InvalidStepConfigError(
+                "La respuesta correcta (`correct`) debe ser una de las `options`."
+            )
+
+    threshold = config.get("threshold")
+    if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+        raise InvalidStepConfigError(
+            "El cuestionario necesita un `threshold` numérico entre 0 y 1."
+        )
+    if not (0 <= threshold <= 1):
+        raise InvalidStepConfigError("El `threshold` debe estar entre 0 y 1.")
+
+
+def _validate_video_config(config: dict[str, Any]) -> None:
+    url = config.get("url")
+    if not isinstance(url, str) or not url:
+        raise InvalidStepConfigError("El vídeo necesita una `url` no vacía.")
+
+    duration = config.get("duration")
+    if (
+        not isinstance(duration, (int, float))
+        or isinstance(duration, bool)
+        or duration <= 0
+    ):
+        raise InvalidStepConfigError(
+            "El vídeo necesita una `duration` numérica positiva (segundos)."
+        )
+
+
+# Estados de progreso que cuentan como "todavía sin empezar" a efectos del
+# panel de admin — sin filas de progreso (nunca inicializado) o con todas
+# sus filas en `locked` (inicializado pero sin tocar ningún paso).
+_NOT_STARTED_STATUSES = frozenset({"locked"})
+_OPERABLE_STATUSES = frozenset({"available", "in_progress"})
+
+
+def summarize_employee_onboarding(
+    snapshot: EmployeeOnboardingSnapshot, *, total_steps: int
+) -> EmployeeOnboardingSummary:
+    """Resume el progreso de un empleado para `GET /onboarding/admin/progress`
+    — pura lógica de negocio sobre las filas ya unidas por el repositorio
+    (`domain` no toca SQL). `total_steps` viene de
+    `steps_applicable_to_role` sobre el catálogo — así el externo-invitado
+    (onboarding parcial) no aparece eternamente `in_progress` por comparar
+    contra los 5 pasos completos."""
+    completed_steps = sum(1 for s in snapshot.steps if s.status == "completed")
+
+    not_started = not snapshot.steps or all(
+        s.status in _NOT_STARTED_STATUSES for s in snapshot.steps
+    )
+
+    if not_started:
+        status = "not_started"
+    elif completed_steps >= total_steps:
+        status = "completed"
+    else:
+        status = "in_progress"
+
+    current_step = next(
+        (
+            s
+            for s in sorted(snapshot.steps, key=lambda s: s.step_order)
+            if s.status in _OPERABLE_STATUSES
+        ),
+        None,
+    )
+
+    return EmployeeOnboardingSummary(
+        user_id=snapshot.user_id,
+        full_name=snapshot.full_name,
+        email=snapshot.email,
+        avatar_url=snapshot.avatar_url,
+        status=status,
+        completed_steps=completed_steps,
+        total_steps=total_steps,
+        current_step_title=current_step.title if current_step else None,
+    )

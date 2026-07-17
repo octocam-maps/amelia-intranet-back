@@ -2,10 +2,13 @@
 Adaptador asyncpg del puerto `IStaffRepository`. SQL crudo — sin ORM.
 Único lugar del feature que conoce el esquema de `users`, `roles`,
 `entities`, `departments` y (para el entitlement de vacaciones)
-`absence_types`/`absence_balances`.
+`absence_types`/`absence_balances`. `create_staff_member` además escribe en
+`invitations` (001_core_identity.sql) — mismo acoplamiento cross-feature
+que ya tiene `auth.user_repository` (`create_user_from_invitation`).
 """
 
-from datetime import date
+import secrets
+from datetime import date, datetime
 from typing import Optional
 
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
@@ -153,6 +156,8 @@ class PostgresStaffRepository(IStaffRepository):
         is_external: bool,
         hire_date: Optional[date],
         vacation_days_per_year: Optional[float],
+        invited_by: str,
+        expires_at: datetime,
     ) -> StaffMember:
         async with self._db.acquire() as connection:
             async with connection.transaction():
@@ -178,6 +183,23 @@ class PostgresStaffRepository(IStaffRepository):
                     await connection.execute(
                         _UPSERT_VACATION_BALANCE, user_id, vacation_days_per_year
                     )
+                # Traza de la invitación (feature `invitations`: listar
+                # pendientes/reenviar/cancelar). `token` NO se usa en ningún
+                # enlace hoy — el acceso sigue siendo 100% Google OIDC, solo
+                # satisface el `NOT NULL UNIQUE` del esquema y deja la puerta
+                # abierta a un magic-link futuro sin migración.
+                await connection.execute(
+                    """
+                    INSERT INTO invitations (email, role_id, entity_id, token, invited_by, expires_at)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    """,
+                    email,
+                    role_id,
+                    entity_id,
+                    secrets.token_urlsafe(32),
+                    invited_by,
+                    expires_at,
+                )
 
         member = await self.find_by_id(str(user_id))
         assert member is not None

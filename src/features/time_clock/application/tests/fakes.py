@@ -6,7 +6,12 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from src.features.time_clock.domain.entities import TimeClockBreak, TimeClockEntry
+from src.features.time_clock.domain.entities import (
+    TimeClockBreak,
+    TimeClockEntry,
+    TimeClockEntryNote,
+    TimeClockExportRow,
+)
 
 
 @dataclass
@@ -17,9 +22,20 @@ class FakeTimeClockRepository:
         self,
         entries: Optional[list[TimeClockEntry]] = None,
         breaks: Optional[list[TimeClockBreak]] = None,
+        full_names: Optional[dict[str, str]] = None,
+        dni_by_user: Optional[dict[str, str]] = None,
+        phone_by_user: Optional[dict[str, str]] = None,
     ):
         self.entries = {e.id: e for e in (entries or [])}
         self.breaks: dict[str, TimeClockBreak] = {b.id: b for b in (breaks or [])}
+        # Incidencias/comentarios (B-2b) — en memoria, sin tabla real detrás.
+        self.notes: dict[str, TimeClockEntryNote] = {}
+        # Identidad/contacto para `list_export_rows_for_all` — el fake no
+        # tiene una tabla `users`/`user_profiles` real, así que se pasan por
+        # fuera solo cuando un test necesita el informe XLSX.
+        self.full_names: dict[str, str] = full_names or {}
+        self.dni_by_user: dict[str, str] = dni_by_user or {}
+        self.phone_by_user: dict[str, str] = phone_by_user or {}
 
     async def create_entry(self, *, user_id, work_date, clock_in, clock_out, source) -> TimeClockEntry:
         entry_id = str(uuid.uuid4())
@@ -40,17 +56,105 @@ class FakeTimeClockRepository:
     async def find_entry_by_id(self, entry_id: str) -> Optional[TimeClockEntry]:
         return self.entries.get(entry_id)
 
-    async def list_entries_for_user(
-        self, user_id: str, *, date_from: date, date_to: date
+    def _with_full_name(self, entry: TimeClockEntry) -> TimeClockEntry:
+        # Mismo enriquecimiento que el JOIN a `users` del repositorio real
+        # (`_row_to_entry_with_name`) — solo lo hacen los listados.
+        return replace(entry, full_name=self.full_names.get(entry.user_id))
+
+    def _paginate(
+        self, entries: list[TimeClockEntry], *, limit: Optional[int], offset: int
     ) -> list[TimeClockEntry]:
-        return [
-            e
+        if limit is None:
+            return entries
+        return entries[offset : offset + limit]
+
+    async def list_entries_for_user(
+        self, user_id: str, *, date_from: date, date_to: date, limit: Optional[int], offset: int
+    ) -> list[TimeClockEntry]:
+        matches = [
+            self._with_full_name(e)
             for e in self.entries.values()
             if e.user_id == user_id and date_from <= e.work_date <= date_to
         ]
+        matches.sort(key=lambda e: (e.work_date, e.clock_in), reverse=True)
+        return self._paginate(matches, limit=limit, offset=offset)
 
-    async def list_entries_for_all(self, *, date_from: date, date_to: date) -> list[TimeClockEntry]:
-        return [e for e in self.entries.values() if date_from <= e.work_date <= date_to]
+    async def count_entries_for_user(self, user_id: str, *, date_from: date, date_to: date) -> int:
+        return len(
+            [
+                e
+                for e in self.entries.values()
+                if e.user_id == user_id and date_from <= e.work_date <= date_to
+            ]
+        )
+
+    async def list_entries_for_users(
+        self, user_ids: list[str], *, date_from: date, date_to: date, limit: Optional[int], offset: int
+    ) -> list[TimeClockEntry]:
+        ids = set(user_ids)
+        matches = [
+            self._with_full_name(e)
+            for e in self.entries.values()
+            if e.user_id in ids and date_from <= e.work_date <= date_to
+        ]
+        matches.sort(key=lambda e: (e.work_date, e.clock_in), reverse=True)
+        return self._paginate(matches, limit=limit, offset=offset)
+
+    async def count_entries_for_users(
+        self, user_ids: list[str], *, date_from: date, date_to: date
+    ) -> int:
+        ids = set(user_ids)
+        return len(
+            [e for e in self.entries.values() if e.user_id in ids and date_from <= e.work_date <= date_to]
+        )
+
+    async def list_entries_for_all(
+        self, *, date_from: date, date_to: date, limit: Optional[int], offset: int
+    ) -> list[TimeClockEntry]:
+        matches = [
+            self._with_full_name(e)
+            for e in self.entries.values()
+            if date_from <= e.work_date <= date_to
+        ]
+        matches.sort(key=lambda e: (e.work_date, e.clock_in), reverse=True)
+        return self._paginate(matches, limit=limit, offset=offset)
+
+    async def count_entries_for_all(self, *, date_from: date, date_to: date) -> int:
+        return len([e for e in self.entries.values() if date_from <= e.work_date <= date_to])
+
+    async def list_export_rows_for_all(
+        self, *, date_from: date, date_to: date
+    ) -> list[TimeClockExportRow]:
+        return [
+            TimeClockExportRow(
+                user_id=e.user_id,
+                full_name=self.full_names.get(e.user_id, "Sin Nombre"),
+                dni_nif=self.dni_by_user.get(e.user_id),
+                phone=self.phone_by_user.get(e.user_id),
+                work_date=e.work_date,
+                clock_in=e.clock_in,
+                clock_out=e.clock_out,
+            )
+            for e in self.entries.values()
+            if date_from <= e.work_date <= date_to
+        ]
+
+    async def list_export_rows_for_user(
+        self, user_id: str, *, date_from: date, date_to: date
+    ) -> list[TimeClockExportRow]:
+        return [
+            TimeClockExportRow(
+                user_id=e.user_id,
+                full_name=self.full_names.get(e.user_id, "Sin Nombre"),
+                dni_nif=self.dni_by_user.get(e.user_id),
+                phone=self.phone_by_user.get(e.user_id),
+                work_date=e.work_date,
+                clock_in=e.clock_in,
+                clock_out=e.clock_out,
+            )
+            for e in self.entries.values()
+            if e.user_id == user_id and date_from <= e.work_date <= date_to
+        ]
 
     async def find_overlapping_entry(
         self, user_id, work_date, clock_in, clock_out, *, exclude_entry_id=None
@@ -117,3 +221,23 @@ class FakeTimeClockRepository:
             )
             total += max(gross - break_seconds, 0.0)
         return total
+
+    # --- Incidencias/comentarios sobre un tramo (B-2b) ---
+
+    async def add_note(self, *, entry_id: str, author_id: str, body: str) -> TimeClockEntryNote:
+        note_id = str(uuid.uuid4())
+        note = TimeClockEntryNote(
+            id=note_id,
+            entry_id=entry_id,
+            author_id=author_id,
+            body=body,
+            created_at=datetime.now(timezone.utc),
+            author_full_name=self.full_names.get(author_id),
+        )
+        self.notes[note_id] = note
+        return note
+
+    async def list_notes_for_entry(self, entry_id: str) -> list[TimeClockEntryNote]:
+        matches = [n for n in self.notes.values() if n.entry_id == entry_id]
+        matches.sort(key=lambda n: n.created_at)
+        return matches

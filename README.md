@@ -35,12 +35,12 @@ equipo/organigrama y admin/notificaciones son Fase 4+.
 4. Copiar el **Client ID** (no el secret — no se usa) a:
    - `amelia-intranet-back/.env` → `GOOGLE_CLIENT_ID`
    - `amelia-intranet-web/.env` → `VITE_GOOGLE_CLIENT_ID` (mismo valor)
-5. Confirmar `GOOGLE_WORKSPACE_HOSTED_DOMAIN=ameliahub.com` — es el claim `hd`
-   que distingue plantilla interna de externos-invitado. **Ojo:** cualquier
-   cuenta de ese Workspace que haga login y no tenga invitación pendiente se
-   auto-provisiona como `empleado` (ver "Contrato de `/auth`" más abajo) —
-   revisar que este dominio esté bien antes de habilitar el login en un
-   entorno compartido.
+5. Confirmar `GOOGLE_WORKSPACE_HOSTED_DOMAINS=ameliahub.com,octocam-maps.com`
+   (CSV) — es el claim `hd` que distingue plantilla interna de
+   externos-invitado. **Ojo:** cualquier cuenta de alguno de esos Workspace
+   que haga login y no tenga invitación pendiente se auto-provisiona como
+   `empleado` (ver "Contrato de `/auth`" más abajo) — revisar que la lista
+   esté bien antes de habilitar el login en un entorno compartido.
 
 ### 2. Base de datos + backend (Docker)
 
@@ -132,8 +132,8 @@ llamada `amelia_intranet_refresh_token` (path `/auth`).
    (cubre externos-invitado y cualquier interno que RRHH quiera pre-asignar
    a un rol concreto, p.ej. un futuro admin).
 2. Si no hay invitación pero el claim `hd` del id_token (verificado por
-   Google, nunca el sufijo del email) coincide con
-   `GOOGLE_WORKSPACE_HOSTED_DOMAIN`, se auto-provisiona como `empleado`
+   Google, nunca el sufijo del email) coincide con alguno de
+   `GOOGLE_WORKSPACE_HOSTED_DOMAINS`, se auto-provisiona como `empleado`
    `active` — entidad/departamento quedan `NULL`, RRHH los completa después.
 3. Si no es interno y no hay invitación, `403 NotInvitedError`.
 

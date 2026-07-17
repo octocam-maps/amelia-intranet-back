@@ -1,18 +1,15 @@
 import pytest
 
-from src.features.staff.application.use_cases.create_staff_member import (
-    CreateStaffMemberUseCase,
-)
 from src.features.staff.application.use_cases.update_staff_member import (
     UpdateStaffMemberUseCase,
 )
 from src.features.staff.domain.errors import StaffMemberNotFoundError
 
-from .fakes import FakeStaffRepository
+from .fakes import _DEFAULT_INVITED_BY, FakeStaffRepository, build_create_staff_member_use_case
 
 
 async def _seed_member(repository: FakeStaffRepository):
-    return await CreateStaffMemberUseCase(repository).execute(
+    return await build_create_staff_member_use_case(repository).execute(
         full_name="Sandra Ramírez",
         email="sandra@ameliahub.com",
         job_title="Project Manager",
@@ -21,6 +18,7 @@ async def _seed_member(repository: FakeStaffRepository):
         role_code="empleado",
         hire_date=None,
         vacation_days_per_year=23,
+        invited_by=_DEFAULT_INVITED_BY,
     )
 
 
@@ -56,3 +54,20 @@ async def test_updating_missing_member_raises_not_found():
 
     with pytest.raises(StaffMemberNotFoundError):
         await use_case.execute("does-not-exist", job_title="Nuevo puesto")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "role_code", ["administrador", "empleado", "externo_invitado", "socio"]
+)
+async def test_updates_a_members_role_to_each_assignable_role(role_code):
+    """Misma regresión que `test_create_staff_member.py` pero para
+    `PATCH /staff/{id}` — editar a alguien (aunque sea solo el puesto) no
+    debe rechazar ni degradar ningún rol de la tabla `roles`."""
+    repository = FakeStaffRepository()
+    member = await _seed_member(repository)
+    use_case = UpdateStaffMemberUseCase(repository)
+
+    updated = await use_case.execute(member.id, role_code=role_code)
+
+    assert updated.role_code == role_code

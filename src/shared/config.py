@@ -11,10 +11,27 @@ def _is_truthy(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+# Entornos donde un default inseguro NO es tolerable: el arranque debe abortar
+# (fail-fast) en vez de dejar que un olvido de configuración se convierta en
+# una brecha. En `dev`/`test` los defaults cómodos siguen valiendo.
+_SECURE_ENVIRONMENTS = {"prod", "production", "stage", "staging"}
+_INSECURE_JWT_SECRET_DEFAULT = "change-me-in-production"
+_MIN_JWT_SECRET_LENGTH = 32
+
+
 class Settings:
     def __init__(self) -> None:
         self.environment = os.getenv("ENVIRONMENT", "dev")
-        self.swagger_enabled = _is_truthy(os.getenv("SWAGGER_ENABLED", "true"))
+        # Swagger/Redoc/openapi.json exponen el contrato completo de la API
+        # (rutas, esquemas, hasta ejemplos) — cómodo en dev, pero un default
+        # `true` en cualquier entorno lo deja abierto también en prod/stage si
+        # nadie lo desactiva a mano (bug real, auditoría QA). Default: solo
+        # `dev`/`test` lo activan; el resto lo desactiva salvo override
+        # explícito con `SWAGGER_ENABLED=true`.
+        _default_swagger_enabled = self.environment in {"dev", "test"}
+        self.swagger_enabled = _is_truthy(
+            os.getenv("SWAGGER_ENABLED", str(_default_swagger_enabled))
+        )
 
         self.database_url = os.getenv(
             "DATABASE_URL", "postgresql://postgres:postgres@localhost:5436/postgres"
@@ -45,24 +62,55 @@ class Settings:
         # ver SOFT-2170). `/auth` cubre `/auth/refresh` y `/auth/logout`
         # sin exponer la cookie a rutas fuera de auth.
         self.refresh_token_cookie_path = os.getenv("REFRESH_TOKEN_COOKIE_PATH", "/auth")
+        # Secure por defecto en entornos protegidos (HTTPS); en dev se permite
+        # HTTP local. Un override explícito a `false` en prod/stage lo rechaza
+        # el guardia de `_enforce_secure_defaults`.
+        _default_cookie_secure = (
+            "true" if self.environment in _SECURE_ENVIRONMENTS else "false"
+        )
         self.refresh_token_cookie_secure = _is_truthy(
-            os.getenv("REFRESH_TOKEN_COOKIE_SECURE", "false")
+            os.getenv("REFRESH_TOKEN_COOKIE_SECURE", _default_cookie_secure)
         )
 
         self.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
-        self.google_workspace_hosted_domain = os.getenv(
-            "GOOGLE_WORKSPACE_HOSTED_DOMAIN", "ameliahub.com"
+
+        # Dominios de Google Workspace considerados "internos" — determinan
+        # quién puede auto-provisionarse como `empleado` sin invitación (ver
+        # LoginWithGoogleUseCase e IGoogleIdentityVerifier.is_internal). CSV
+        # para soportar más de una entidad del grupo Amelia con Workspace
+        # propio (p.ej. ameliahub.com + octocam-maps.com) sin tocar código.
+        #
+        # Retrocompatibilidad: si la variable plural no está seteada, se cae
+        # a la singular histórica `GOOGLE_WORKSPACE_HOSTED_DOMAIN` (Fase 1)
+        # para no romper despliegues/CI que todavía la exporten.
+        _raw_hosted_domains = os.getenv("GOOGLE_WORKSPACE_HOSTED_DOMAINS")
+        if _raw_hosted_domains is None:
+            _raw_hosted_domains = os.getenv(
+                "GOOGLE_WORKSPACE_HOSTED_DOMAIN", "ameliahub.com"
+            )
+        # Normalizados a minúsculas: el claim `hd` de Google es un hostname,
+        # que se compara sin distinguir mayúsculas/minúsculas.
+        self.google_workspace_hosted_domains = frozenset(
+            domain.strip().lower()
+            for domain in _raw_hosted_domains.split(",")
+            if domain.strip()
         )
 
         self.sendgrid_api_key = os.getenv("SENDGRID_API_KEY", "")
         self.sendgrid_from_email = os.getenv("SENDGRID_FROM_EMAIL", "no-reply@ameliahub.com")
         self.frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
-        # Fase 6 (notificaciones): "mock" es el único proveedor implementado
-        # hoy — escribe en `email_log` sin ninguna llamada de red real (ver
-        # src/shared/email). "sendgrid" está deliberadamente SIN implementar:
-        # la API key de SendGrid es de RRHH y no se toca en esta fase
-        # (docs/requerimientos-amelia-intranet.pdf §6).
+        # Vigencia de una invitación (`invitations.expires_at`, feature
+        # `staff`/`invitations`) antes de que "Reenviar" tenga que extenderla.
+        # `token` se guarda pero no se usa en ningún enlace (el acceso sigue
+        # siendo 100% Google OIDC) — este plazo solo acota cuánto tiempo se
+        # sigue considerando "pendiente" una invitación sin aceptar.
+        self.invitation_expires_days = int(os.getenv("INVITATION_EXPIRES_DAYS", "7"))
+
+        # Fase 6 (notificaciones): "mock" (default) escribe en `email_log` sin
+        # ninguna llamada de red; "sendgrid" envía de verdad vía la API v3 de
+        # SendGrid (requiere `SENDGRID_API_KEY` y `SENDGRID_FROM_EMAIL`
+        # verificado). Ver src/shared/email/infrastructure/factory.py.
         self.email_provider = os.getenv("EMAIL_PROVIDER", "mock")
 
         # Nager.Date (https://date.nager.at) — festivos oficiales de España
@@ -83,6 +131,58 @@ class Settings:
             for ip in os.getenv("TRUSTED_PROXY_IPS", "").split(",")
             if ip.strip()
         }
+
+        self._enforce_secure_defaults()
+
+    def _enforce_secure_defaults(self) -> None:
+        """Fail-fast en entornos protegidos (prod/stage): un default inseguro
+        olvidado en el despliegue no debe convertir un error de configuración
+        en una brecha. Se acumulan TODOS los problemas para reportarlos juntos,
+        no solo el primero."""
+        if self.environment not in _SECURE_ENVIRONMENTS:
+            return
+
+        problems: list[str] = []
+
+        # JWT_SECRET_KEY firma access y refresh tokens. Con el default público
+        # (o un secreto trivialmente corto) cualquiera podría forjar un JWT con
+        # role="administrador" y el `sub` de cualquier usuario.
+        if (
+            self.jwt_secret_key == _INSECURE_JWT_SECRET_DEFAULT
+            or len(self.jwt_secret_key) < _MIN_JWT_SECRET_LENGTH
+        ):
+            problems.append(
+                "JWT_SECRET_KEY sin configurar o demasiado corto "
+                f"(mínimo {_MIN_JWT_SECRET_LENGTH} caracteres aleatorios). "
+                "Con el valor por defecto se pueden forjar tokens."
+            )
+
+        # La cookie del refresh token (credencial de 7 días) debe viajar solo
+        # por HTTPS. El default ya es Secure aquí, pero un override explícito a
+        # false reintroduce el riesgo de interceptación en un downgrade a HTTP.
+        if not self.refresh_token_cookie_secure:
+            problems.append(
+                "REFRESH_TOKEN_COOKIE_SECURE=false: la cookie de refresh "
+                "viajaría sin el flag Secure (interceptable sobre HTTP)."
+            )
+
+        # CORS con wildcard + credenciales (cookies) habilitadas es una
+        # combinación insegura: `allow_credentials=True` es fijo en este
+        # proyecto (ver `main.py`), así que un `CORS_ORIGINS=*` olvidado en
+        # el despliegue dejaría cualquier origen leer respuestas autenticadas
+        # con la cookie de refresh adjunta.
+        if "*" in self.cors_origins:
+            problems.append(
+                "CORS_ORIGINS incluye '*' junto con allow_credentials=True: "
+                "cualquier origen podría hacer peticiones autenticadas con "
+                "la cookie de refresh."
+            )
+
+        if problems:
+            detail = "\n".join(f"  - {p}" for p in problems)
+            raise RuntimeError(
+                f"Configuración insegura para ENVIRONMENT='{self.environment}':\n{detail}"
+            )
 
 
 @lru_cache

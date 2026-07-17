@@ -1,17 +1,14 @@
 import pytest
 
-from src.features.staff.application.use_cases.create_staff_member import (
-    CreateStaffMemberUseCase,
-)
 from src.features.staff.application.use_cases.list_staff import ListStaffUseCase
 
-from .fakes import FakeStaffRepository
+from .fakes import _DEFAULT_INVITED_BY, FakeStaffRepository, build_create_staff_member_use_case
 
 
 @pytest.mark.asyncio
 async def test_filters_by_entity_and_search():
     repository = FakeStaffRepository()
-    create = CreateStaffMemberUseCase(repository)
+    create = build_create_staff_member_use_case(repository)
     await create.execute(
         full_name="Sandra Ramírez",
         email="sandra@ameliahub.com",
@@ -21,6 +18,7 @@ async def test_filters_by_entity_and_search():
         role_code="empleado",
         hire_date=None,
         vacation_days_per_year=None,
+        invited_by=_DEFAULT_INVITED_BY,
     )
     await create.execute(
         full_name="Daniel Santos",
@@ -31,6 +29,7 @@ async def test_filters_by_entity_and_search():
         role_code="empleado",
         hire_date=None,
         vacation_days_per_year=None,
+        invited_by=_DEFAULT_INVITED_BY,
     )
     use_case = ListStaffUseCase(repository)
 
@@ -46,7 +45,7 @@ async def test_filters_by_entity_and_search():
 @pytest.mark.asyncio
 async def test_pagination_returns_total_regardless_of_page_size():
     repository = FakeStaffRepository()
-    create = CreateStaffMemberUseCase(repository)
+    create = build_create_staff_member_use_case(repository)
     for index in range(3):
         await create.execute(
             full_name=f"Persona {index}",
@@ -57,6 +56,7 @@ async def test_pagination_returns_total_regardless_of_page_size():
             role_code="empleado",
             hire_date=None,
             vacation_days_per_year=None,
+            invited_by=_DEFAULT_INVITED_BY,
         )
     use_case = ListStaffUseCase(repository)
 

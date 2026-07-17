@@ -1,5 +1,11 @@
-from ..domain.entities import AdminDashboardSummary, EmployeeDashboardSummary
+from ..domain.entities import (
+    AdminDashboardMetrics,
+    AdminDashboardSummary,
+    EmployeeDashboardSummary,
+)
 from .schemas import (
+    AdminMetricsDTO,
+    AdminMetricsKPIsDTO,
     DashboardSummaryDTO,
     PendingAbsenceRequestDTO,
     TodayClockStatusDTO,
@@ -49,4 +55,15 @@ def summary_to_dto(summary: EmployeeDashboardSummary) -> DashboardSummaryDTO:
         vacation_balance=vacation_dto,
         today_clock_status=today_clock_dto,
         upcoming_holidays=holidays_dto,
+    )
+
+
+def metrics_to_dto(metrics: AdminDashboardMetrics) -> AdminMetricsDTO:
+    return AdminMetricsDTO(
+        kpis=AdminMetricsKPIsDTO(
+            absent_today=metrics.kpis.absent_today,
+            pending_approvals=metrics.kpis.pending_approvals,
+            clocked_in_now=metrics.kpis.clocked_in_now,
+            punctuality_pct=metrics.kpis.punctuality_pct,
+        ),
     )

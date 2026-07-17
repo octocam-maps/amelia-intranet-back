@@ -76,3 +76,46 @@ class CompleteProfileRequestDTO(BaseModel):
     address: Optional[str] = None
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
+
+
+class AdminStepDTO(BaseModel):
+    """A diferencia de `OnboardingStepDTO`, `config` NUNCA se enmascara
+    aquí — el admin edita la respuesta correcta del quiz."""
+
+    id: str
+    step_order: int
+    type: str
+    title: str
+    config: dict[str, Any]
+    is_active: bool
+
+
+class AdminStepListDTO(BaseModel):
+    steps: list[AdminStepDTO]
+
+
+class UpdateOnboardingStepRequestDTO(BaseModel):
+    title: Optional[str] = None
+    is_active: Optional[bool] = None
+    # Reemplazo COMPLETO del JSONB del paso (no merge profundo) — el admin
+    # envía la config entera resultante de editar el formulario.
+    config: Optional[dict[str, Any]] = None
+
+
+class ResetQuizRequestDTO(BaseModel):
+    user_id: str
+
+
+class EmployeeOnboardingSummaryDTO(BaseModel):
+    user_id: str
+    full_name: str
+    email: str
+    avatar_url: Optional[str]
+    status: str
+    completed_steps: int
+    total_steps: int
+    current_step_title: Optional[str]
+
+
+class OnboardingProgressOverviewDTO(BaseModel):
+    employees: list[EmployeeOnboardingSummaryDTO]

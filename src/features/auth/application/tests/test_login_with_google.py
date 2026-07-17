@@ -51,6 +51,32 @@ async def test_auto_provisions_internal_user_without_invitation():
 
 
 @pytest.mark.asyncio
+async def test_auto_provisions_second_internal_domain_user_as_empleado_not_socio():
+    """octocam-maps.com se agregó como segundo dominio interno
+    (GOOGLE_WORKSPACE_HOSTED_DOMAINS). El auto-alta sigue siendo SIEMPRE
+    `empleado` por defecto — el rol `socio` no se otorga automáticamente por
+    dominio, lo asigna RRHH a mano después."""
+    identity = FakeGoogleIdentity(
+        sub="google-sub-octocam-1",
+        email="nuevo.socio@octocam-maps.com",
+        email_verified=True,
+        full_name="Nuevo Colaborador",
+        avatar_url=None,
+        hosted_domain="octocam-maps.com",
+        is_internal=True,
+    )
+    user_repo = FakeUserRepository()
+    use_case, session_repo = _build_use_case(user_repo, identity)
+
+    result = await use_case.execute("fake-id-token")
+
+    assert result.user.role_code == "empleado"
+    assert result.user.status == "active"
+    assert result.user.is_external is False
+    assert len(user_repo.users) == 1
+
+
+@pytest.mark.asyncio
 async def test_external_without_invitation_is_rejected():
     """hd ausente (Gmail personal) y sin invitación -> 403 NotInvitedError."""
     identity = FakeGoogleIdentity(
@@ -60,6 +86,26 @@ async def test_external_without_invitation_is_rejected():
         full_name="Colaborador Externo",
         avatar_url=None,
         hosted_domain=None,
+        is_internal=False,
+    )
+    use_case, _ = _build_use_case(FakeUserRepository(), identity)
+
+    with pytest.raises(NotInvitedError):
+        await use_case.execute("fake-id-token")
+
+
+@pytest.mark.asyncio
+async def test_unlisted_hosted_domain_without_invitation_is_rejected():
+    """`hd` presente pero fuera de GOOGLE_WORKSPACE_HOSTED_DOMAINS (Workspace
+    de otra empresa) y sin invitación -> 403 NotInvitedError. Distinto del
+    caso Gmail personal: aquí SÍ hay `hd`, solo que no está en la lista."""
+    identity = FakeGoogleIdentity(
+        sub="google-sub-otra-empresa",
+        email="alguien@otra-empresa.com",
+        email_verified=True,
+        full_name="Alguien de Otra Empresa",
+        avatar_url=None,
+        hosted_domain="otra-empresa.com",
         is_internal=False,
     )
     use_case, _ = _build_use_case(FakeUserRepository(), identity)
@@ -187,3 +233,64 @@ async def test_pending_invitation_takes_precedence_over_auto_provision():
     result = await use_case.execute("fake-id-token")
 
     assert result.user.role_code == "administrador"
+
+
+@pytest.mark.asyncio
+async def test_existing_eager_user_wins_over_its_own_pending_invitation():
+    """
+    Regresión (design `rh-invitaciones-iconos-limpieza`, Área 1): el alta
+    desde "Plantilla" (`staff.create_staff_member`) crea la fila `users` de
+    forma EAGER *y* la fila `invitations` en la misma transacción — para ese
+    mismo email conviven ambas desde el primer momento, no solo una
+    invitación "pura" sin usuario todavía.
+
+    `find_by_email` encuentra esa fila ANTES de mirar `invitations`, así que
+    la rama `find_pending_invitation`/`create_user_from_invitation` NUNCA se
+    ejecuta para altas hechas desde "Plantilla" — es deuda conocida
+    (documentada, no una regresión de este cambio) y este test la fija como
+    comportamiento esperado: gana el usuario ya existente, `invited` pasa a
+    `active`, y la invitación sigue intacta (nadie la marca `accepted`).
+    """
+    invited_from_staff = AuthenticatedUser(
+        id="user-1",
+        email="nueva.empleada@ameliahub.com",
+        full_name="Nueva Empleada",
+        avatar_url=None,
+        role_code="empleado",
+        role_id="role-empleado",
+        entity_id="entity-hub",
+        department_id=None,
+        manager_id=None,
+        job_title=None,
+        status="invited",
+        is_external=False,
+    )
+    same_email_invitation = PendingInvitation(
+        id="inv-1",
+        email="nueva.empleada@ameliahub.com",
+        role_id="role-empleado",
+        role_code="empleado",
+        entity_id="entity-hub",
+    )
+    identity = FakeGoogleIdentity(
+        sub="google-sub-staff-alta",
+        email="nueva.empleada@ameliahub.com",
+        email_verified=True,
+        full_name="Nueva Empleada",
+        avatar_url=None,
+        hosted_domain="ameliahub.com",
+        is_internal=True,
+    )
+    user_repo = FakeUserRepository(
+        users=[invited_from_staff], invitations=[same_email_invitation]
+    )
+    use_case, _ = _build_use_case(user_repo, identity)
+
+    result = await use_case.execute("fake-id-token")
+
+    assert result.user.id == "user-1"
+    assert result.user.status == "active"  # invited -> active vía bind_google_login
+    assert len(user_repo.users) == 1  # NO se creó un segundo usuario desde la invitación
+    # La invitación sigue ahí tal cual — `create_user_from_invitation` (el
+    # único que la marca 'accepted') nunca se llamó.
+    assert "nueva.empleada@ameliahub.com" in user_repo.invitations

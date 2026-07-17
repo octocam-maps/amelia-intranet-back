@@ -47,8 +47,10 @@ def create_mailbox_router() -> APIRouter:
         # El rol solo gatea spam (exige una sesión válida) — a partir de
         # aquí ni el handler ni el caso de uso ni el repositorio vuelven a
         # tocar `current_user`. No propagarlo a la capa de aplicación es
-        # intencional (docs/permisos-roles.md § Buzón anónimo).
-        current_user: dict = Depends(require_role("administrador", "empleado")),
+        # intencional (docs/permisos-roles.md § Buzón anónimo). `socio`
+        # [migración 024] puede enviar igual que cualquier empleado — sigue
+        # sin acceso a la recepción (`GET/POST /messages/*` más abajo).
+        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
         use_case: SubmitAnonymousMessageUseCase = Depends(get_submit_anonymous_message_use_case),
     ):
         message = await use_case.execute(category=dto.category, subject=dto.subject, body=dto.body)

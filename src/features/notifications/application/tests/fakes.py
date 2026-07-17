@@ -97,6 +97,22 @@ class FakeNotificationRepository:
     async def list_user_ids_with_open_entry(self, work_date) -> list[str]:
         return list(self.user_ids_with_open_entry)
 
+    async def exists_recipient_notification_with_data(
+        self, *, user_id: str, type: str, data_key: str, data_value: str
+    ) -> bool:
+        return any(
+            n.user_id == user_id and n.type == type and str(n.data.get(data_key)) == data_value
+            for n in self.notifications.values()
+        )
+
+    async def exists_event_notification_with_data(
+        self, *, type: str, data_key: str, data_value: str
+    ) -> bool:
+        return any(
+            n.type == type and str(n.data.get(data_key)) == data_value
+            for n in self.notifications.values()
+        )
+
 
 class FakeEmailSender:
     def __init__(self, *, fail_for: Optional[set[str]] = None):

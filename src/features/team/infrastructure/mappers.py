@@ -1,9 +1,11 @@
-from ..domain.entities import TeamMember, VacationCalendarEntry
+from ..domain.entities import TeamAbsenceEntry, TeamBirthday, TeamMember
 from .schemas import (
+    TeamAbsenceCalendarDTO,
+    TeamAbsenceEntryDTO,
+    TeamBirthdayDTO,
+    TeamBirthdaysDTO,
     TeamDirectoryDTO,
     TeamMemberDTO,
-    VacationCalendarDTO,
-    VacationCalendarEntryDTO,
 )
 
 
@@ -24,14 +26,30 @@ def directory_to_dto(members: list[TeamMember]) -> TeamDirectoryDTO:
     return TeamDirectoryDTO(members=[member_to_dto(m) for m in members])
 
 
-def calendar_entry_to_dto(entry: VacationCalendarEntry) -> VacationCalendarEntryDTO:
-    return VacationCalendarEntryDTO(
+def absence_entry_to_dto(entry: TeamAbsenceEntry) -> TeamAbsenceEntryDTO:
+    return TeamAbsenceEntryDTO(
         user_id=entry.user_id,
         full_name=entry.full_name,
         start_date=entry.start_date,
         end_date=entry.end_date,
+        kind=entry.kind,
     )
 
 
-def vacation_calendar_to_dto(entries: list[VacationCalendarEntry]) -> VacationCalendarDTO:
-    return VacationCalendarDTO(entries=[calendar_entry_to_dto(e) for e in entries])
+def team_calendar_to_dto(entries: list[TeamAbsenceEntry]) -> TeamAbsenceCalendarDTO:
+    return TeamAbsenceCalendarDTO(entries=[absence_entry_to_dto(e) for e in entries])
+
+
+def birthday_to_dto(birthday: TeamBirthday) -> TeamBirthdayDTO:
+    return TeamBirthdayDTO(
+        user_id=birthday.user_id,
+        full_name=birthday.full_name,
+        avatar_url=birthday.avatar_url,
+        day=birthday.day,
+        month=birthday.month,
+        is_today=birthday.is_today,
+    )
+
+
+def birthdays_to_dto(birthdays: list[TeamBirthday]) -> TeamBirthdaysDTO:
+    return TeamBirthdaysDTO(birthdays=[birthday_to_dto(b) for b in birthdays])

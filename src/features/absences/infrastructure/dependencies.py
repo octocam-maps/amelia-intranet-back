@@ -6,6 +6,7 @@ from src.shared.database import get_database_pool
 from ..application.use_cases.create_absence_request import CreateAbsenceRequestUseCase
 from ..application.use_cases.create_absence_type import CreateAbsenceTypeUseCase
 from ..application.use_cases.get_absence_balance import GetAbsenceBalanceUseCase
+from ..application.use_cases.get_absence_calendar import GetAbsenceCalendarUseCase
 from ..application.use_cases.list_absence_requests import ListAbsenceRequestsUseCase
 from ..application.use_cases.list_absence_types import ListAbsenceTypesUseCase
 from ..application.use_cases.list_all_absence_types import ListAllAbsenceTypesUseCase
@@ -36,6 +37,10 @@ def get_update_absence_type_use_case() -> UpdateAbsenceTypeUseCase:
 
 def get_absence_balance_use_case() -> GetAbsenceBalanceUseCase:
     return GetAbsenceBalanceUseCase(_get_repository())
+
+
+def get_absence_calendar_use_case() -> GetAbsenceCalendarUseCase:
+    return GetAbsenceCalendarUseCase(_get_repository())
 
 
 def get_create_absence_request_use_case() -> CreateAbsenceRequestUseCase:

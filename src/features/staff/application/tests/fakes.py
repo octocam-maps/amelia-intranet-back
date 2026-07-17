@@ -1,25 +1,45 @@
-"""Fake en memoria de `IStaffRepository` — permite testear los casos de
-uso sin Postgres, igual que en `features/absences` y `features/team`."""
+"""Fakes en memoria de `IStaffRepository`/`IEmailSender` — permiten testear
+los casos de uso sin Postgres, igual que en `features/absences` y
+`features/team` (y `features/notifications/application/tests/fakes.py`
+para el patrón de `FakeEmailSender`)."""
 
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from src.features.staff.domain.entities import StaffMember
+from src.shared.email.domain.entities import EmailResult
+
+_DEFAULT_INVITED_BY = "admin-1"
 
 _ENTITIES = {"hub": "entity-hub", "lab": "entity-lab", "ops": "entity-ops"}
 _ROLES = {
     "administrador": "role-administrador",
     "empleado": "role-empleado",
     "externo_invitado": "role-externo_invitado",
+    "socio": "role-socio",
 }
+
+
+@dataclass
+class RecordedInvitation:
+    """Lo que `FakeStaffRepository.create_staff_member` registra de la
+    fila `invitations` que en Postgres se inserta en la MISMA transacción
+    que `users` (ver `PostgresStaffRepository.create_staff_member`)."""
+
+    email: str
+    role_id: str
+    entity_id: str
+    invited_by: str
+    expires_at: datetime
 
 
 class FakeStaffRepository:
     def __init__(self, members: Optional[list[StaffMember]] = None):
         self.members: dict[str, StaffMember] = {m.id: m for m in (members or [])}
         self.departments: dict[tuple[str, str], str] = {}
+        self.invitations: list[RecordedInvitation] = []
 
     def _filtered(self, *, entity_code: Optional[str], search: Optional[str]) -> list[StaffMember]:
         members = list(self.members.values())
@@ -78,6 +98,8 @@ class FakeStaffRepository:
         is_external,
         hire_date,
         vacation_days_per_year,
+        invited_by,
+        expires_at,
     ) -> StaffMember:
         entity_code = next((code for code, eid in _ENTITIES.items() if eid == entity_id), None)
         role_code = next((code for code, rid in _ROLES.items() if rid == role_id), None)
@@ -99,6 +121,15 @@ class FakeStaffRepository:
             created_at=datetime.now(timezone.utc),
         )
         self.members[member.id] = member
+        self.invitations.append(
+            RecordedInvitation(
+                email=email,
+                role_id=role_id,
+                entity_id=entity_id,
+                invited_by=invited_by,
+                expires_at=expires_at,
+            )
+        )
         return member
 
     async def update_staff_member(
@@ -141,3 +172,49 @@ class FakeStaffRepository:
         )
         self.members[user_id] = updated
         return updated
+
+
+class FakeEmailSender:
+    """Mismo patrón que `features/notifications/application/tests/fakes.py`
+    — `fail_for` simula un proveedor caído para probar que el alta es
+    best-effort respecto al aviso por email."""
+
+    def __init__(self, *, fail_for: Optional[set[str]] = None):
+        self.sent: list[dict[str, Any]] = []
+        self._fail_for = fail_for or set()
+
+    async def send(
+        self,
+        *,
+        to: str,
+        template: str,
+        context: dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> EmailResult:
+        if to in self._fail_for:
+            raise RuntimeError(f"Simulated email failure for {to}")
+        self.sent.append({"to": to, "template": template, "context": context, "user_id": user_id})
+        return EmailResult(status="sent", provider_message_id=f"fake-{uuid.uuid4()}")
+
+
+def build_create_staff_member_use_case(
+    repository: "FakeStaffRepository",
+    *,
+    email_sender: Optional[FakeEmailSender] = None,
+    invitation_expires_days: int = 7,
+) -> "CreateStaffMemberUseCase":
+    """Fábrica compartida por los tests de `staff` que necesitan sembrar
+    personas vía `CreateStaffMemberUseCase` (p. ej. `test_list_staff.py`,
+    `test_update_staff_member.py`) sin repetir en cada archivo los 2
+    parámetros nuevos que sumó la traza de `invitations` (Área 1 del
+    design `rh-invitaciones-iconos-limpieza`)."""
+    from src.features.staff.application.use_cases.create_staff_member import (
+        CreateStaffMemberUseCase,
+    )
+
+    return CreateStaffMemberUseCase(
+        repository,
+        email_sender or FakeEmailSender(),
+        invitation_expires_days,
+        "http://localhost:5173",
+    )

@@ -10,8 +10,12 @@ import asyncpg
 
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
-from ...domain.entities import TimeClockBreak, TimeClockEntry
-from ...domain.errors import TimeClockOverlapError
+from ...domain.entities import TimeClockBreak, TimeClockEntry, TimeClockEntryNote, TimeClockExportRow
+from ...domain.errors import (
+    TimeClockAlreadyClockedInError,
+    TimeClockBreakAlreadyOpenError,
+    TimeClockOverlapError,
+)
 from ...domain.ports import ITimeClockRepository
 
 _ENTRY_SELECT = """
@@ -19,7 +23,87 @@ _ENTRY_SELECT = """
     FROM time_clock_entries
 """
 
+# Listados (`list_entries_for_user`/`list_entries_for_all`): mismo JOIN a
+# `users` que `_EXPORT_SELECT`, pero SOLO para resolver `full_name` — a
+# diferencia del informe XLSX, aquí no se filtra `is_external`/`deleted_at`
+# ni se resuelve DNI/teléfono (la vista admin de "toda la plantilla" no
+# cambió ese alcance, solo dejó de mostrar el UUID crudo). El `FK ... ON
+# DELETE CASCADE` de `time_clock_entries.user_id` garantiza que todo tramo
+# tiene un `users` vivo detrás, así que un JOIN normal (no LEFT) es seguro.
+_ENTRY_LIST_SELECT = """
+    SELECT e.id, e.user_id, e.work_date, e.clock_in, e.clock_out, e.source,
+           e.created_at, e.updated_at, u.full_name
+    FROM time_clock_entries e
+    JOIN users u ON u.id = e.user_id
+"""
+
 _BREAK_SELECT = "SELECT id, entry_id, break_start, break_end FROM time_clock_breaks"
+
+# Incidencias/comentarios sobre un tramo (B-2b): LEFT JOIN (no JOIN) a
+# `users` porque `author_id` admite NULL (`ON DELETE SET NULL`) — una
+# incidencia cuyo autor fue eliminado sigue listándose, solo sin nombre.
+_NOTE_LIST_SELECT = """
+    SELECT n.id, n.entry_id, n.author_id, n.body, n.created_at, u.full_name AS author_full_name
+    FROM time_clock_entry_notes n
+    LEFT JOIN users u ON u.id = n.author_id
+    WHERE n.entry_id = $1
+    ORDER BY n.created_at ASC
+"""
+
+# Informe admin XLSX: junta el tramo con identidad/contacto de `users` +
+# `user_profiles`. Solo plantilla INTERNA (`is_external = FALSE`) — el
+# externo-invitado no tiene Control horario en la matriz de permisos, así
+# que nunca debería aparecer aquí aunque algún día tuviera fichajes.
+#
+# El `ORDER BY` reparte `full_name` con la MISMA heurística que
+# `infrastructure/xlsx_export.py::_split_full_name` (Nombre = primera
+# palabra, Apellido = el resto) para que el orden de las filas del informe
+# coincida con lo que el admin lee en las columnas Nombre/Apellido.
+_EXPORT_SELECT = """
+    SELECT
+        u.id AS user_id,
+        u.full_name,
+        p.dni_nif,
+        p.phone,
+        e.work_date,
+        e.clock_in,
+        e.clock_out
+    FROM time_clock_entries e
+    JOIN users u ON u.id = e.user_id
+    LEFT JOIN user_profiles p ON p.user_id = u.id
+    WHERE e.work_date BETWEEN $1 AND $2
+      AND u.deleted_at IS NULL
+      AND u.is_external = FALSE
+    ORDER BY
+        CASE WHEN u.full_name LIKE '% %'
+             THEN SUBSTRING(u.full_name FROM POSITION(' ' IN u.full_name) + 1)
+             ELSE ''
+        END,
+        SPLIT_PART(u.full_name, ' ', 1),
+        e.work_date DESC
+"""
+
+# Informe empleado XLSX: mismo join que `_EXPORT_SELECT`, acotado a
+# `u.id = $1` (RGPD — cada trabajador exporta SOLO sus propios fichajes,
+# nunca los de otro). No filtra por `is_external`: si algún día un
+# externo-invitado tuviera fichajes, seguiría viendo únicamente los suyos.
+_EXPORT_SELECT_FOR_USER = """
+    SELECT
+        u.id AS user_id,
+        u.full_name,
+        p.dni_nif,
+        p.phone,
+        e.work_date,
+        e.clock_in,
+        e.clock_out
+    FROM time_clock_entries e
+    JOIN users u ON u.id = e.user_id
+    LEFT JOIN user_profiles p ON p.user_id = u.id
+    WHERE u.id = $1
+      AND e.work_date BETWEEN $2 AND $3
+      AND u.deleted_at IS NULL
+    ORDER BY e.work_date DESC
+"""
 
 
 def _row_to_entry(row) -> TimeClockEntry:
@@ -35,12 +119,49 @@ def _row_to_entry(row) -> TimeClockEntry:
     )
 
 
+def _row_to_entry_with_name(row) -> TimeClockEntry:
+    return TimeClockEntry(
+        id=str(row["id"]),
+        user_id=str(row["user_id"]),
+        work_date=row["work_date"],
+        clock_in=row["clock_in"],
+        clock_out=row["clock_out"],
+        source=row["source"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        full_name=row["full_name"],
+    )
+
+
+def _row_to_export_row(row) -> TimeClockExportRow:
+    return TimeClockExportRow(
+        user_id=str(row["user_id"]),
+        full_name=row["full_name"],
+        dni_nif=row["dni_nif"],
+        phone=row["phone"],
+        work_date=row["work_date"],
+        clock_in=row["clock_in"],
+        clock_out=row["clock_out"],
+    )
+
+
 def _row_to_break(row) -> TimeClockBreak:
     return TimeClockBreak(
         id=str(row["id"]),
         entry_id=str(row["entry_id"]),
         break_start=row["break_start"],
         break_end=row["break_end"],
+    )
+
+
+def _row_to_note(row) -> TimeClockEntryNote:
+    return TimeClockEntryNote(
+        id=str(row["id"]),
+        entry_id=str(row["entry_id"]),
+        author_id=str(row["author_id"]) if row["author_id"] is not None else None,
+        body=row["body"],
+        created_at=row["created_at"],
+        author_full_name=row["author_full_name"],
     )
 
 
@@ -76,6 +197,17 @@ class PostgresTimeClockRepository(ITimeClockRepository):
                 source,
             )
         except asyncpg.exceptions.ExclusionViolationError as e:
+            if clock_out is None:
+                # Rama de FICHAJE EN VIVO (botón play del dashboard): bajo
+                # carrera, un segundo clock-in choca con el mismo EXCLUDE que
+                # protege el alta manual de tramos, pero el mensaje correcto
+                # aquí NO es "se solapa" — es "ya tienes un fichaje en
+                # curso", el mismo que da el check-then-act del use case en
+                # el camino feliz (bug real, auditoría QA: bajo carrera el
+                # 2º clock-in mostraba el mensaje de solape en vez de este).
+                raise TimeClockAlreadyClockedInError(
+                    "Ya tienes un fichaje en curso — ficha salida antes de volver a entrar."
+                ) from e
             raise TimeClockOverlapError(
                 "Ese tramo se solapa con otro fichaje ya registrado ese día."
             ) from e
@@ -86,33 +218,107 @@ class PostgresTimeClockRepository(ITimeClockRepository):
         return _row_to_entry(row) if row else None
 
     async def list_entries_for_user(
-        self, user_id: str, *, date_from: date, date_to: date
+        self,
+        user_id: str,
+        *,
+        date_from: date,
+        date_to: date,
+        limit: Optional[int],
+        offset: int,
     ) -> list[TimeClockEntry]:
-        rows = await self._db.fetch(
-            f"""
-            {_ENTRY_SELECT}
+        query = f"""
+            {_ENTRY_LIST_SELECT}
+            WHERE e.user_id = $1 AND e.work_date BETWEEN $2 AND $3
+            ORDER BY e.work_date DESC, e.clock_in DESC
+        """
+        params: list = [user_id, date_from, date_to]
+        if limit is not None:
+            params.extend([limit, offset])
+            query += f" LIMIT ${len(params) - 1} OFFSET ${len(params)}"
+        rows = await self._db.fetch(query, *params)
+        return [_row_to_entry_with_name(row) for row in rows]
+
+    async def count_entries_for_user(self, user_id: str, *, date_from: date, date_to: date) -> int:
+        count = await self._db.fetchval(
+            """
+            SELECT COUNT(*) FROM time_clock_entries
             WHERE user_id = $1 AND work_date BETWEEN $2 AND $3
-            ORDER BY work_date DESC, clock_in DESC
             """,
             user_id,
             date_from,
             date_to,
         )
-        return [_row_to_entry(row) for row in rows]
+        return int(count or 0)
 
-    async def list_entries_for_all(
-        self, *, date_from: date, date_to: date
+    async def list_entries_for_users(
+        self,
+        user_ids: list[str],
+        *,
+        date_from: date,
+        date_to: date,
+        limit: Optional[int],
+        offset: int,
     ) -> list[TimeClockEntry]:
-        rows = await self._db.fetch(
-            f"""
-            {_ENTRY_SELECT}
-            WHERE work_date BETWEEN $1 AND $2
-            ORDER BY work_date DESC, clock_in DESC
+        query = f"""
+            {_ENTRY_LIST_SELECT}
+            WHERE e.user_id = ANY($1::uuid[]) AND e.work_date BETWEEN $2 AND $3
+            ORDER BY e.work_date DESC, e.clock_in DESC
+        """
+        params: list = [user_ids, date_from, date_to]
+        if limit is not None:
+            params.extend([limit, offset])
+            query += f" LIMIT ${len(params) - 1} OFFSET ${len(params)}"
+        rows = await self._db.fetch(query, *params)
+        return [_row_to_entry_with_name(row) for row in rows]
+
+    async def count_entries_for_users(
+        self, user_ids: list[str], *, date_from: date, date_to: date
+    ) -> int:
+        count = await self._db.fetchval(
+            """
+            SELECT COUNT(*) FROM time_clock_entries
+            WHERE user_id = ANY($1::uuid[]) AND work_date BETWEEN $2 AND $3
             """,
+            user_ids,
             date_from,
             date_to,
         )
-        return [_row_to_entry(row) for row in rows]
+        return int(count or 0)
+
+    async def list_entries_for_all(
+        self, *, date_from: date, date_to: date, limit: Optional[int], offset: int
+    ) -> list[TimeClockEntry]:
+        query = f"""
+            {_ENTRY_LIST_SELECT}
+            WHERE e.work_date BETWEEN $1 AND $2
+            ORDER BY e.work_date DESC, e.clock_in DESC
+        """
+        params: list = [date_from, date_to]
+        if limit is not None:
+            params.extend([limit, offset])
+            query += f" LIMIT ${len(params) - 1} OFFSET ${len(params)}"
+        rows = await self._db.fetch(query, *params)
+        return [_row_to_entry_with_name(row) for row in rows]
+
+    async def count_entries_for_all(self, *, date_from: date, date_to: date) -> int:
+        count = await self._db.fetchval(
+            "SELECT COUNT(*) FROM time_clock_entries WHERE work_date BETWEEN $1 AND $2",
+            date_from,
+            date_to,
+        )
+        return int(count or 0)
+
+    async def list_export_rows_for_all(
+        self, *, date_from: date, date_to: date
+    ) -> list[TimeClockExportRow]:
+        rows = await self._db.fetch(_EXPORT_SELECT, date_from, date_to)
+        return [_row_to_export_row(row) for row in rows]
+
+    async def list_export_rows_for_user(
+        self, user_id: str, *, date_from: date, date_to: date
+    ) -> list[TimeClockExportRow]:
+        rows = await self._db.fetch(_EXPORT_SELECT_FOR_USER, user_id, date_from, date_to)
+        return [_row_to_export_row(row) for row in rows]
 
     async def find_overlapping_entry(
         self,
@@ -177,21 +383,33 @@ class PostgresTimeClockRepository(ITimeClockRepository):
         return _row_to_entry(row) if row else None
 
     async def find_open_break_for_entry(self, entry_id: str) -> Optional[TimeClockBreak]:
+        # `ORDER BY break_start DESC`: si por cualquier motivo hubiera más de una
+        # pausa abierta, se recupera la más reciente de forma determinista (el
+        # índice único parcial de la migración 021 impide que eso ocurra, pero
+        # el orden explícito evita comportamiento no determinista igualmente).
         row = await self._db.fetchrow(
-            f"{_BREAK_SELECT} WHERE entry_id = $1 AND break_end IS NULL LIMIT 1", entry_id
+            f"{_BREAK_SELECT} WHERE entry_id = $1 AND break_end IS NULL "
+            "ORDER BY break_start DESC LIMIT 1",
+            entry_id,
         )
         return _row_to_break(row) if row else None
 
     async def create_break(self, entry_id: str, break_start: datetime) -> TimeClockBreak:
-        row = await self._db.fetchrow(
-            """
-            INSERT INTO time_clock_breaks (entry_id, break_start)
-            VALUES ($1, $2)
-            RETURNING id, entry_id, break_start, break_end
-            """,
-            entry_id,
-            break_start,
-        )
+        try:
+            row = await self._db.fetchrow(
+                """
+                INSERT INTO time_clock_breaks (entry_id, break_start)
+                VALUES ($1, $2)
+                RETURNING id, entry_id, break_start, break_end
+                """,
+                entry_id,
+                break_start,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            # Backstop del índice único parcial (migración 021): dos "Pausa"
+            # concurrentes sobre el mismo tramo — el check-then-act del use case
+            # no basta bajo carrera; la BD garantiza una sola pausa abierta.
+            raise TimeClockBreakAlreadyOpenError("Ya tienes una pausa en curso.") from exc
         return _row_to_break(row)
 
     async def close_break(self, break_id: str, break_end: datetime) -> TimeClockBreak:
@@ -237,3 +455,31 @@ class PostgresTimeClockRepository(ITimeClockRepository):
             gross = ((row["clock_out"] or now) - row["clock_in"]).total_seconds()
             total_seconds += max(gross - float(row["break_seconds"]), 0.0)
         return total_seconds
+
+    # --- Incidencias/comentarios sobre un tramo (B-2b) ---
+
+    async def add_note(self, *, entry_id: str, author_id: str, body: str) -> TimeClockEntryNote:
+        row = await self._db.fetchrow(
+            """
+            INSERT INTO time_clock_entry_notes (entry_id, author_id, body)
+            VALUES ($1, $2, $3)
+            RETURNING id, entry_id, author_id, body, created_at
+            """,
+            entry_id,
+            author_id,
+            body,
+        )
+        # El INSERT no conoce todavía `author_full_name` (no hay JOIN aquí) —
+        # el frontend refresca el listado (`list_notes_for_entry`) tras
+        # publicar, que sí lo resuelve.
+        return TimeClockEntryNote(
+            id=str(row["id"]),
+            entry_id=str(row["entry_id"]),
+            author_id=str(row["author_id"]) if row["author_id"] is not None else None,
+            body=row["body"],
+            created_at=row["created_at"],
+        )
+
+    async def list_notes_for_entry(self, entry_id: str) -> list[TimeClockEntryNote]:
+        rows = await self._db.fetch(_NOTE_LIST_SELECT, entry_id)
+        return [_row_to_note(row) for row in rows]

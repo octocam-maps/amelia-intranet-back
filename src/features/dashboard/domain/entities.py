@@ -63,3 +63,36 @@ class AdminDashboardSummary(EmployeeDashboardSummary):
 
     pending_absence_requests: list[PendingAbsenceRequestSummary]
     employees_clocked_in_now: int
+
+
+# --- `GET /dashboard/admin/metrics` -----------------------------------------
+# Proyecciones de solo lectura para las tarjetas KPI del Home del
+# administrador. Mismo principio que el resto de este archivo: agregan
+# `time_clock_entries`/`absence_requests`, nunca escriben.
+
+
+@dataclass(frozen=True)
+class AdminMetricsKPIs:
+    absent_today: int
+    pending_approvals: int
+    clocked_in_now: int
+    punctuality_pct: int
+
+
+@dataclass(frozen=True)
+class DailyTrendPoint:
+    """Punto crudo por día, tal como lo devuelve el repositorio. El cálculo
+    de puntualidad (%) es regla de negocio y vive en `application`, nunca en
+    `infrastructure` — aquí solo viajan los contadores base. Alimenta el KPI
+    `punctuality_pct`, que se deriva de esta misma serie diaria."""
+
+    day: date
+    absences: int
+    clocked_in: int
+    punctual_entries: int
+    total_entries: int
+
+
+@dataclass(frozen=True)
+class AdminDashboardMetrics:
+    kpis: AdminMetricsKPIs

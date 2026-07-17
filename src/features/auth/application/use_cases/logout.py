@@ -8,8 +8,11 @@ es que el usuario quede fuera, no exigirle un token perfecto.
 """
 
 from src.shared.jwt.domain.jwt_service import IJWTService
+from src.shared.logger import get_logger
 
 from ...domain.ports import ISessionRepository
+
+logger = get_logger("auth.logout")
 
 
 class LogoutUseCase:
@@ -23,7 +26,15 @@ class LogoutUseCase:
 
         try:
             payload = self._jwt_service.verify_token(refresh_token)
-        except Exception:
+        except Exception as e:
+            # Igual que `AuthMiddleware`: se loguea a nivel debug para poder
+            # investigar (p.ej. un cliente mandando tokens corruptos de
+            # forma sistemática) sin romper la garantía de que logout NUNCA
+            # falla — antes este fallo quedaba completamente en silencio.
+            logger.debug(
+                "Logout with an unverifiable refresh token",
+                error_type=type(e).__name__,
+            )
             return
 
         jti = payload.get("jti")

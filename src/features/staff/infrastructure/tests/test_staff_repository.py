@@ -134,6 +134,7 @@ async def test_create_staff_member_inserts_user_and_initial_vacation_balance():
     pool = _FakePool(connection)
     pool.fetchrow.return_value = _row()
     repository = PostgresStaffRepository(pool)
+    expires_at = datetime(2026, 7, 24, tzinfo=timezone.utc)
 
     member = await repository.create_staff_member(
         full_name="Sandra Ramírez",
@@ -145,17 +146,27 @@ async def test_create_staff_member_inserts_user_and_initial_vacation_balance():
         is_external=False,
         hire_date=None,
         vacation_days_per_year=23,
+        invited_by="admin-1",
+        expires_at=expires_at,
     )
 
     assert member.id == "user-1"
     insert_query = connection.fetchval.call_args[0][0]
     assert "INSERT INTO users" in insert_query
     assert "'invited'" in insert_query
-    # Se sembró el saldo inicial porque se pasó `vacation_days_per_year`.
-    connection.execute.assert_awaited_once()
-    balance_query, *balance_args = connection.execute.call_args[0]
+    # Se sembró el saldo inicial (porque se pasó `vacation_days_per_year`) Y
+    # la fila de `invitations`, en la MISMA transacción que `users`.
+    assert connection.execute.await_count == 2
+    balance_query, *balance_args = connection.execute.call_args_list[0][0]
     assert "absence_balances" in balance_query
     assert balance_args == ["user-1", 23]
+    invitation_query, *invitation_args = connection.execute.call_args_list[1][0]
+    assert "INSERT INTO invitations" in invitation_query
+    assert invitation_args[0] == "sandra@ameliahub.com"
+    assert invitation_args[1] == "role-empleado"
+    assert invitation_args[2] == "entity-hub"
+    assert invitation_args[4] == "admin-1"  # invited_by
+    assert invitation_args[5] == expires_at
 
 
 @pytest.mark.asyncio
@@ -176,9 +187,15 @@ async def test_create_staff_member_skips_balance_when_no_vacation_days_given():
         is_external=False,
         hire_date=None,
         vacation_days_per_year=None,
+        invited_by="admin-1",
+        expires_at=datetime(2026, 7, 24, tzinfo=timezone.utc),
     )
 
-    connection.execute.assert_not_awaited()
+    # Sin saldo de vacaciones que sembrar, pero la fila de `invitations`
+    # se escribe siempre.
+    assert connection.execute.await_count == 1
+    invitation_query = connection.execute.call_args[0][0]
+    assert "INSERT INTO invitations" in invitation_query
 
 
 @pytest.mark.asyncio

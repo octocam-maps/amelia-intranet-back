@@ -68,6 +68,34 @@ def test_empleado_can_list_holidays_but_not_write():
     assert delete_response.status_code == 403
 
 
+def test_socio_can_list_holidays_but_not_write():
+    """socio [migración 024] = igual que empleado -> consulta el calendario
+    laboral igual que cualquier trabajador; NO hereda el CRUD de festivos,
+    que sigue exclusivo del admin."""
+
+    class FakeListUseCase:
+        async def execute(self, *, year=None, entity_code=None):
+            return []
+
+    app.dependency_overrides[holidays_dependencies.get_list_holidays_use_case] = (
+        lambda: FakeListUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            headers = {"Authorization": f"Bearer {_token_for('socio')}"}
+            list_response = client.get("/holidays", headers=headers)
+            create_response = client.post(
+                "/holidays", json={"day": "2026-12-25", "name": "Navidad"}, headers=headers
+            )
+            delete_response = client.delete("/holidays/hol-1", headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert list_response.status_code == 200
+    assert create_response.status_code == 403
+    assert delete_response.status_code == 403
+
+
 def test_admin_can_create_a_holiday():
     class FakeCreateUseCase:
         async def execute(self, *, day, name, entity_code, scope=None):

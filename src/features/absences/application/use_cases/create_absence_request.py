@@ -13,6 +13,12 @@ Reglas de negocio (docs/fase-0-esquema-datos.md § 003_hr_core):
   contador en tiempo real del frontend refleja esto de inmediato, antes de
   que el admin la revise. Se traslada a `used_days` (o se libera) al
   aprobar/rechazar (ver `ReviewAbsenceRequestUseCase`).
+- Autoaprobación del administrador (B-1c, docs/permisos-roles.md § Ausencias):
+  cuando `requester_role == "administrador"`, la solicitud nace DIRECTAMENTE
+  en `approved` y consume `used_days` (no `pending_days`) — nunca pasa por la
+  bandeja de revisión manual. Todas las validaciones previas (solape, saldo,
+  días laborables) se mantienen intactas: la autoaprobación solo salta el
+  paso de revisión, no las reglas de negocio.
 
 Pendiente/no confirmado: si el rango cruza de un año a otro, el saldo
 afectado es el del año de `start_date` — RRHH no ha confirmado la política
@@ -26,11 +32,14 @@ from src.features.notifications.application.use_cases.notify import NotifyUseCas
 
 from ...domain.entities import AbsenceRequest
 from ...domain.errors import (
+    AbsenceRequestOverlapError,
     AbsenceTypeNotFoundError,
     InsufficientBalanceError,
     InvalidDateRangeError,
 )
 from ...domain.ports import IAbsenceRepository
+
+_AUTO_APPROVAL_NOTE = "Autoaprobado: la solicitud fue creada por el administrador."
 
 
 class CreateAbsenceRequestUseCase:
@@ -42,6 +51,7 @@ class CreateAbsenceRequestUseCase:
         self,
         *,
         user_id: str,
+        requester_role: str,
         absence_type_id: str,
         start_date: date,
         end_date: date,
@@ -49,6 +59,22 @@ class CreateAbsenceRequestUseCase:
     ) -> AbsenceRequest:
         if end_date < start_date:
             raise InvalidDateRangeError("La fecha de fin no puede ser anterior a la de inicio.")
+
+        # Anti-solape (bug real, auditoría QA): sin esto, nada impedía crear
+        # dos solicitudes `pending`/`approved` del mismo usuario para fechas
+        # que se pisan. Granularidad DEFAULT: se bloquea el solape contra
+        # CUALQUIER tipo de ausencia del usuario, no solo el mismo
+        # `absence_type_id` — pendiente de confirmar con RRHH si dos tipos
+        # distintos (p.ej. "vacaciones" y "asuntos propios") deberían poder
+        # coexistir el mismo día (ver `AbsenceRequestOverlapError`).
+        overlapping = await self._repository.list_overlapping_requests(
+            user_id, start_date=start_date, end_date=end_date
+        )
+        if overlapping:
+            raise AbsenceRequestOverlapError(
+                "Ya tienes una solicitud de ausencia pendiente o aprobada "
+                "que solapa con estas fechas."
+            )
 
         absence_type = await self._repository.find_type_by_id(absence_type_id)
         if absence_type is None:
@@ -60,35 +86,65 @@ class CreateAbsenceRequestUseCase:
                 "El rango elegido no tiene ningún día laborable (solo fines de semana/festivos)."
             )
 
+        # Autoaprobación del administrador (B-1c): su propia solicitud no
+        # pasa por `pending` — consume `used_days` directamente en vez de
+        # reservar `pending_days`, para no contabilizar el mismo día dos
+        # veces (reservado Y usado) cuando nunca hay una revisión manual que
+        # traslade uno al otro.
+        is_self_approved = requester_role == "administrador"
+
         year = start_date.year
         if absence_type.affects_balance:
-            # Se asegura la fila de saldo (upsert) y LUEGO se reserva en un
+            # Se asegura la fila de saldo (upsert) y LUEGO se ajusta en un
             # único UPDATE condicionado al saldo disponible EN LA QUERY —
             # RACE-1 (auditoría QA Fase 3): comprobar el saldo en memoria y
             # escribir el ajuste en una query aparte permite que dos
             # solicitudes concurrentes del mismo usuario/tipo/año lean ambas
             # "saldo suficiente" y las dos reserven, provocando overdraft.
-            # `try_reserve_balance` devuelve False si, en el momento del
-            # commit, el saldo ya no cubre `days_count`.
+            # `try_reserve_balance`/`try_consume_balance` devuelven False si,
+            # en el momento del commit, el saldo ya no cubre `days_count`.
             await self._repository.get_or_create_balance(user_id, absence_type_id, year)
-            reserved = await self._repository.try_reserve_balance(
-                user_id, absence_type_id, year, pending_delta=days_count
-            )
-            if not reserved:
-                raise InsufficientBalanceError(
-                    f"Saldo insuficiente para solicitar {days_count} día(s)."
+            if is_self_approved:
+                consumed = await self._repository.try_consume_balance(
+                    user_id, absence_type_id, year, used_delta=days_count
                 )
+                if not consumed:
+                    raise InsufficientBalanceError(
+                        f"Saldo insuficiente para solicitar {days_count} día(s)."
+                    )
+            else:
+                reserved = await self._repository.try_reserve_balance(
+                    user_id, absence_type_id, year, pending_delta=days_count
+                )
+                if not reserved:
+                    raise InsufficientBalanceError(
+                        f"Saldo insuficiente para solicitar {days_count} día(s)."
+                    )
 
-        request = await self._repository.create_request(
-            user_id=user_id,
-            absence_type_id=absence_type_id,
-            start_date=start_date,
-            end_date=end_date,
-            days_count=days_count,
-            reason=reason,
-        )
+        if is_self_approved:
+            request = await self._repository.create_approved_request(
+                user_id=user_id,
+                absence_type_id=absence_type_id,
+                start_date=start_date,
+                end_date=end_date,
+                days_count=days_count,
+                reason=reason,
+                review_note=_AUTO_APPROVAL_NOTE,
+            )
+        else:
+            request = await self._repository.create_request(
+                user_id=user_id,
+                absence_type_id=absence_type_id,
+                start_date=start_date,
+                end_date=end_date,
+                days_count=days_count,
+                reason=reason,
+            )
 
-        if self._notify is not None:
+        # La bandeja de pendientes no aplica a una solicitud que nace ya
+        # aprobada — no tiene sentido notificar al admin de "nueva solicitud"
+        # sobre algo que ya resolvió él mismo al crearla.
+        if self._notify is not None and not is_self_approved:
             await self._notify.notify_admins(
                 type="absence_requested",
                 title="Nueva solicitud de ausencia",

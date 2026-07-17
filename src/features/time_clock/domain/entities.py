@@ -26,6 +26,11 @@ class TimeClockEntry:
     source: str
     created_at: datetime
     updated_at: datetime
+    # Solo lo rellenan los listados (`list_entries_for_user`/`list_entries_
+    # for_all`, JOIN a `users` — mismo patrón que `TimeClockExportRow`). El
+    # resto de rutas (alta, edición, solape, tramo abierto) no lo necesitan y
+    # lo dejan en `None` — no es un dato transaccional del tramo en sí.
+    full_name: Optional[str] = None
 
     @property
     def worked_minutes(self) -> Optional[int]:
@@ -33,6 +38,63 @@ class TimeClockEntry:
         if self.clock_out is None:
             return None
         return int((self.clock_out - self.clock_in).total_seconds() // 60)
+
+
+@dataclass(frozen=True)
+class TimeClockExportRow:
+    """Una fila del informe de fichajes exportable a XLSX (vista admin,
+    TODA la plantilla interna — `docs/permisos-roles.md` § Control horario).
+
+    A diferencia de `TimeClockEntry`, esta forma SÍ conoce identidad/contacto
+    porque es el resultado de un informe de RRHH (join con `users` +
+    `user_profiles`), no la entidad transaccional del fichaje. Mismo patrón
+    que `UserProfile` en el feature `profile`: un join resuelto en el
+    repositorio, expuesto como forma de dominio porque el puerto
+    (`ITimeClockRepository`) vive en `domain`.
+
+    `full_name` es un único campo de texto en `users` (no hay columnas
+    Nombre/Apellido separadas) — la capa de infraestructura que construye el
+    libro XLSX reparte "Nombre = primera palabra, Apellido = el resto"
+    (`infrastructure/xlsx_export.py::_split_full_name`), la MISMA heurística
+    que ya usa `ORDER BY` en el repositorio para que la fila y el orden
+    coincidan.
+    """
+
+    user_id: str
+    full_name: str
+    dni_nif: Optional[str]
+    phone: Optional[str]
+    work_date: date
+    clock_in: datetime
+    clock_out: Optional[datetime]
+
+    @property
+    def worked_minutes(self) -> Optional[int]:
+        """`None` si el tramo sigue abierto (fichaje en curso, sin salida)."""
+        if self.clock_out is None:
+            return None
+        return int((self.clock_out - self.clock_in).total_seconds() // 60)
+
+
+@dataclass(frozen=True)
+class TimeClockEntryNote:
+    """Incidencia/comentario que el admin deja sobre un tramo de fichaje
+    (p.ej. "olvidó fichar salida, corregido a mano tras confirmarlo con la
+    persona" — B-2b). Registro de auditoría ADD-ONLY: no hay endpoint de
+    edición ni borrado, así que no lleva `updated_at` (mismo criterio que
+    `TimeClockBreak`, que tampoco lo lleva).
+    """
+
+    id: str
+    entry_id: str
+    # `None` si el autor fue eliminado (`ON DELETE SET NULL` en la FK) — la
+    # incidencia sigue siendo un registro válido del fichaje sin su autor.
+    author_id: Optional[str]
+    body: str
+    created_at: datetime
+    # Solo lo rellena `list_notes_for_entry` (JOIN a `users`), mismo patrón
+    # que `TimeClockEntry.full_name`. `None` si el autor fue eliminado.
+    author_full_name: Optional[str] = None
 
 
 @dataclass(frozen=True)

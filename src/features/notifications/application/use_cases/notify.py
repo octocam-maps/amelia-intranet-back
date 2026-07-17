@@ -88,12 +88,20 @@ class NotifyUseCase:
         title: str,
         body: Optional[str] = None,
         data: Optional[dict[str, Any]] = None,
+        exclude_user_ids: Optional[list[str]] = None,
     ) -> list[Notification]:
         """Atajo genérico para el fan-out a toda la plantilla activa salvo
         un rol. `announcements` ya no lo usa para su propio disparador (ver
         `notify_announcement`, que acota por audiencia) — se mantiene por si
-        otro disparador necesita este mismo recorte a futuro."""
+        otro disparador necesita este mismo recorte a futuro.
+
+        `exclude_user_ids` recorta ADEMÁS por id concreto — lo usa el
+        cumpleaños para que el propio cumpleañero no reciba su notificación
+        en tercera persona ("¡Hoy es el cumpleaños de Ana!")."""
         recipient_ids = await self._repository.list_active_user_ids_excluding_role(role_code)
+        if exclude_user_ids:
+            excluded = set(exclude_user_ids)
+            recipient_ids = [uid for uid in recipient_ids if uid not in excluded]
         return await self.execute(
             recipient_ids=recipient_ids, type=type, title=title, body=body, data=data
         )

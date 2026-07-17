@@ -30,11 +30,13 @@ CREATE TABLE IF NOT EXISTS entities (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Roles del sistema (administrador / empleado / externo_invitado)
+-- Roles del sistema (administrador / empleado / externo_invitado / socio).
+-- socio [024]: igual que un empleado + visión global del calendario de
+-- vacaciones (ver + exportar); NO es admin.
 CREATE TABLE IF NOT EXISTS roles (
     id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     code       VARCHAR(30) NOT NULL UNIQUE
-                 CHECK (code IN ('administrador', 'empleado', 'externo_invitado')),
+                 CHECK (code IN ('administrador', 'empleado', 'externo_invitado', 'socio')),
     name       VARCHAR(80) NOT NULL,
     is_system  BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -94,6 +96,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     emergency_contact_phone VARCHAR(30),
     iban                    VARCHAR(34),                  -- para volcado de nóminas
     social_security_number  VARCHAR(30),
+    city                    VARCHAR(120),                 -- 022_user_profiles_city.sql: editable en "Mi perfil"
     completed_at            TIMESTAMPTZ,                  -- paso 5 del onboarding
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -245,6 +248,22 @@ CREATE TABLE IF NOT EXISTS time_clock_breaks (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_time_clock_breaks_entry_id ON time_clock_breaks(entry_id);
+-- Backstop anti-concurrencia (migración 021): una sola pausa abierta por tramo.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_time_clock_break_one_open_per_entry
+    ON time_clock_breaks (entry_id)
+    WHERE break_end IS NULL;
+
+-- Incidencias/comentarios admin sobre un tramo [023]: registro add-only, sin
+-- `updated_at` (mismo criterio que `time_clock_breaks`). `author_id` en
+-- `ON DELETE SET NULL` para no perder la incidencia si se borra al autor.
+CREATE TABLE IF NOT EXISTS time_clock_entry_notes (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entry_id   UUID NOT NULL REFERENCES time_clock_entries(id) ON DELETE CASCADE,
+    author_id  UUID REFERENCES users(id) ON DELETE SET NULL,
+    body       TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_time_clock_entry_notes_entry_id ON time_clock_entry_notes(entry_id);
 
 -- Tipos de ausencia (configurable). default_entitled_days [010];
 -- requires_approval / requires_justification / max_days_per_year [019].
@@ -428,7 +447,8 @@ CREATE INDEX IF NOT EXISTS idx_email_log_user_id ON email_log(user_id);
 INSERT INTO roles (code, name) VALUES
     ('administrador',    'Administrador'),
     ('empleado',         'Empleado'),
-    ('externo_invitado', 'Externo-invitado')
+    ('externo_invitado', 'Externo-invitado'),
+    ('socio',            'Socio')
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO entities (code, name) VALUES

@@ -7,7 +7,7 @@ en `infrastructure` y se inyecta aquí por duck typing estructural.
 from datetime import date
 from typing import Optional, Protocol
 
-from .entities import AbsenceBalance, AbsenceRequest, AbsenceType
+from .entities import AbsenceBalance, AbsenceCalendarEntry, AbsenceRequest, AbsenceType
 
 
 class IAbsenceRepository(Protocol):
@@ -95,6 +95,23 @@ class IAbsenceRepository(Protocol):
         (RACE-1)."""
         ...
 
+    async def try_consume_balance(
+        self,
+        user_id: str,
+        absence_type_id: str,
+        year: int,
+        *,
+        used_delta: float,
+    ) -> bool:
+        """Igual que `try_reserve_balance`, pero descuenta directamente de
+        `used_days` en vez de `pending_days` — lo usa la autoaprobación del
+        administrador (B-1c): su solicitud nunca pasa por `pending`, así que
+        no tiene sentido reservar y luego liberar/consumir en dos pasos.
+        `True` si el saldo disponible en ese instante cubría `used_delta`,
+        `False` si no (0 filas afectadas) — mismo contrato anti-overdraft
+        que `try_reserve_balance` (RACE-1)."""
+        ...
+
     async def create_request(
         self,
         *,
@@ -105,6 +122,23 @@ class IAbsenceRepository(Protocol):
         days_count: float,
         reason: Optional[str],
     ) -> AbsenceRequest: ...
+
+    async def create_approved_request(
+        self,
+        *,
+        user_id: str,
+        absence_type_id: str,
+        start_date: date,
+        end_date: date,
+        days_count: float,
+        reason: Optional[str],
+        review_note: str,
+    ) -> AbsenceRequest:
+        """Crea la solicitud ya en `approved`, con `reviewed_by = user_id`
+        (el propio solicitante) y `reviewed_at = CURRENT_TIMESTAMP` —
+        autoaprobación del administrador (B-1c). Nunca pasa por `pending` ni
+        aparece en la bandeja de aprobación."""
+        ...
 
     async def find_request_by_id(self, request_id: str) -> Optional[AbsenceRequest]: ...
 
@@ -139,4 +173,28 @@ class IAbsenceRepository(Protocol):
         """Festivos vigentes en el rango. La tabla `holidays` está vacía hasta
         que el admin la configure (Fase 5) — no bloquea el cálculo de días
         laborables, simplemente no excluye nada todavía."""
+        ...
+
+    async def list_calendar_entries(
+        self, *, date_from: date, date_to: date
+    ) -> list[AbsenceCalendarEntry]:
+        """"Calendario general de la plantilla" (LOTE 4) — TODOS los
+        empleados, `pending`/`approved` únicamente (una solicitud `rejected`
+        o `cancelled` no describe una ausencia real), cuyo rango
+        [`start_date`, `end_date`] solapa con [`date_from`, `date_to`]. Ya
+        viene con `user_full_name`/`absence_type_name`/`absence_type_color`
+        resueltos (JOIN) — lo consume tanto la pantalla como los exports
+        (XLSX/PDF), que necesitan exactamente la misma forma."""
+        ...
+
+    async def list_overlapping_requests(
+        self, user_id: str, *, start_date: date, end_date: date
+    ) -> list[AbsenceRequest]:
+        """Solicitudes `pending`/`approved` del MISMO usuario cuyo rango
+        [`start_date`, `end_date`] solapa con el rango dado — anti-solape en
+        `CreateAbsenceRequestUseCase` (bug real, auditoría QA: sin esto, un
+        usuario podía tener dos solicitudes de vacaciones para las mismas
+        fechas). No filtra por `absence_type_id` — ver
+        `AbsenceRequestOverlapError` para la granularidad pendiente de
+        confirmar con RRHH."""
         ...

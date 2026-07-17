@@ -81,3 +81,32 @@ class INotificationRepository(Protocol):
         """Usuarios con un tramo de `work_date` sin `clock_out` — fichó
         entrada y no salida."""
         ...
+
+    # --- Idempotencia de los jobs por-tiempo ---
+    #
+    # Reejecutar el mismo cron el mismo día (o a demanda vía `POST
+    # /notifications/jobs/run`) no debe duplicar notificaciones ni reenviar
+    # el email — bug real detectado en auditoría QA. Se comprueba contra el
+    # `data` JSONB de la propia notificación (no contra `created_at`, que
+    # depende del instante exacto de ejecución del job, no del día del
+    # EVENTO que describe) usando un campo que YA viaja en el payload de
+    # cada disparador (`work_date`, `years`, `user_id`...).
+
+    async def exists_recipient_notification_with_data(
+        self, *, user_id: str, type: str, data_key: str, data_value: str
+    ) -> bool:
+        """¿Ya tiene este DESTINATARIO una notificación de este `type` cuyo
+        `data[data_key] == data_value`? La usan los jobs cuyo destinatario
+        ES el sujeto del evento (aniversario laboral — `data_key='years'`;
+        fichaje sin salida — `data_key='work_date'`)."""
+        ...
+
+    async def exists_event_notification_with_data(
+        self, *, type: str, data_key: str, data_value: str
+    ) -> bool:
+        """¿Ya existe CUALQUIER notificación de este `type` cuyo
+        `data[data_key] == data_value`, sin importar el destinatario? La usa
+        el cumpleaños, que hace fan-out a TODO el equipo salvo el propio
+        cumpleañero — el destinatario no identifica el evento, pero
+        `data['user_id']` (el SUJETO del cumpleaños) sí."""
+        ...

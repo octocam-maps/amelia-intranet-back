@@ -10,6 +10,7 @@ from typing import Optional
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
 from ...domain.entities import (
+    DailyTrendPoint,
     PendingAbsenceRequestSummary,
     TodayClockStatus,
     UpcomingHoliday,
@@ -18,6 +19,7 @@ from ...domain.entities import (
 from ...domain.ports import IDashboardRepository
 
 _VACATION_TYPE_CODE = "vacaciones"
+_MADRID_TZ = "Europe/Madrid"
 
 
 class PostgresDashboardRepository(IDashboardRepository):
@@ -107,3 +109,141 @@ class PostgresDashboardRepository(IDashboardRepository):
             """
         )
         return int(count or 0)
+
+    # --- `GET /dashboard/admin/metrics` --------------------------------
+
+    async def count_absent_today(
+        self, today: date, entity_id: Optional[str], department_id: Optional[str]
+    ) -> int:
+        count = await self._db.fetchval(
+            """
+            SELECT COUNT(DISTINCT r.user_id)
+            FROM absence_requests r
+            JOIN users u ON u.id = r.user_id
+            WHERE r.status = 'approved'
+              AND $1::date BETWEEN r.start_date AND r.end_date
+              AND u.deleted_at IS NULL
+              AND ($2::uuid IS NULL OR u.entity_id = $2::uuid)
+              AND ($3::uuid IS NULL OR u.department_id = $3::uuid)
+            """,
+            today,
+            entity_id,
+            department_id,
+        )
+        return int(count or 0)
+
+    async def count_pending_absence_approvals(
+        self, entity_id: Optional[str], department_id: Optional[str]
+    ) -> int:
+        count = await self._db.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM absence_requests r
+            JOIN users u ON u.id = r.user_id
+            WHERE r.status = 'pending'
+              AND u.deleted_at IS NULL
+              AND ($1::uuid IS NULL OR u.entity_id = $1::uuid)
+              AND ($2::uuid IS NULL OR u.department_id = $2::uuid)
+            """,
+            entity_id,
+            department_id,
+        )
+        return int(count or 0)
+
+    async def count_clocked_in_now_filtered(
+        self, today: date, entity_id: Optional[str], department_id: Optional[str]
+    ) -> int:
+        count = await self._db.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM time_clock_entries t
+            JOIN users u ON u.id = t.user_id
+            WHERE t.work_date = $1
+              AND t.clock_out IS NULL
+              AND u.deleted_at IS NULL
+              AND ($2::uuid IS NULL OR u.entity_id = $2::uuid)
+              AND ($3::uuid IS NULL OR u.department_id = $3::uuid)
+            """,
+            today,
+            entity_id,
+            department_id,
+        )
+        return int(count or 0)
+
+    async def list_daily_trends(
+        self,
+        from_date: date,
+        to_date: date,
+        entity_id: Optional[str],
+        department_id: Optional[str],
+    ) -> list[DailyTrendPoint]:
+        # Dos consultas separadas (fichajes / ausencias) en lugar de una sola
+        # con dos JOINs: cruzar `time_clock_entries` y `absence_requests` por
+        # día en la misma query multiplicaría filas (producto cartesiano por
+        # día) y complicaría los COUNT — más simple y legible mezclar en
+        # Python sobre la misma serie de días.
+        clock_rows = await self._db.fetch(
+            f"""
+            WITH days AS (
+                SELECT generate_series($1::date, $2::date, interval '1 day')::date AS day
+            ),
+            filtered_entries AS (
+                SELECT t.work_date, t.clock_in
+                FROM time_clock_entries t
+                JOIN users u ON u.id = t.user_id
+                WHERE u.deleted_at IS NULL
+                  AND ($3::uuid IS NULL OR u.entity_id = $3::uuid)
+                  AND ($4::uuid IS NULL OR u.department_id = $4::uuid)
+            )
+            SELECT
+                d.day,
+                COUNT(e.work_date) AS total_entries,
+                COUNT(e.work_date) FILTER (
+                    WHERE (e.clock_in AT TIME ZONE '{_MADRID_TZ}')::time <= TIME '09:00'
+                ) AS punctual_entries
+            FROM days d
+            LEFT JOIN filtered_entries e ON e.work_date = d.day
+            GROUP BY d.day
+            ORDER BY d.day
+            """,
+            from_date,
+            to_date,
+            entity_id,
+            department_id,
+        )
+        absence_rows = await self._db.fetch(
+            """
+            WITH days AS (
+                SELECT generate_series($1::date, $2::date, interval '1 day')::date AS day
+            ),
+            filtered_absences AS (
+                SELECT r.user_id, r.start_date, r.end_date
+                FROM absence_requests r
+                JOIN users u ON u.id = r.user_id
+                WHERE r.status = 'approved'
+                  AND u.deleted_at IS NULL
+                  AND ($3::uuid IS NULL OR u.entity_id = $3::uuid)
+                  AND ($4::uuid IS NULL OR u.department_id = $4::uuid)
+            )
+            SELECT d.day, COUNT(DISTINCT a.user_id) AS absences
+            FROM days d
+            LEFT JOIN filtered_absences a ON d.day BETWEEN a.start_date AND a.end_date
+            GROUP BY d.day
+            ORDER BY d.day
+            """,
+            from_date,
+            to_date,
+            entity_id,
+            department_id,
+        )
+        absences_by_day = {row["day"]: int(row["absences"] or 0) for row in absence_rows}
+        return [
+            DailyTrendPoint(
+                day=row["day"],
+                absences=absences_by_day.get(row["day"], 0),
+                clocked_in=int(row["total_entries"] or 0),
+                punctual_entries=int(row["punctual_entries"] or 0),
+                total_entries=int(row["total_entries"] or 0),
+            )
+            for row in clock_rows
+        ]
