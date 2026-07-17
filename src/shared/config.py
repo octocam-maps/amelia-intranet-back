@@ -123,10 +123,14 @@ class Settings:
         # empleado (nombre = email). Solo se usa con DRIVE_PROVIDER=google.
         self.drive_root_folder_id = os.getenv("DRIVE_ROOT_FOLDER_ID", "")
 
-        # Cuenta de Workspace a impersonar vía `with_subject` (Domain-Wide
-        # Delegation) — necesaria porque el sync (Fase 4, modo automático)
-        # tiene que leer carpetas creadas por RRHH, no solo lo que la propia
-        # Service Account cree.
+        # SIN USO desde la decisión posterior del usuario de acceder a Drive
+        # vía Unidad compartida (Shared Drive) en vez de Domain-Wide
+        # Delegation (ver engram #450 y `GoogleDriveDocumentStorage`/
+        # `google_drive_client.build_credentials`, WU-B): la Service Account
+        # entra DIRECTAMENTE como miembro de la Shared Drive, sin
+        # `with_subject`/impersonación. Se conserva la variable (no se lee en
+        # ningún punto del código) para no romper despliegues que ya la
+        # exporten; puede eliminarse en una limpieza posterior.
         self.drive_impersonate_subject = os.getenv("DRIVE_IMPERSONATE_SUBJECT", "")
 
         # Credenciales de la Service Account: ruta a un fichero JSON en disco,
