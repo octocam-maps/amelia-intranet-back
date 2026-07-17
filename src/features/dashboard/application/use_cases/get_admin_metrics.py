@@ -28,7 +28,7 @@ class GetAdminMetricsUseCase:
         self,
         *,
         entity_id: Optional[str] = None,
-        department_id: Optional[str] = None,
+        department_ids: Optional[list[str]] = None,
         period_days: int = 14,
     ) -> AdminDashboardMetrics:
         # TZ-1 (ver src/shared/utils/timezone.py): "hoy" es Europe/Madrid.
@@ -36,16 +36,16 @@ class GetAdminMetricsUseCase:
         from_date = today - timedelta(days=period_days - 1)
 
         absent_today = await self._repository.count_absent_today(
-            today, entity_id, department_id
+            today, entity_id, department_ids
         )
         pending_approvals = await self._repository.count_pending_absence_approvals(
-            entity_id, department_id
+            entity_id, department_ids
         )
         clocked_in_now = await self._repository.count_clocked_in_now_filtered(
-            today, entity_id, department_id
+            today, entity_id, department_ids
         )
         daily_points = await self._repository.list_daily_trends(
-            from_date, today, entity_id, department_id
+            from_date, today, entity_id, department_ids
         )
 
         kpis = AdminMetricsKPIs(
