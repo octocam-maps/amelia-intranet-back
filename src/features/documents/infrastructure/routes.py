@@ -1,9 +1,8 @@
 """Router de `/documents`: nóminas, contratos y documentos generales. El
 binario vive en Google Drive (puerto `IDocumentStorage`), Postgres solo
-indexa los metadatos (`sdd/fase4-nominas-documentos/design`). Este WU (C2)
-cubre exclusivamente el CRUD manual (listar/subir/descargar/borrar) —
-`POST /documents/sync` (conciliación automática con Drive) es WU-D, no vive
-aquí."""
+indexa los metadatos (`sdd/fase4-nominas-documentos/design`). WU-C2 cubre el
+CRUD manual (listar/subir/descargar/borrar); `POST /documents/sync`
+(conciliación automática con Drive, WU-D) se agrega al mismo router."""
 
 from typing import Optional
 from urllib.parse import quote
@@ -17,16 +16,18 @@ from ..application.errors import DocumentNotFoundError
 from ..application.use_cases.delete_document import DeleteDocumentUseCase
 from ..application.use_cases.download_document import DownloadDocumentUseCase
 from ..application.use_cases.list_documents import ListDocumentsUseCase
+from ..application.use_cases.sync_documents import SyncDocumentsUseCase
 from ..application.use_cases.upload_document import UploadDocumentUseCase
 from ..domain.ports import DriveFileNotFoundError
 from .dependencies import (
     get_delete_document_use_case,
     get_download_document_use_case,
     get_list_documents_use_case,
+    get_sync_documents_use_case,
     get_upload_document_use_case,
 )
-from .mappers import document_to_dto, documents_to_dto
-from .schemas import DocumentDTO, DocumentListDTO
+from .mappers import document_to_dto, documents_to_dto, sync_run_to_dto
+from .schemas import DocumentDTO, DocumentListDTO, SyncRunDTO
 
 
 def create_documents_router() -> APIRouter:
@@ -131,5 +132,18 @@ def create_documents_router() -> APIRouter:
         """Soft-delete SOLO en Postgres — nunca borra el archivo real en
         Drive (Drive lo gestiona RRHH directamente, decisión de diseño)."""
         await use_case.execute(document_id=document_id)
+
+    @router.post("/sync", response_model=SyncRunDTO)
+    async def sync_documents(
+        current_user: dict = Depends(require_role("administrador")),
+        use_case: SyncDocumentsUseCase = Depends(get_sync_documents_use_case),
+    ):
+        """Conciliación Drive -> Postgres (WU-D): RRHH coloca archivos a
+        mano en la subcarpeta de Drive del empleado, fuera de la app; este
+        endpoint indexa en `employee_documents` los que todavía no estén
+        (`uploaded_by=None`). Exclusivo del admin — dispara un sync
+        síncrono, sin job programado (decisión de diseño, v1)."""
+        sync_run = await use_case.execute()
+        return sync_run_to_dto(sync_run)
 
     return router

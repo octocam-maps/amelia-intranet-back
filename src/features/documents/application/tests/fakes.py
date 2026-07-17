@@ -4,7 +4,11 @@ testear los casos de uso sin Postgres ni Google Drive, igual que en
 `staff.domain.ports.IStaffRepository`: solo implementa `find_by_id`, lo
 único que usa `UploadDocumentUseCase` (es un `Protocol` estructural — no
 hace falta implementar el resto de métodos para que el duck typing
-funcione)."""
+funcione).
+
+`find_active_users_with_email`/`create_sync_run`/`finish_sync_run` se
+implementaron de verdad en WU-D (`SyncDocumentsUseCase`) — hasta entonces
+eran placeholders fuera de alcance de WU-C1."""
 
 import hashlib
 import uuid
@@ -23,9 +27,20 @@ from src.features.staff.domain.entities import StaffMember
 
 
 class FakeDocumentRepository:
-    def __init__(self, documents: Optional[list[Document]] = None):
+    def __init__(
+        self,
+        documents: Optional[list[Document]] = None,
+        *,
+        active_users: Optional[list[tuple[str, str]]] = None,
+    ):
         self.documents: dict[str, Document] = {d.id: d for d in (documents or [])}
         self.drive_folder_ids: dict[str, str] = {}
+        # `(user_id, email)` de empleados activos — consumido por el sync
+        # (WU-D, `SyncDocumentsUseCase`). Vacío por defecto para no afectar
+        # los tests de WU-C1 que no lo usan.
+        self.active_users: list[tuple[str, str]] = active_users or []
+        self.sync_runs: dict[str, SyncRun] = {}
+        self._sync_run_counter = 0
 
     async def find_by_id(self, document_id: str) -> Optional[Document]:
         document = self.documents.get(document_id)
@@ -100,13 +115,32 @@ class FakeDocumentRepository:
         self.drive_folder_ids[user_id] = drive_folder_id
 
     async def find_active_users_with_email(self) -> list[tuple[str, str]]:
-        return []  # sin uso en WU-C1 — lo cubre el sync (WU-D)
+        return list(self.active_users)
 
     async def create_sync_run(self) -> SyncRun:
-        raise NotImplementedError("Fuera de alcance de WU-C1 — ver WU-D.")
+        self._sync_run_counter += 1
+        sync_run_id = f"fake-sync-run-{self._sync_run_counter}"
+        sync_run = SyncRun(
+            id=sync_run_id,
+            started_at=datetime.now(timezone.utc),
+            finished_at=None,
+            status="running",
+            files_synced=0,
+            error_detail=None,
+        )
+        self.sync_runs[sync_run_id] = sync_run
+        return sync_run
 
     async def finish_sync_run(self, sync_run_id, *, status, files_synced, error_detail) -> SyncRun:
-        raise NotImplementedError("Fuera de alcance de WU-C1 — ver WU-D.")
+        updated = replace(
+            self.sync_runs[sync_run_id],
+            finished_at=datetime.now(timezone.utc),
+            status=status,
+            files_synced=files_synced,
+            error_detail=error_detail,
+        )
+        self.sync_runs[sync_run_id] = updated
+        return updated
 
 
 class FakeDocumentStorage:

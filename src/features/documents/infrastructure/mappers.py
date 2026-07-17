@@ -2,8 +2,8 @@
 no se exponen al cliente: son detalles del proveedor de almacenamiento
 (`sdd/fase4-nominas-documentos/design` — nunca se expone la URL/id de Drive)."""
 
-from ..domain.models import Document
-from .schemas import DocumentDTO, DocumentListDTO
+from ..domain.models import Document, SyncRun
+from .schemas import DocumentDTO, DocumentListDTO, SyncRunDTO
 
 
 def document_to_dto(document: Document) -> DocumentDTO:
@@ -22,3 +22,14 @@ def document_to_dto(document: Document) -> DocumentDTO:
 
 def documents_to_dto(documents: list[Document]) -> DocumentListDTO:
     return DocumentListDTO(documents=[document_to_dto(d) for d in documents])
+
+
+def sync_run_to_dto(sync_run: SyncRun) -> SyncRunDTO:
+    return SyncRunDTO(
+        id=sync_run.id,
+        started_at=sync_run.started_at,
+        finished_at=sync_run.finished_at,
+        status=sync_run.status,
+        files_synced=sync_run.files_synced,
+        error_detail=sync_run.error_detail,
+    )

@@ -24,3 +24,17 @@ class DocumentDTO(BaseModel):
 
 class DocumentListDTO(BaseModel):
     documents: list[DocumentDTO]
+
+
+class SyncRunDTO(BaseModel):
+    """Resumen de una corrida de `POST /documents/sync` (WU-D) — mapea
+    `drive_sync_runs` tal cual, sin desglose de omitidos/fallidos por
+    empleado (ese detalle va en `error_detail` como texto, no hay columnas
+    dedicadas en el esquema, `004_documents.sql`)."""
+
+    id: str
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    status: str
+    files_synced: int
+    error_detail: Optional[str] = None

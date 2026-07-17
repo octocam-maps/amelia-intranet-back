@@ -21,7 +21,7 @@ from src.features.documents.application.errors import (  # noqa: E402
     DocumentTooLargeError,
     InvalidDocumentMimeTypeError,
 )
-from src.features.documents.domain.models import Document  # noqa: E402
+from src.features.documents.domain.models import Document, SyncRun  # noqa: E402
 from src.features.documents.domain.ports import DriveFileNotFoundError  # noqa: E402
 from src.features.documents.infrastructure import dependencies as documents_dependencies  # noqa: E402
 from src.shared.jwt import get_jwt_service  # noqa: E402
@@ -443,6 +443,86 @@ def test_admin_can_delete_document():
         app.dependency_overrides.clear()
 
     assert response.status_code == 204
+
+
+# --- POST /documents/sync — conciliación Drive -> Postgres (admin, WU-D). ---
+
+
+class _FakeSyncDocumentsUseCase:
+    def __init__(self, sync_run=None, error: Optional[Exception] = None):
+        self._sync_run = sync_run or SyncRun(
+            id="sync-run-1",
+            started_at=datetime.now(timezone.utc),
+            finished_at=datetime.now(timezone.utc),
+            status="success",
+            files_synced=3,
+            error_detail=None,
+        )
+        self._error = error
+
+    async def execute(self, **kwargs):
+        if self._error is not None:
+            raise self._error
+        return self._sync_run
+
+
+def test_admin_can_trigger_sync():
+    app.dependency_overrides[documents_dependencies.get_sync_documents_use_case] = (
+        lambda: _FakeSyncDocumentsUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/documents/sync",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "sync-run-1"
+    assert body["status"] == "success"
+    assert body["files_synced"] == 3
+
+
+def test_empleado_cannot_trigger_sync():
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/documents/sync",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_socio_cannot_trigger_sync():
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/documents/sync",
+                headers={"Authorization": f"Bearer {_token_for('socio')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_externo_invitado_cannot_trigger_sync():
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/documents/sync",
+                headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
 
 
 def test_admin_delete_returns_404_when_not_found():
