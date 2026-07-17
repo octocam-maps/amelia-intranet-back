@@ -19,7 +19,7 @@ from typing import Optional
 
 from googleapiclient.errors import HttpError
 
-from ...domain.models import DriveFileMetadata, UploadedFile
+from ...domain.models import CATEGORY_FOLDER_NAMES, DriveFileMetadata, UploadedFile
 from ...domain.ports import DriveFileNotFoundError
 from .google_drive_client import GoogleDriveClient, build_credentials
 
@@ -61,6 +61,27 @@ class GoogleDriveDocumentStorage:
 
     async def find_employee_folder(self, email: str) -> Optional[str]:
         return await asyncio.to_thread(self._client.find_folder_by_name, email)
+
+    async def get_or_create_category_folder(
+        self, employee_folder_id: str, category: str
+    ) -> str:
+        folder_name = CATEGORY_FOLDER_NAMES[category]
+        folder_id = await asyncio.to_thread(
+            self._client.find_folder_by_name, folder_name, parent_id=employee_folder_id
+        )
+        if folder_id is not None:
+            return folder_id
+        return await asyncio.to_thread(
+            self._client.create_folder, folder_name, parent_id=employee_folder_id
+        )
+
+    async def find_category_folder(
+        self, employee_folder_id: str, category: str
+    ) -> Optional[str]:
+        folder_name = CATEGORY_FOLDER_NAMES[category]
+        return await asyncio.to_thread(
+            self._client.find_folder_by_name, folder_name, parent_id=employee_folder_id
+        )
 
     async def upload(
         self, *, folder_id: str, filename: str, content: bytes, mime_type: str

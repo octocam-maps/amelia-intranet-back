@@ -80,6 +80,106 @@ async def test_sync_creates_metadata_only_for_new_files():
 
 
 @pytest.mark.asyncio
+async def test_sync_deriva_la_categoria_de_la_subcarpeta_no_del_nombre_del_archivo():
+    storage = FakeDocumentStorage()
+    employee_folder = await storage.get_or_create_employee_folder("ana.garcia@ameliahub.com")
+    payslip_folder = await storage.get_or_create_category_folder(employee_folder, "payslip")
+    await storage.upload(
+        folder_id=payslip_folder,
+        filename="cualquier_nombre_sin_convencion.pdf",
+        content=b"nomina",
+        mime_type="application/pdf",
+    )
+    repository = FakeDocumentRepository(active_users=[("user-1", "ana.garcia@ameliahub.com")])
+    await repository.save_drive_folder_id("user-1", employee_folder)
+    use_case, repository, storage = _use_case(repository=repository, storage=storage)
+
+    await use_case.execute()
+
+    documents = await repository.list_for_user("user-1")
+    assert len(documents) == 1
+    assert documents[0].category == "payslip"
+
+
+@pytest.mark.asyncio
+async def test_sync_extrae_periodo_de_nomina_dentro_de_la_subcarpeta_de_categoria():
+    storage = FakeDocumentStorage()
+    employee_folder = await storage.get_or_create_employee_folder("ana.garcia@ameliahub.com")
+    payslip_folder = await storage.get_or_create_category_folder(employee_folder, "payslip")
+    await storage.upload(
+        folder_id=payslip_folder,
+        filename="NOMINA_2026-07_Ana.pdf",
+        content=b"nomina",
+        mime_type="application/pdf",
+    )
+    repository = FakeDocumentRepository(active_users=[("user-1", "ana.garcia@ameliahub.com")])
+    await repository.save_drive_folder_id("user-1", employee_folder)
+    use_case, repository, storage = _use_case(repository=repository, storage=storage)
+
+    await use_case.execute()
+
+    documents = await repository.list_for_user("user-1")
+    assert documents[0].period == "2026-07"
+
+
+@pytest.mark.asyncio
+async def test_sync_no_encuentra_nada_en_una_categoria_sin_subcarpeta_todavia():
+    """Si RRHH solo colocó la subcarpeta `Nóminas` pero no `Contratos`, el
+    sync no crea una subcarpeta vacía para `contract` (`find_category_folder`,
+    nunca `get_or_create_...`) — simplemente no concilia nada ahí."""
+    storage = FakeDocumentStorage()
+    employee_folder = await storage.get_or_create_employee_folder("ana.garcia@ameliahub.com")
+    await storage.get_or_create_category_folder(employee_folder, "payslip")
+    repository = FakeDocumentRepository(active_users=[("user-1", "ana.garcia@ameliahub.com")])
+    await repository.save_drive_folder_id("user-1", employee_folder)
+    use_case, repository, storage = _use_case(repository=repository, storage=storage)
+
+    await use_case.execute()
+
+    assert await storage.find_category_folder(employee_folder, "contract") is None
+    assert await repository.list_for_user("user-1") == []
+
+
+@pytest.mark.asyncio
+async def test_sync_fallback_por_nombre_para_archivo_suelto_sin_subcarpeta():
+    """Un archivo colocado a mano SIN subcarpeta de categoría sigue
+    categorizándose por la convención de nombre previa — el sync no lo
+    ignora."""
+    storage = FakeDocumentStorage()
+    await _place_file_in_drive(
+        storage, email="ana.garcia@ameliahub.com", filename="CONTRATO_Ana.pdf", content=b"contrato"
+    )
+    repository = FakeDocumentRepository(active_users=[("user-1", "ana.garcia@ameliahub.com")])
+    use_case, repository, storage = _use_case(repository=repository, storage=storage)
+
+    await use_case.execute()
+
+    documents = await repository.list_for_user("user-1")
+    assert len(documents) == 1
+    assert documents[0].category == "contract"
+
+
+@pytest.mark.asyncio
+async def test_sync_no_cuenta_las_subcarpetas_de_categoria_como_archivos_omitidos():
+    """Las subcarpetas (`Nóminas`, `Contratos`, ...) aparecen como entradas
+    al listar la raíz del empleado (igual que en Drive real) — el sync debe
+    excluirlas del fallback en vez de contarlas como "omitidas por tipo"."""
+    storage = FakeDocumentStorage()
+    employee_folder = await storage.get_or_create_employee_folder("ana.garcia@ameliahub.com")
+    await storage.get_or_create_category_folder(employee_folder, "payslip")
+    await storage.get_or_create_category_folder(employee_folder, "contract")
+    repository = FakeDocumentRepository(active_users=[("user-1", "ana.garcia@ameliahub.com")])
+    await repository.save_drive_folder_id("user-1", employee_folder)
+    use_case, repository, storage = _use_case(repository=repository, storage=storage)
+
+    sync_run = await use_case.execute()
+
+    assert sync_run.files_synced == 0
+    assert sync_run.status == "success"
+    assert sync_run.error_detail is None
+
+
+@pytest.mark.asyncio
 async def test_sync_categorizes_general_when_name_does_not_match_convention():
     storage = FakeDocumentStorage()
     await _place_file_in_drive(

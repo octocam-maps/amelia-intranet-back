@@ -57,6 +57,81 @@ async def test_find_employee_folder_encuentra_la_creada_por_get_or_create():
     assert result == folder_id
 
 
+# --- get_or_create_category_folder / find_category_folder -------------------
+
+
+async def test_get_or_create_category_folder_es_idempotente_por_empleado_y_categoria():
+    storage = MockDocumentStorage()
+    employee_folder = await storage.get_or_create_employee_folder("ana.gomez@ameliahub.com")
+
+    first = await storage.get_or_create_category_folder(employee_folder, "payslip")
+    second = await storage.get_or_create_category_folder(employee_folder, "payslip")
+
+    assert first == second
+
+
+async def test_get_or_create_category_folder_distingue_categorias_del_mismo_empleado():
+    storage = MockDocumentStorage()
+    employee_folder = await storage.get_or_create_employee_folder("ana.gomez@ameliahub.com")
+
+    payslip_folder = await storage.get_or_create_category_folder(employee_folder, "payslip")
+    contract_folder = await storage.get_or_create_category_folder(employee_folder, "contract")
+
+    assert payslip_folder != contract_folder
+
+
+async def test_get_or_create_category_folder_distingue_la_misma_categoria_entre_empleados():
+    storage = MockDocumentStorage()
+    folder_a = await storage.get_or_create_employee_folder("ana.gomez@ameliahub.com")
+    folder_b = await storage.get_or_create_employee_folder("luis.perez@ameliahub.com")
+
+    category_a = await storage.get_or_create_category_folder(folder_a, "general")
+    category_b = await storage.get_or_create_category_folder(folder_b, "general")
+
+    assert category_a != category_b
+
+
+async def test_find_category_folder_devuelve_none_si_nunca_se_creo():
+    storage = MockDocumentStorage()
+    employee_folder = await storage.get_or_create_employee_folder("ana.gomez@ameliahub.com")
+
+    result = await storage.find_category_folder(employee_folder, "other")
+
+    assert result is None
+
+
+async def test_find_category_folder_encuentra_la_creada_por_get_or_create():
+    storage = MockDocumentStorage()
+    employee_folder = await storage.get_or_create_employee_folder("ana.gomez@ameliahub.com")
+    folder_id = await storage.get_or_create_category_folder(employee_folder, "payslip")
+
+    result = await storage.find_category_folder(employee_folder, "payslip")
+
+    assert result == folder_id
+
+
+async def test_upload_a_una_subcarpeta_de_categoria_no_aparece_en_la_raiz_del_empleado():
+    storage = MockDocumentStorage()
+    employee_folder = await storage.get_or_create_employee_folder("ana.gomez@ameliahub.com")
+    payslip_folder = await storage.get_or_create_category_folder(employee_folder, "payslip")
+
+    await storage.upload(
+        folder_id=payslip_folder,
+        filename="NOMINA_2026-07_ana.pdf",
+        content=b"contenido",
+        mime_type="application/pdf",
+    )
+
+    assert {f.name for f in await storage.list_folder_files(payslip_folder)} == {
+        "NOMINA_2026-07_ana.pdf"
+    }
+    # La raíz del empleado solo ve la SUBCARPETA (mimeType de carpeta,
+    # igual que Drive real), nunca el archivo que está dentro de ella.
+    root_entries = await storage.list_folder_files(employee_folder)
+    assert [f.drive_file_id for f in root_entries] == [payslip_folder]
+    assert root_entries[0].mime_type == "application/vnd.google-apps.folder"
+
+
 async def test_upload_devuelve_drive_file_id_y_content_hash_md5():
     storage = MockDocumentStorage()
     folder_id = await storage.get_or_create_employee_folder("ana.gomez@ameliahub.com")

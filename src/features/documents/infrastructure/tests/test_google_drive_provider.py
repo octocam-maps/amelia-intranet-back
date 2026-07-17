@@ -21,16 +21,23 @@ from src.features.documents.infrastructure.providers.google_drive_provider impor
 
 class _FakeGoogleDriveClient:
     def __init__(self):
-        self.folders: dict[str, str] = {}
+        # Clave = `(parent_id, name)` — `parent_id=None` representa la raíz
+        # (carpeta del empleado), igual que el default de
+        # `GoogleDriveClient.find_folder_by_name`/`create_folder` reales.
+        # `created_folders` solo guarda el `name` (sin `parent_id`): ningún
+        # test de este módulo necesita distinguir por padre, solo por
+        # nombre, y así los tests existentes de la carpeta del empleado no
+        # cambian su aserción.
+        self.folders: dict[tuple, str] = {}
         self.created_folders: list[str] = []
         self.raise_404_on_download = False
 
-    def find_folder_by_name(self, name):
-        return self.folders.get(name)
+    def find_folder_by_name(self, name, *, parent_id=None):
+        return self.folders.get((parent_id, name))
 
-    def create_folder(self, name):
-        folder_id = f"folder-{name}"
-        self.folders[name] = folder_id
+    def create_folder(self, name, *, parent_id=None):
+        folder_id = f"folder-{name}" if parent_id is None else f"folder-{parent_id}-{name}"
+        self.folders[(parent_id, name)] = folder_id
         self.created_folders.append(name)
         return folder_id
 
@@ -136,6 +143,99 @@ async def test_find_employee_folder_devuelve_none_si_no_existe():
     result = await storage.find_employee_folder("nadie@ameliahub.com")
 
     assert result is None
+
+
+# --- get_or_create_category_folder / find_category_folder -------------------
+
+
+async def test_get_or_create_category_folder_crea_bajo_la_carpeta_del_empleado():
+    fake_client = _FakeGoogleDriveClient()
+    storage = GoogleDriveDocumentStorage(
+        key_path="",
+        key_json="x",
+        root_folder_id="root-folder-123",
+        client=fake_client,
+    )
+
+    folder_id = await storage.get_or_create_category_folder("folder-empleado-1", "payslip")
+
+    assert folder_id == "folder-folder-empleado-1-Nóminas"
+    assert fake_client.created_folders == ["Nóminas"]
+
+
+async def test_get_or_create_category_folder_es_idempotente():
+    fake_client = _FakeGoogleDriveClient()
+    storage = GoogleDriveDocumentStorage(
+        key_path="",
+        key_json="x",
+        root_folder_id="root-folder-123",
+        client=fake_client,
+    )
+
+    first = await storage.get_or_create_category_folder("folder-empleado-1", "contract")
+    second = await storage.get_or_create_category_folder("folder-empleado-1", "contract")
+
+    assert first == second
+    # Solo se crea UNA vez — la segunda llamada la encuentra con find.
+    assert fake_client.created_folders == ["Contratos"]
+
+
+async def test_get_or_create_category_folder_distingue_categorias_del_mismo_empleado():
+    fake_client = _FakeGoogleDriveClient()
+    storage = GoogleDriveDocumentStorage(
+        key_path="",
+        key_json="x",
+        root_folder_id="root-folder-123",
+        client=fake_client,
+    )
+
+    payslip_folder = await storage.get_or_create_category_folder("folder-empleado-1", "payslip")
+    contract_folder = await storage.get_or_create_category_folder("folder-empleado-1", "contract")
+
+    assert payslip_folder != contract_folder
+
+
+async def test_get_or_create_category_folder_distingue_el_mismo_empleado_de_otro():
+    fake_client = _FakeGoogleDriveClient()
+    storage = GoogleDriveDocumentStorage(
+        key_path="",
+        key_json="x",
+        root_folder_id="root-folder-123",
+        client=fake_client,
+    )
+
+    folder_a = await storage.get_or_create_category_folder("folder-empleado-a", "general")
+    folder_b = await storage.get_or_create_category_folder("folder-empleado-b", "general")
+
+    assert folder_a != folder_b
+
+
+async def test_find_category_folder_devuelve_none_si_no_existe():
+    storage = GoogleDriveDocumentStorage(
+        key_path="",
+        key_json="x",
+        root_folder_id="root-folder-123",
+        client=_FakeGoogleDriveClient(),
+    )
+
+    result = await storage.find_category_folder("folder-empleado-1", "other")
+
+    assert result is None
+
+
+async def test_find_category_folder_encuentra_la_creada_por_get_or_create():
+    fake_client = _FakeGoogleDriveClient()
+    storage = GoogleDriveDocumentStorage(
+        key_path="",
+        key_json="x",
+        root_folder_id="root-folder-123",
+        client=fake_client,
+    )
+    folder_id = await storage.get_or_create_category_folder("folder-empleado-1", "payslip")
+
+    result = await storage.find_category_folder("folder-empleado-1", "payslip")
+
+    assert result == folder_id
 
 
 # --- upload / download -------------------------------------------------------

@@ -24,8 +24,14 @@ import hashlib
 import uuid
 from typing import ClassVar, Optional
 
-from ...domain.models import DriveFileMetadata, UploadedFile
+from ...domain.models import CATEGORY_FOLDER_NAMES, DriveFileMetadata, UploadedFile
 from ...domain.ports import DriveFileNotFoundError
+
+# Mismo literal que usa Drive real (`google_drive_client._FOLDER_MIME_TYPE`)
+# para distinguir una carpeta de un archivo — se duplica aquí en vez de
+# importarlo porque ese módulo es el único que toca `googleapiclient`
+# (docstring de `google_drive_client.py`) y este provider no depende de él.
+_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
 
 class MockDocumentStorage:
@@ -34,6 +40,10 @@ class MockDocumentStorage:
     _folders_by_email: ClassVar[dict[str, str]] = {}
     _files_by_folder: ClassVar[dict[str, dict[str, DriveFileMetadata]]] = {}
     _content_by_file_id: ClassVar[dict[str, bytes]] = {}
+    # `employee_folder_id -> {category -> subfolder_id}` — refleja la
+    # estructura real de Drive (subcarpeta de categoría DENTRO de la
+    # carpeta del empleado, ver `CATEGORY_FOLDER_NAMES`).
+    _category_folders: ClassVar[dict[str, dict[str, str]]] = {}
 
     async def get_or_create_employee_folder(self, email: str) -> str:
         folder_id = self._folders_by_email.get(email)
@@ -45,6 +55,35 @@ class MockDocumentStorage:
 
     async def find_employee_folder(self, email: str) -> Optional[str]:
         return self._folders_by_email.get(email)
+
+    async def get_or_create_category_folder(
+        self, employee_folder_id: str, category: str
+    ) -> str:
+        categories = self._category_folders.setdefault(employee_folder_id, {})
+        folder_id = categories.get(category)
+        if folder_id is None:
+            folder_id = f"mock-folder-{uuid.uuid4()}"
+            categories[category] = folder_id
+            self._files_by_folder[folder_id] = {}
+            # Drive real lista las subcarpetas como una entrada más al
+            # listar la carpeta del empleado — se refleja aquí para que el
+            # filtro por `mimeType` de carpeta en el sync (fallback de
+            # archivos sueltos) sea representativo también contra el mock.
+            self._files_by_folder.setdefault(employee_folder_id, {})[folder_id] = (
+                DriveFileMetadata(
+                    drive_file_id=folder_id,
+                    name=CATEGORY_FOLDER_NAMES[category],
+                    mime_type=_FOLDER_MIME_TYPE,
+                    size_bytes=0,
+                    content_hash="",
+                )
+            )
+        return folder_id
+
+    async def find_category_folder(
+        self, employee_folder_id: str, category: str
+    ) -> Optional[str]:
+        return self._category_folders.get(employee_folder_id, {}).get(category)
 
     async def upload(
         self, *, folder_id: str, filename: str, content: bytes, mime_type: str
@@ -83,3 +122,4 @@ class MockDocumentStorage:
         cls._folders_by_email.clear()
         cls._files_by_folder.clear()
         cls._content_by_file_id.clear()
+        cls._category_folders.clear()

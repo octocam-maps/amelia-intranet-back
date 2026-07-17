@@ -13,6 +13,7 @@ semántica de Unidad compartida (`supportsAllDrives`, y en `list`
 """
 
 import json
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from googleapiclient.discovery import build as build_drive_resource
@@ -33,6 +34,13 @@ def _service_with_mock_sequence(responses: list) -> tuple:
     http = HttpMockSequence(responses)
     service = build_drive_resource("drive", "v3", http=http, static_discovery=True)
     return service, http
+
+
+def _query_param(uri: str, name: str) -> str:
+    """`q` (y el resto de parámetros de `files.list`) llegan percent-encoded
+    en la URI — se decodifican para comparar contra el literal de la query
+    de Drive sin escapes de URL de por medio."""
+    return parse_qs(urlparse(uri).query)[name][0]
 
 
 # --- build_credentials ------------------------------------------------------
@@ -140,6 +148,37 @@ def test_find_folder_by_name_devuelve_none_si_no_hay_resultados():
     assert folder_id is None
 
 
+def test_find_folder_by_name_sin_parent_busca_bajo_la_raiz():
+    service, http = _service_with_mock_sequence(
+        [({"status": "200"}, json.dumps({"files": []}))]
+    )
+    client = GoogleDriveClient(None, root_folder_id=_ROOT_FOLDER_ID, service=service)
+
+    client.find_folder_by_name("ana@ameliahub.com")
+
+    uri = http.request_sequence[0][0]
+    assert f"'{_ROOT_FOLDER_ID}' in parents" in _query_param(uri, "q")
+
+
+def test_find_folder_by_name_con_parent_busca_bajo_esa_subcarpeta_no_la_raiz():
+    # Subcarpetas de categoría (Nóminas/Contratos/...): la búsqueda debe ir
+    # bajo la carpeta del empleado (`parent_id`), NO bajo la raíz de la
+    # Unidad compartida.
+    service, http = _service_with_mock_sequence(
+        [({"status": "200"}, json.dumps({"files": [{"id": "subcarpeta-nominas", "name": "Nóminas"}]}))]
+    )
+    client = GoogleDriveClient(None, root_folder_id=_ROOT_FOLDER_ID, service=service)
+
+    folder_id = client.find_folder_by_name("Nóminas", parent_id="folder-empleado-1")
+
+    assert folder_id == "subcarpeta-nominas"
+    uri = http.request_sequence[0][0]
+    assert "'folder-empleado-1' in parents" in _query_param(uri, "q")
+    # `driveId` (la Unidad compartida) sigue siendo la raíz, nunca el
+    # `parent_id` — son conceptos distintos (ver docstring del método).
+    assert f"driveId={_ROOT_FOLDER_ID}" in uri
+
+
 # --- create_folder -----------------------------------------------------------
 
 
@@ -152,6 +191,32 @@ def test_create_folder_incluye_flag_de_shared_drive():
     folder_id = client.create_folder("luis.perez@ameliahub.com")
 
     assert folder_id == "folder-nueva-1"
+    assert "supportsAllDrives=true" in http.request_sequence[0][0]
+
+
+def test_create_folder_sin_parent_la_crea_bajo_la_raiz():
+    service, http = _service_with_mock_sequence(
+        [({"status": "200"}, json.dumps({"id": "folder-nueva-1"}))]
+    )
+    client = GoogleDriveClient(None, root_folder_id=_ROOT_FOLDER_ID, service=service)
+
+    client.create_folder("luis.perez@ameliahub.com")
+
+    body = json.loads(http.request_sequence[0][2])
+    assert body["parents"] == [_ROOT_FOLDER_ID]
+
+
+def test_create_folder_con_parent_la_crea_bajo_esa_subcarpeta_no_la_raiz():
+    service, http = _service_with_mock_sequence(
+        [({"status": "200"}, json.dumps({"id": "subcarpeta-nominas-1"}))]
+    )
+    client = GoogleDriveClient(None, root_folder_id=_ROOT_FOLDER_ID, service=service)
+
+    folder_id = client.create_folder("Nóminas", parent_id="folder-empleado-1")
+
+    assert folder_id == "subcarpeta-nominas-1"
+    body = json.loads(http.request_sequence[0][2])
+    assert body["parents"] == ["folder-empleado-1"]
     assert "supportsAllDrives=true" in http.request_sequence[0][0]
 
 

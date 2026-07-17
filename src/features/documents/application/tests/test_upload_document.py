@@ -105,6 +105,60 @@ async def test_caches_drive_folder_id_across_uploads():
 
 
 @pytest.mark.asyncio
+async def test_uploads_to_the_category_subfolder_not_to_the_employee_root():
+    use_case, repository, storage, _ = _use_case()
+
+    await use_case.execute(
+        user_id="user-1",
+        uploaded_by="admin-1",
+        category="payslip",
+        title="Nómina julio 2026",
+        period="2026-07",
+        filename="nomina-2026-07.pdf",
+        content=b"contenido",
+        mime_type="application/pdf",
+    )
+
+    employee_folder_id = await repository.find_drive_folder_id("user-1")
+    uploaded_to_folder_id = storage.upload_calls[0]["folder_id"]
+    assert uploaded_to_folder_id != employee_folder_id
+    assert uploaded_to_folder_id == await storage.find_category_folder(
+        employee_folder_id, "payslip"
+    )
+
+
+@pytest.mark.asyncio
+async def test_different_categories_of_the_same_employee_use_different_subfolders():
+    use_case, _, storage, _ = _use_case()
+
+    await use_case.execute(
+        user_id="user-1",
+        uploaded_by="admin-1",
+        category="payslip",
+        title="Nómina julio 2026",
+        period="2026-07",
+        filename="nomina-2026-07.pdf",
+        content=b"contenido",
+        mime_type="application/pdf",
+    )
+    await use_case.execute(
+        user_id="user-1",
+        uploaded_by="admin-1",
+        category="contract",
+        title="Contrato",
+        period=None,
+        filename="contrato.pdf",
+        content=b"contenido",
+        mime_type="application/pdf",
+    )
+
+    payslip_folder_id, contract_folder_id = (
+        call["folder_id"] for call in storage.upload_calls
+    )
+    assert payslip_folder_id != contract_folder_id
+
+
+@pytest.mark.asyncio
 async def test_rejects_non_pdf_mime_type():
     use_case, *_ = _use_case()
 

@@ -89,11 +89,18 @@ class GoogleDriveClient:
             "drive", "v3", credentials=credentials, cache_discovery=False
         )
 
-    def find_folder_by_name(self, name: str) -> Optional[str]:
-        """Busca una subcarpeta por nombre exacto bajo la raíz configurada,
-        SIN crearla. Devuelve `None` si no existe."""
+    def find_folder_by_name(
+        self, name: str, *, parent_id: Optional[str] = None
+    ) -> Optional[str]:
+        """Busca una subcarpeta por nombre exacto bajo `parent_id` (por
+        defecto la raíz configurada — así la carpeta del empleado sigue
+        buscándose bajo `DRIVE_ROOT_FOLDER_ID` sin cambiar la firma en su
+        único call site actual), SIN crearla. Devuelve `None` si no existe.
+        `driveId`/`corpora` SIEMPRE apuntan a la raíz: es el id de la Unidad
+        compartida, no de la carpeta padre bajo la que se busca."""
+        parent = parent_id or self._root_folder_id
         query = (
-            f"'{self._root_folder_id}' in parents and "
+            f"'{parent}' in parents and "
             f"name = '{_escape_query_literal(name)}' and "
             f"mimeType = '{_FOLDER_MIME_TYPE}' and trashed = false"
         )
@@ -112,15 +119,16 @@ class GoogleDriveClient:
         files = response.get("files", [])
         return files[0]["id"] if files else None
 
-    def create_folder(self, name: str) -> str:
-        """Crea una subcarpeta bajo la raíz configurada. NO comprueba
-        duplicados — quien llama (`GoogleDriveDocumentStorage.
-        get_or_create_employee_folder`) ya resolvió que no existe antes de
+    def create_folder(self, name: str, *, parent_id: Optional[str] = None) -> str:
+        """Crea una subcarpeta bajo `parent_id` (por defecto la raíz
+        configurada). NO comprueba duplicados — quien llama
+        (`GoogleDriveDocumentStorage.get_or_create_employee_folder` /
+        `get_or_create_category_folder`) ya resolvió que no existe antes de
         crear."""
         metadata = {
             "name": name,
             "mimeType": _FOLDER_MIME_TYPE,
-            "parents": [self._root_folder_id],
+            "parents": [parent_id or self._root_folder_id],
         }
         created = (
             self._service.files()

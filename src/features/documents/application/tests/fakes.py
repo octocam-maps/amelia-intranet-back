@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from src.features.documents.domain.models import (
+    CATEGORY_FOLDER_NAMES,
     Document,
     DriveFileMetadata,
     SyncRun,
@@ -24,6 +25,11 @@ from src.features.documents.domain.models import (
 )
 from src.features.documents.domain.ports import DriveFileNotFoundError
 from src.features.staff.domain.entities import StaffMember
+
+# Mismo literal que `MockDocumentStorage._FOLDER_MIME_TYPE` — ver su
+# docstring: se duplica en vez de compartir un import porque cada adaptador
+# de `IDocumentStorage` (real, mock, fake de tests) es independiente.
+_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
 
 class FakeDocumentRepository:
@@ -154,6 +160,9 @@ class FakeDocumentStorage:
         self.files_by_folder: dict[str, dict[str, DriveFileMetadata]] = {}
         self.content_by_file_id: dict[str, bytes] = {}
         self.upload_calls: list[dict] = []  # para aserciones "llamó al storage"
+        # `employee_folder_id -> {category -> subfolder_id}`, igual que
+        # `MockDocumentStorage._category_folders`.
+        self.category_folders: dict[str, dict[str, str]] = {}
 
     async def get_or_create_employee_folder(self, email: str) -> str:
         folder_id = self.folders_by_email.get(email)
@@ -165,6 +174,36 @@ class FakeDocumentStorage:
 
     async def find_employee_folder(self, email: str) -> Optional[str]:
         return self.folders_by_email.get(email)
+
+    async def get_or_create_category_folder(
+        self, employee_folder_id: str, category: str
+    ) -> str:
+        categories = self.category_folders.setdefault(employee_folder_id, {})
+        folder_id = categories.get(category)
+        if folder_id is None:
+            folder_id = f"fake-folder-{uuid.uuid4()}"
+            categories[category] = folder_id
+            self.files_by_folder[folder_id] = {}
+            # Mismo criterio que `MockDocumentStorage`: la subcarpeta
+            # aparece como una entrada más al listar la carpeta del
+            # empleado, igual que en Drive real — necesario para que el
+            # test del fallback (archivos sueltos, sin subcarpeta) del sync
+            # sea representativo.
+            self.files_by_folder.setdefault(employee_folder_id, {})[folder_id] = (
+                DriveFileMetadata(
+                    drive_file_id=folder_id,
+                    name=CATEGORY_FOLDER_NAMES[category],
+                    mime_type=_FOLDER_MIME_TYPE,
+                    size_bytes=0,
+                    content_hash="",
+                )
+            )
+        return folder_id
+
+    async def find_category_folder(
+        self, employee_folder_id: str, category: str
+    ) -> Optional[str]:
+        return self.category_folders.get(employee_folder_id, {}).get(category)
 
     async def upload(
         self, *, folder_id: str, filename: str, content: bytes, mime_type: str

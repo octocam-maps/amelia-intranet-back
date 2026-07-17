@@ -18,6 +18,21 @@ from typing import Optional
 # seguridad final.
 DOCUMENT_CATEGORIES = frozenset({"payslip", "contract", "general", "other"})
 
+# Nombre EXACTO (con acento) de la subcarpeta de Drive por categoría, dentro
+# de la carpeta del empleado (`<email>/<subcarpeta>/...`) — decisión del
+# usuario para organizar Fase 4: cada categoría vive en su propia subcarpeta
+# en vez de caer todas juntas en la raíz del empleado. Usado tanto para
+# resolver/crear la subcarpeta al subir (`get_or_create_category_folder`)
+# como para resolverla al conciliar en el sync (`find_category_folder`,
+# `IDocumentStorage`) — el sync itera las categorías conocidas y le pide a
+# cada una su subcarpeta, no al revés (no necesita mapear nombre->categoría).
+CATEGORY_FOLDER_NAMES: dict[str, str] = {
+    "payslip": "Nóminas",
+    "contract": "Contratos",
+    "general": "General",
+    "other": "Otros",
+}
+
 
 @dataclass(frozen=True)
 class Document:

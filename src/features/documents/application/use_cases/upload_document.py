@@ -68,16 +68,24 @@ class UploadDocumentUseCase:
         if staff_member is None:
             raise DocumentOwnerNotFoundError(f"No existe ningún empleado con id='{user_id}'.")
 
-        # La subcarpeta de Drive se cachea en `users.drive_folder_id`
+        # La subcarpeta del empleado se cachea en `users.drive_folder_id`
         # (migración 025) para no volver a buscarla/crearla por nombre en
-        # cada subida — se resuelve una sola vez por empleado.
+        # cada subida — se resuelve una sola vez por empleado. La subcarpeta
+        # de CATEGORÍA (Nóminas/Contratos/General/Otros, decisión posterior
+        # del usuario) NO se cachea aparte: es una llamada más al storage,
+        # pero el propio provider ya la resuelve por nombre en O(1) llamadas
+        # de lista/creación, igual que antes hacía con la carpeta raíz.
         folder_id = await self._repository.find_drive_folder_id(user_id)
         if folder_id is None:
             folder_id = await self._storage.get_or_create_employee_folder(staff_member.email)
             await self._repository.save_drive_folder_id(user_id, folder_id)
 
+        category_folder_id = await self._storage.get_or_create_category_folder(
+            folder_id, category
+        )
+
         uploaded = await self._storage.upload(
-            folder_id=folder_id, filename=filename, content=content, mime_type=mime_type
+            folder_id=category_folder_id, filename=filename, content=content, mime_type=mime_type
         )
 
         return await self._repository.create(

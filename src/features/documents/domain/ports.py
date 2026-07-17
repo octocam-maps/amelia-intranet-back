@@ -107,6 +107,29 @@ class IDocumentStorage(Protocol):
         nunca crea una carpeta vacía."""
         ...
 
+    async def get_or_create_category_folder(
+        self, employee_folder_id: str, category: str
+    ) -> str:
+        """Devuelve el id de la subcarpeta de categoría (nombre EXACTO según
+        `domain.models.CATEGORY_FOLDER_NAMES` — `payslip`->"Nóminas",
+        `contract`->"Contratos", `general`->"General", `other`->"Otros")
+        DENTRO de `employee_folder_id`, CREÁNDOLA si no existe. La usa la
+        subida manual (`UploadDocumentUseCase`): el admin siempre puede
+        subir aunque sea el primer documento de esa categoría para esa
+        persona. `category` llega ya validada contra `DOCUMENT_CATEGORIES`
+        por el use case — este puerto no la revalida."""
+        ...
+
+    async def find_category_folder(
+        self, employee_folder_id: str, category: str
+    ) -> Optional[str]:
+        """Busca la subcarpeta de categoría DENTRO de `employee_folder_id`
+        SIN crearla — mismo criterio que `find_employee_folder` frente a
+        `get_or_create_employee_folder`. La usa el sync (`SyncDocumentsUseCase`):
+        si esa categoría todavía no tiene subcarpeta para ese empleado, el
+        sync no tiene nada que conciliar ahí, nunca crea una vacía."""
+        ...
+
     async def upload(
         self, *, folder_id: str, filename: str, content: bytes, mime_type: str
     ) -> UploadedFile:

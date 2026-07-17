@@ -5,6 +5,14 @@ directamente en la subcarpeta de Drive de cada empleado (fuera de la app,
 todavía no están indexados en `employee_documents` y crea su fila de
 metadata (`uploaded_by=None`, identifica una fila del sync automático).
 
+La categoría se deriva PRIMERO de la subcarpeta en la que RRHH colocó el
+archivo (`Nóminas`/`Contratos`/`General`/`Otros`, ver
+`domain.models.CATEGORY_FOLDER_NAMES` — decisión posterior del usuario que
+organiza la carpeta del empleado en subcarpetas por categoría). Un archivo
+colocado a mano SUELTO en la raíz de la carpeta del empleado (sin
+subcarpeta) cae al criterio previo por convención de nombre, para no
+ignorarlo.
+
 Disparado por `POST /documents/sync`, protegido con
 `require_role("administrador")` en la capa de FastAPI (mismo criterio que
 `UploadDocumentUseCase`) — no repite el chequeo de rol aquí.
@@ -21,18 +29,20 @@ import logging
 import re
 from typing import Optional
 
-from ...domain.models import SyncRun
+from ...domain.models import DOCUMENT_CATEGORIES, SyncRun
 from ...domain.ports import IDocumentRepository, IDocumentStorage
 
 logger = logging.getLogger(__name__)
 
 _ALLOWED_MIME_TYPE = "application/pdf"
+_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
-# Convención de nombre para la categorización automática del sync
-# (`sdd/fase4-nominas-documentos/design`): `NOMINA_YYYY-MM*` -> payslip (con
-# período), `CONTRATO*` -> contract, cualquier otro nombre -> general.
-# Case-insensitive: RRHH no siempre respeta mayúsculas al colocar el archivo
-# a mano.
+# Convención de nombre para la categorización de FALLBACK, solo para
+# archivos sueltos en la raíz de la carpeta del empleado (sin subcarpeta de
+# categoría, `sdd/fase4-nominas-documentos/design`): `NOMINA_YYYY-MM*` ->
+# payslip (con período), `CONTRATO*` -> contract, cualquier otro nombre ->
+# general. Case-insensitive: RRHH no siempre respeta mayúsculas al colocar
+# el archivo a mano.
 _PAYSLIP_PATTERN = re.compile(r"^NOMINA[_\-\s]?(\d{4}-\d{2})", re.IGNORECASE)
 _CONTRACT_PATTERN = re.compile(r"^CONTRATO", re.IGNORECASE)
 
@@ -47,6 +57,15 @@ def _categorize(filename: str) -> tuple[str, Optional[str]]:
     if _CONTRACT_PATTERN.match(stem):
         return "contract", None
     return "general", None
+
+
+def _extract_payslip_period(filename: str) -> Optional[str]:
+    """Igual que la rama `payslip` de `_categorize`, pero para un archivo
+    cuya categoría YA se conoce por estar en la subcarpeta `Nóminas` — solo
+    falta el período (`YYYY-MM`) si el nombre lo sigue esa convención."""
+    stem = filename.rsplit(".", 1)[0]
+    match = _PAYSLIP_PATTERN.match(stem)
+    return match.group(1) if match else None
 
 
 class SyncDocumentsUseCase:
@@ -126,7 +145,34 @@ class SyncDocumentsUseCase:
 
         created = 0
         skipped = 0
+
+        # 1) Subcarpetas de categoría (`Nóminas`/`Contratos`/`General`/
+        #    `Otros`): la categoría se deriva de la subcarpeta, no del
+        #    nombre del archivo. Categorías sin subcarpeta todavía (RRHH no
+        #    colocó nada ahí) se saltan sin crear una vacía
+        #    (`find_category_folder`, nunca `get_or_create_...`).
+        for category in DOCUMENT_CATEGORIES:
+            subfolder_id = await self._storage.find_category_folder(folder_id, category)
+            if subfolder_id is None:
+                continue
+            employee_created, employee_skipped = await self._sync_folder(
+                user_id=user_id,
+                folder_id=subfolder_id,
+                existing_drive_file_ids=existing_drive_file_ids,
+                category=category,
+            )
+            created += employee_created
+            skipped += employee_skipped
+
+        # 2) Fallback: archivos colocados a mano SUELTOS en la raíz de la
+        #    carpeta del empleado (sin subcarpeta) — se categorizan por el
+        #    criterio previo de nombre, para no ignorarlos. Se excluyen las
+        #    propias subcarpetas de categoría (mimeType de carpeta): sin
+        #    esto cada subcarpeta contaría como un archivo "omitido" en
+        #    cada corrida.
         for drive_file in await self._storage.list_folder_files(folder_id):
+            if drive_file.mime_type == _FOLDER_MIME_TYPE:
+                continue
             if drive_file.drive_file_id in existing_drive_file_ids:
                 continue
             if (
@@ -137,6 +183,45 @@ class SyncDocumentsUseCase:
                 continue
 
             category, period = _categorize(drive_file.name)
+            await self._repository.create(
+                user_id=user_id,
+                category=category,
+                title=drive_file.name,
+                period=period,
+                drive_file_id=drive_file.drive_file_id,
+                mime_type=drive_file.mime_type,
+                content_hash=drive_file.content_hash,
+                uploaded_by=None,
+            )
+            created += 1
+
+        return created, skipped
+
+    async def _sync_folder(
+        self,
+        *,
+        user_id: str,
+        folder_id: str,
+        existing_drive_file_ids: set[str],
+        category: str,
+    ) -> tuple[int, int]:
+        """Conciliación de UNA subcarpeta de categoría ya resuelta — la
+        categoría llega fija (no se deriva del nombre del archivo), salvo el
+        período de `payslip` (`_extract_payslip_period`), que sí depende del
+        nombre si sigue la convención `NOMINA_YYYY-MM*`."""
+        created = 0
+        skipped = 0
+        for drive_file in await self._storage.list_folder_files(folder_id):
+            if drive_file.drive_file_id in existing_drive_file_ids:
+                continue
+            if (
+                drive_file.mime_type != _ALLOWED_MIME_TYPE
+                or drive_file.size_bytes > self._max_upload_bytes
+            ):
+                skipped += 1
+                continue
+
+            period = _extract_payslip_period(drive_file.name) if category == "payslip" else None
             await self._repository.create(
                 user_id=user_id,
                 category=category,
