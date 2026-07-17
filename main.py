@@ -18,6 +18,7 @@ from src.features.absences.infrastructure.routes import create_absences_router
 from src.features.announcements.infrastructure.routes import create_announcements_router
 from src.features.auth.infrastructure.routes import create_auth_router
 from src.features.dashboard.infrastructure.routes import create_dashboard_router
+from src.features.documents.infrastructure.routes import create_documents_router
 from src.features.holidays.infrastructure.routes import create_holidays_router
 from src.features.invitations.infrastructure.routes import create_invitations_router
 from src.features.mailbox.infrastructure.routes import create_mailbox_router
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(create_dashboard_router())
     app.include_router(create_time_clock_router())
     app.include_router(create_absences_router())
+    app.include_router(create_documents_router())
     app.include_router(create_mailbox_router())
     app.include_router(create_staff_router())
     app.include_router(create_announcements_router())
@@ -129,6 +131,7 @@ def create_app() -> FastAPI:
             "dashboard",
             "time-clock",
             "absences",
+            "documents",
             "mailbox",
             "staff",
             "announcements",
