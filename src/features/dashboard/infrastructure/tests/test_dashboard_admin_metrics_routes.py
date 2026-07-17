@@ -17,8 +17,6 @@ from main import app  # noqa: E402
 from src.features.dashboard.domain.entities import (  # noqa: E402
     AdminDashboardMetrics,
     AdminMetricsKPIs,
-    AttendanceRadarItem,
-    MetricsTrends,
 )
 from src.features.dashboard.infrastructure import dependencies as dashboard_dependencies  # noqa: E402
 from src.shared.jwt import get_jwt_service  # noqa: E402
@@ -51,17 +49,6 @@ class _FakeAdminMetricsUseCase:
             kpis=AdminMetricsKPIs(
                 absent_today=1, pending_approvals=2, clocked_in_now=3, punctuality_pct=90
             ),
-            trends=MetricsTrends(absences=[1, 0], clocked_in=[3, 4], punctuality=[100, 80]),
-            attendance_radar=[
-                AttendanceRadarItem(
-                    user_id="user-2",
-                    full_name="Ana García",
-                    avatar_url=None,
-                    kind="late_in",
-                    value_minutes=45,
-                    detail="Entrada 09:45 (media)",
-                )
-            ],
         )
 
 
@@ -102,21 +89,6 @@ def test_administrador_gets_the_full_metrics_payload():
         "clocked_in_now": 3,
         "punctuality_pct": 90,
     }
-    assert body["trends"] == {
-        "absences": [1, 0],
-        "clocked_in": [3, 4],
-        "punctuality": [100, 80],
-    }
-    assert body["attendance_radar"] == [
-        {
-            "user_id": "user-2",
-            "full_name": "Ana García",
-            "avatar_url": None,
-            "kind": "late_in",
-            "value_minutes": 45,
-            "detail": "Entrada 09:45 (media)",
-        }
-    ]
 
 
 def test_query_params_are_forwarded_to_the_use_case():

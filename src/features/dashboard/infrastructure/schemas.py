@@ -1,7 +1,7 @@
 """DTOs de response (Pydantic) del feature `dashboard`."""
 
 from datetime import date
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -52,22 +52,5 @@ class AdminMetricsKPIsDTO(BaseModel):
     punctuality_pct: int
 
 
-class AdminMetricsTrendsDTO(BaseModel):
-    absences: list[int]
-    clocked_in: list[int]
-    punctuality: list[int]
-
-
-class AttendanceRadarItemDTO(BaseModel):
-    user_id: str
-    full_name: str
-    avatar_url: Optional[str] = None
-    kind: Literal["late_in", "overtime_out", "on_time", "negative_balance"]
-    value_minutes: int
-    detail: str
-
-
 class AdminMetricsDTO(BaseModel):
     kpis: AdminMetricsKPIsDTO
-    trends: AdminMetricsTrendsDTO
-    attendance_radar: list[AttendanceRadarItemDTO]

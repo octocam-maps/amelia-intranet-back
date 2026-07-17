@@ -10,7 +10,6 @@ from typing import Optional, Protocol
 
 from .entities import (
     DailyTrendPoint,
-    EmployeeAttendanceStats,
     PendingAbsenceRequestSummary,
     TodayClockStatus,
     UpcomingHoliday,
@@ -71,15 +70,4 @@ class IDashboardRepository(Protocol):
     ) -> list[DailyTrendPoint]:
         """Un punto por cada día del rango (inclusive), en orden cronológico
         — incluye los días sin fichajes/ausencias con contadores en 0."""
-        ...
-
-    async def list_attendance_stats(
-        self,
-        from_date: date,
-        to_date: date,
-        entity_id: Optional[str],
-        department_id: Optional[str],
-    ) -> list[EmployeeAttendanceStats]:
-        """Una fila por empleado con al menos un tramo cerrado en el rango —
-        alimenta el radar de asistencia."""
         ...

@@ -6,7 +6,6 @@ from typing import Optional
 
 from src.features.dashboard.domain.entities import (
     DailyTrendPoint,
-    EmployeeAttendanceStats,
     PendingAbsenceRequestSummary,
     TodayClockStatus,
     UpcomingHoliday,
@@ -26,7 +25,6 @@ class FakeDashboardRepository:
         pending_approvals: int = 0,
         clocked_in_now_filtered: int = 0,
         daily_trends: Optional[list[DailyTrendPoint]] = None,
-        attendance_stats: Optional[list[EmployeeAttendanceStats]] = None,
     ):
         self.vacation_balance = vacation_balance
         self.today_clock_status = today_clock_status or TodayClockStatus(
@@ -39,7 +37,6 @@ class FakeDashboardRepository:
         self.pending_approvals = pending_approvals
         self.clocked_in_now_filtered = clocked_in_now_filtered
         self.daily_trends = daily_trends or []
-        self.attendance_stats = attendance_stats or []
         # Últimos filtros recibidos por cada método — permite a los tests
         # comprobar que el caso de uso propaga entity_id/department_id.
         self.received_filters: dict[str, tuple[Optional[str], Optional[str]]] = {}
@@ -90,13 +87,3 @@ class FakeDashboardRepository:
     ) -> list[DailyTrendPoint]:
         self.received_filters["list_daily_trends"] = (entity_id, department_id)
         return self.daily_trends
-
-    async def list_attendance_stats(
-        self,
-        from_date: date,
-        to_date: date,
-        entity_id: Optional[str],
-        department_id: Optional[str],
-    ) -> list[EmployeeAttendanceStats]:
-        self.received_filters["list_attendance_stats"] = (entity_id, department_id)
-        return self.attendance_stats

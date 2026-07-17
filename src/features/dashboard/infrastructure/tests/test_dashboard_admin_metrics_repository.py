@@ -127,35 +127,3 @@ async def test_list_daily_trends_defaults_missing_absence_day_to_zero():
     assert points[0].absences == 0
 
 
-@pytest.mark.asyncio
-async def test_list_attendance_stats_only_considers_closed_entries_and_madrid_time():
-    pool = AsyncMock()
-    pool.fetch.return_value = [
-        {
-            "user_id": "user-1",
-            "full_name": "Ana García",
-            "avatar_url": None,
-            "days_clocked": 10,
-            "worked_minutes_total": 4800.0,
-            "avg_clock_in_minutes": 540.0,
-            "avg_clock_out_minutes": 1140.0,
-        }
-    ]
-    repository = PostgresDashboardRepository(pool)
-
-    stats = await repository.list_attendance_stats(
-        date(2026, 7, 1), date(2026, 7, 14), "entity-hub", None
-    )
-
-    query, *args = pool.fetch.call_args[0]
-    assert "t.clock_out IS NOT NULL" in query
-    assert "AT TIME ZONE 'Europe/Madrid'" in query
-    assert "u.entity_id = $3::uuid" in query
-    assert args == [date(2026, 7, 1), date(2026, 7, 14), "entity-hub", None]
-
-    assert stats[0].user_id == "user-1"
-    assert stats[0].full_name == "Ana García"
-    assert stats[0].days_clocked == 10
-    assert stats[0].worked_minutes_total == 4800
-    assert stats[0].avg_clock_in_minutes == 540.0
-    assert stats[0].avg_clock_out_minutes == 1140.0

@@ -11,7 +11,6 @@ from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
 from ...domain.entities import (
     DailyTrendPoint,
-    EmployeeAttendanceStats,
     PendingAbsenceRequestSummary,
     TodayClockStatus,
     UpcomingHoliday,
@@ -247,51 +246,4 @@ class PostgresDashboardRepository(IDashboardRepository):
                 total_entries=int(row["total_entries"] or 0),
             )
             for row in clock_rows
-        ]
-
-    async def list_attendance_stats(
-        self,
-        from_date: date,
-        to_date: date,
-        entity_id: Optional[str],
-        department_id: Optional[str],
-    ) -> list[EmployeeAttendanceStats]:
-        rows = await self._db.fetch(
-            f"""
-            SELECT
-                u.id AS user_id,
-                u.full_name,
-                u.avatar_url,
-                COUNT(t.id) AS days_clocked,
-                COALESCE(SUM(EXTRACT(EPOCH FROM (t.clock_out - t.clock_in)) / 60), 0)
-                    AS worked_minutes_total,
-                AVG(EXTRACT(EPOCH FROM (t.clock_in AT TIME ZONE '{_MADRID_TZ}')::time) / 60)
-                    AS avg_clock_in_minutes,
-                AVG(EXTRACT(EPOCH FROM (t.clock_out AT TIME ZONE '{_MADRID_TZ}')::time) / 60)
-                    AS avg_clock_out_minutes
-            FROM time_clock_entries t
-            JOIN users u ON u.id = t.user_id
-            WHERE t.work_date BETWEEN $1 AND $2
-              AND t.clock_out IS NOT NULL
-              AND u.deleted_at IS NULL
-              AND ($3::uuid IS NULL OR u.entity_id = $3::uuid)
-              AND ($4::uuid IS NULL OR u.department_id = $4::uuid)
-            GROUP BY u.id, u.full_name, u.avatar_url
-            """,
-            from_date,
-            to_date,
-            entity_id,
-            department_id,
-        )
-        return [
-            EmployeeAttendanceStats(
-                user_id=str(row["user_id"]),
-                full_name=row["full_name"],
-                avatar_url=row["avatar_url"],
-                days_clocked=int(row["days_clocked"] or 0),
-                worked_minutes_total=int(round(row["worked_minutes_total"] or 0)),
-                avg_clock_in_minutes=float(row["avg_clock_in_minutes"] or 0),
-                avg_clock_out_minutes=float(row["avg_clock_out_minutes"] or 0),
-            )
-            for row in rows
         ]

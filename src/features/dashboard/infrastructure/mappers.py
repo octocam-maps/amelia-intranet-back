@@ -6,8 +6,6 @@ from ..domain.entities import (
 from .schemas import (
     AdminMetricsDTO,
     AdminMetricsKPIsDTO,
-    AdminMetricsTrendsDTO,
-    AttendanceRadarItemDTO,
     DashboardSummaryDTO,
     PendingAbsenceRequestDTO,
     TodayClockStatusDTO,
@@ -68,20 +66,4 @@ def metrics_to_dto(metrics: AdminDashboardMetrics) -> AdminMetricsDTO:
             clocked_in_now=metrics.kpis.clocked_in_now,
             punctuality_pct=metrics.kpis.punctuality_pct,
         ),
-        trends=AdminMetricsTrendsDTO(
-            absences=metrics.trends.absences,
-            clocked_in=metrics.trends.clocked_in,
-            punctuality=metrics.trends.punctuality,
-        ),
-        attendance_radar=[
-            AttendanceRadarItemDTO(
-                user_id=item.user_id,
-                full_name=item.full_name,
-                avatar_url=item.avatar_url,
-                kind=item.kind,
-                value_minutes=item.value_minutes,
-                detail=item.detail,
-            )
-            for item in metrics.attendance_radar
-        ],
     )
