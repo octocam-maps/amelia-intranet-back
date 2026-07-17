@@ -44,18 +44,18 @@ async def test_count_absent_today_returns_zero_when_no_row_matches():
 
 
 @pytest.mark.asyncio
-async def test_count_pending_absence_approvals_filters_by_entity_and_department():
+async def test_count_pending_absence_approvals_filters_by_entity_and_departments():
     pool = AsyncMock()
     pool.fetchval.return_value = 2
     repository = PostgresDashboardRepository(pool)
 
-    await repository.count_pending_absence_approvals("entity-hub", "dept-1")
+    await repository.count_pending_absence_approvals("entity-hub", ["dept-1", "dept-2"])
 
     query, *args = pool.fetchval.call_args[0]
     assert "status = 'pending'" in query
     assert "u.entity_id = $1::uuid" in query
-    assert "u.department_id = $2::uuid" in query
-    assert args == ["entity-hub", "dept-1"]
+    assert "u.department_id = ANY($2::uuid[])" in query
+    assert args == ["entity-hub", ["dept-1", "dept-2"]]
 
 
 @pytest.mark.asyncio
@@ -64,12 +64,12 @@ async def test_count_clocked_in_now_filtered_uses_work_date_and_open_entries():
     pool.fetchval.return_value = 5
     repository = PostgresDashboardRepository(pool)
 
-    await repository.count_clocked_in_now_filtered(date(2026, 7, 15), None, "dept-1")
+    await repository.count_clocked_in_now_filtered(date(2026, 7, 15), None, ["dept-1"])
 
     query, *args = pool.fetchval.call_args[0]
     assert "t.work_date = $1" in query
     assert "t.clock_out IS NULL" in query
-    assert args == [date(2026, 7, 15), None, "dept-1"]
+    assert args == [date(2026, 7, 15), None, ["dept-1"]]
 
 
 @pytest.mark.asyncio

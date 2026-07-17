@@ -40,24 +40,27 @@ class IDashboardRepository(Protocol):
         ...
 
     # --- `GET /dashboard/admin/metrics` --------------------------------
-    # `entity_id`/`department_id` en `None` significa "sin filtrar" — se
-    # traduce a SQL como `($n::uuid IS NULL OR ...)`, nunca se resuelve aquí.
+    # `entity_id` en `None` significa "sin filtrar" -> `($n::uuid IS NULL OR
+    # ...)`. `department_ids` en `None`/vacío también es "sin filtrar" ->
+    # `($n::uuid[] IS NULL OR u.department_id = ANY($n::uuid[]))` — el front
+    # agrupa los departamentos por NOMBRE y manda TODOS los `department_id`
+    # que comparten ese nombre (uno por sede), nunca se resuelve aquí.
 
     async def count_absent_today(
-        self, today: date, entity_id: Optional[str], department_id: Optional[str]
+        self, today: date, entity_id: Optional[str], department_ids: Optional[list[str]]
     ) -> int:
         """Empleados con una ausencia `approved` cuyo rango incluye `today`."""
         ...
 
     async def count_pending_absence_approvals(
-        self, entity_id: Optional[str], department_id: Optional[str]
+        self, entity_id: Optional[str], department_ids: Optional[list[str]]
     ) -> int: ...
 
     async def count_clocked_in_now_filtered(
-        self, today: date, entity_id: Optional[str], department_id: Optional[str]
+        self, today: date, entity_id: Optional[str], department_ids: Optional[list[str]]
     ) -> int:
         """Como `count_employees_clocked_in_now`, pero acotado por
-        entidad/departamento — método propio de `admin/metrics` para no
+        entidad/departamento(s) — método propio de `admin/metrics` para no
         alterar el contrato de `/dashboard/summary`."""
         ...
 
@@ -66,7 +69,7 @@ class IDashboardRepository(Protocol):
         from_date: date,
         to_date: date,
         entity_id: Optional[str],
-        department_id: Optional[str],
+        department_ids: Optional[list[str]],
     ) -> list[DailyTrendPoint]:
         """Un punto por cada día del rango (inclusive), en orden cronológico
         — incluye los días sin fichajes/ausencias con contadores en 0."""

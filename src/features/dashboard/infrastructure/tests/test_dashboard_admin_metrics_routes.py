@@ -39,10 +39,10 @@ class _FakeAdminMetricsUseCase:
     def __init__(self):
         self.received_kwargs = None
 
-    async def execute(self, *, entity_id=None, department_id=None, period_days=14):
+    async def execute(self, *, entity_id=None, department_ids=None, period_days=14):
         self.received_kwargs = {
             "entity_id": entity_id,
-            "department_id": department_id,
+            "department_ids": department_ids,
             "period_days": period_days,
         }
         return AdminDashboardMetrics(
@@ -100,6 +100,7 @@ def test_query_params_are_forwarded_to_the_use_case():
                 "/dashboard/admin/metrics"
                 "?entity_id=11111111-1111-1111-1111-111111111111"
                 "&department_id=22222222-2222-2222-2222-222222222222"
+                "&department_id=33333333-3333-3333-3333-333333333333"
                 "&period_days=7",
                 headers={"Authorization": f"Bearer {_token_for('administrador')}"},
             )
@@ -109,7 +110,10 @@ def test_query_params_are_forwarded_to_the_use_case():
     assert response.status_code == 200
     assert use_case.received_kwargs == {
         "entity_id": "11111111-1111-1111-1111-111111111111",
-        "department_id": "22222222-2222-2222-2222-222222222222",
+        "department_ids": [
+            "22222222-2222-2222-2222-222222222222",
+            "33333333-3333-3333-3333-333333333333",
+        ],
         "period_days": 7,
     }
 

@@ -81,15 +81,23 @@ async def test_filters_are_forwarded_to_every_repository_call():
     repository = FakeDashboardRepository()
     use_case = GetAdminMetricsUseCase(repository)
 
-    await use_case.execute(entity_id="entity-hub", department_id="dept-1", period_days=7)
+    await use_case.execute(
+        entity_id="entity-hub", department_ids=["dept-1", "dept-2"], period_days=7
+    )
 
-    assert repository.received_filters["count_absent_today"] == ("entity-hub", "dept-1")
+    assert repository.received_filters["count_absent_today"] == (
+        "entity-hub",
+        ["dept-1", "dept-2"],
+    )
     assert repository.received_filters["count_pending_absence_approvals"] == (
         "entity-hub",
-        "dept-1",
+        ["dept-1", "dept-2"],
     )
     assert repository.received_filters["count_clocked_in_now_filtered"] == (
         "entity-hub",
-        "dept-1",
+        ["dept-1", "dept-2"],
     )
-    assert repository.received_filters["list_daily_trends"] == ("entity-hub", "dept-1")
+    assert repository.received_filters["list_daily_trends"] == (
+        "entity-hub",
+        ["dept-1", "dept-2"],
+    )

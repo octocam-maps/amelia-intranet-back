@@ -38,8 +38,8 @@ class FakeDashboardRepository:
         self.clocked_in_now_filtered = clocked_in_now_filtered
         self.daily_trends = daily_trends or []
         # Últimos filtros recibidos por cada método — permite a los tests
-        # comprobar que el caso de uso propaga entity_id/department_id.
-        self.received_filters: dict[str, tuple[Optional[str], Optional[str]]] = {}
+        # comprobar que el caso de uso propaga entity_id/department_ids.
+        self.received_filters: dict[str, tuple[Optional[str], Optional[list[str]]]] = {}
 
     async def get_vacation_balance(
         self, user_id: str, year: int
@@ -61,21 +61,21 @@ class FakeDashboardRepository:
         return self.employees_clocked_in_now
 
     async def count_absent_today(
-        self, today: date, entity_id: Optional[str], department_id: Optional[str]
+        self, today: date, entity_id: Optional[str], department_ids: Optional[list[str]]
     ) -> int:
-        self.received_filters["count_absent_today"] = (entity_id, department_id)
+        self.received_filters["count_absent_today"] = (entity_id, department_ids)
         return self.absent_today
 
     async def count_pending_absence_approvals(
-        self, entity_id: Optional[str], department_id: Optional[str]
+        self, entity_id: Optional[str], department_ids: Optional[list[str]]
     ) -> int:
-        self.received_filters["count_pending_absence_approvals"] = (entity_id, department_id)
+        self.received_filters["count_pending_absence_approvals"] = (entity_id, department_ids)
         return self.pending_approvals
 
     async def count_clocked_in_now_filtered(
-        self, today: date, entity_id: Optional[str], department_id: Optional[str]
+        self, today: date, entity_id: Optional[str], department_ids: Optional[list[str]]
     ) -> int:
-        self.received_filters["count_clocked_in_now_filtered"] = (entity_id, department_id)
+        self.received_filters["count_clocked_in_now_filtered"] = (entity_id, department_ids)
         return self.clocked_in_now_filtered
 
     async def list_daily_trends(
@@ -83,7 +83,7 @@ class FakeDashboardRepository:
         from_date: date,
         to_date: date,
         entity_id: Optional[str],
-        department_id: Optional[str],
+        department_ids: Optional[list[str]],
     ) -> list[DailyTrendPoint]:
-        self.received_filters["list_daily_trends"] = (entity_id, department_id)
+        self.received_filters["list_daily_trends"] = (entity_id, department_ids)
         return self.daily_trends
