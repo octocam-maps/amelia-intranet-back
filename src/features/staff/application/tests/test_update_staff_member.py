@@ -1,18 +1,15 @@
 import pytest
 
-from src.features.staff.application.use_cases.create_staff_member import (
-    CreateStaffMemberUseCase,
-)
 from src.features.staff.application.use_cases.update_staff_member import (
     UpdateStaffMemberUseCase,
 )
 from src.features.staff.domain.errors import StaffMemberNotFoundError
 
-from .fakes import FakeStaffRepository
+from .fakes import _DEFAULT_INVITED_BY, FakeStaffRepository, build_create_staff_member_use_case
 
 
 async def _seed_member(repository: FakeStaffRepository):
-    return await CreateStaffMemberUseCase(repository).execute(
+    return await build_create_staff_member_use_case(repository).execute(
         full_name="Sandra Ramírez",
         email="sandra@ameliahub.com",
         job_title="Project Manager",
@@ -21,6 +18,7 @@ async def _seed_member(repository: FakeStaffRepository):
         role_code="empleado",
         hire_date=None,
         vacation_days_per_year=23,
+        invited_by=_DEFAULT_INVITED_BY,
     )
 
 

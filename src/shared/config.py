@@ -100,6 +100,13 @@ class Settings:
         self.sendgrid_from_email = os.getenv("SENDGRID_FROM_EMAIL", "no-reply@ameliahub.com")
         self.frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
+        # Vigencia de una invitación (`invitations.expires_at`, feature
+        # `staff`/`invitations`) antes de que "Reenviar" tenga que extenderla.
+        # `token` se guarda pero no se usa en ningún enlace (el acceso sigue
+        # siendo 100% Google OIDC) — este plazo solo acota cuánto tiempo se
+        # sigue considerando "pendiente" una invitación sin aceptar.
+        self.invitation_expires_days = int(os.getenv("INVITATION_EXPIRES_DAYS", "7"))
+
         # Fase 6 (notificaciones): "mock" es el único proveedor implementado
         # hoy — escribe en `email_log` sin ninguna llamada de red real (ver
         # src/shared/email). "sendgrid" está deliberadamente SIN implementar:

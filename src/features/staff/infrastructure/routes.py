@@ -65,6 +65,7 @@ def create_staff_router() -> APIRouter:
             role_code=dto.role,
             hire_date=dto.hire_date,
             vacation_days_per_year=dto.vacation_days_per_year,
+            invited_by=current_user["sub"],
         )
         return member_to_dto(member)
 

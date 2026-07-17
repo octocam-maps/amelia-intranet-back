@@ -4,7 +4,7 @@ Puerto (Protocol) del feature `staff`. `domain` no importa nada de
 en `infrastructure` y se inyecta aquí por duck typing estructural.
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import Optional, Protocol
 
 from .entities import StaffMember
@@ -48,11 +48,19 @@ class IStaffRepository(Protocol):
         is_external: bool,
         hire_date: Optional[date],
         vacation_days_per_year: Optional[float],
+        invited_by: str,
+        expires_at: datetime,
     ) -> StaffMember:
         """Crea el usuario con `status='invited'` (accede por primera vez
         con Google, igual que cualquier alta — 007_seed_initial_admin.sql)
         y, si se indica `vacation_days_per_year`, el saldo inicial del tipo
-        `vacaciones` del año en curso."""
+        `vacaciones` del año en curso.
+
+        En la MISMA transacción registra la fila de `invitations`
+        (trazabilidad + feature `invitations` para reenviar/cancelar) —
+        `invited_by` es el `id` del admin autenticado que da de alta,
+        `expires_at` la fecha límite (`INVITATION_EXPIRES_DAYS`, calculada
+        por el caso de uso)."""
         ...
 
     async def update_staff_member(
