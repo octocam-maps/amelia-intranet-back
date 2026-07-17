@@ -113,6 +113,40 @@ class Settings:
         # verificado). Ver src/shared/email/infrastructure/factory.py.
         self.email_provider = os.getenv("EMAIL_PROVIDER", "mock")
 
+        # Fase 4 v2 (documentos, Google Drive real): "mock" (default) guarda
+        # el binario en memoria del proceso, sin red ni credenciales; "google"
+        # es el proveedor real (Service Account + Domain-Wide Delegation).
+        # Ver src/features/documents/infrastructure/factory.py.
+        self.drive_provider = os.getenv("DRIVE_PROVIDER", "mock")
+
+        # Carpeta raíz de Drive bajo la que viven las subcarpetas por
+        # empleado (nombre = email). Solo se usa con DRIVE_PROVIDER=google.
+        self.drive_root_folder_id = os.getenv("DRIVE_ROOT_FOLDER_ID", "")
+
+        # Cuenta de Workspace a impersonar vía `with_subject` (Domain-Wide
+        # Delegation) — necesaria porque el sync (Fase 4, modo automático)
+        # tiene que leer carpetas creadas por RRHH, no solo lo que la propia
+        # Service Account cree.
+        self.drive_impersonate_subject = os.getenv("DRIVE_IMPERSONATE_SUBJECT", "")
+
+        # Credenciales de la Service Account: ruta a un fichero JSON en disco,
+        # o el JSON completo inline (útil en despliegues sin filesystem de
+        # secretos, p. ej. una variable de entorno gestionada). Se acepta
+        # cualquiera de las dos; el adaptador real (WU-B) decide cuál usar.
+        self.google_service_account_key_path = os.getenv(
+            "GOOGLE_SERVICE_ACCOUNT_KEY_PATH", ""
+        )
+        self.google_service_account_key_json = os.getenv(
+            "GOOGLE_SERVICE_ACCOUNT_KEY_JSON", ""
+        )
+
+        # Tamaño máximo admitido por documento (nóminas/contratos suelen ser
+        # pequeños). Acota tanto la subida manual como qué archivos concilia
+        # el sync — sin este límite, el patrón "buffer completo en memoria"
+        # de la descarga (ver design) podría recibir un PDF enorme colocado
+        # a mano en Drive fuera de la app.
+        self.documents_max_upload_mb = int(os.getenv("DOCUMENTS_MAX_UPLOAD_MB", "10"))
+
         # Nager.Date (https://date.nager.at) — festivos oficiales de España
         # para la importación automática de Festivos (Fase 6, ronda 2).
         # Configurable para poder apuntar a un stub en tests/staging sin
