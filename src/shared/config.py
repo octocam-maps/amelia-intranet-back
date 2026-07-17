@@ -107,11 +107,10 @@ class Settings:
         # sigue considerando "pendiente" una invitación sin aceptar.
         self.invitation_expires_days = int(os.getenv("INVITATION_EXPIRES_DAYS", "7"))
 
-        # Fase 6 (notificaciones): "mock" es el único proveedor implementado
-        # hoy — escribe en `email_log` sin ninguna llamada de red real (ver
-        # src/shared/email). "sendgrid" está deliberadamente SIN implementar:
-        # la API key de SendGrid es de RRHH y no se toca en esta fase
-        # (docs/requerimientos-amelia-intranet.pdf §6).
+        # Fase 6 (notificaciones): "mock" (default) escribe en `email_log` sin
+        # ninguna llamada de red; "sendgrid" envía de verdad vía la API v3 de
+        # SendGrid (requiere `SENDGRID_API_KEY` y `SENDGRID_FROM_EMAIL`
+        # verificado). Ver src/shared/email/infrastructure/factory.py.
         self.email_provider = os.getenv("EMAIL_PROVIDER", "mock")
 
         # Nager.Date (https://date.nager.at) — festivos oficiales de España
