@@ -106,6 +106,8 @@ def test_admin_can_patch_a_staff_members_role_to_socio_and_back():
                 status="active",
                 hire_date=None,
                 vacation_days_per_year=None,
+                vacation_days_override=None,
+                vacation_days_calculated=0.0,
                 created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
             )
 

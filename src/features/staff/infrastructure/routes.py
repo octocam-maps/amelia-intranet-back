@@ -64,7 +64,7 @@ def create_staff_router() -> APIRouter:
             entity_code=dto.entity,
             role_code=dto.role,
             hire_date=dto.hire_date,
-            vacation_days_per_year=dto.vacation_days_per_year,
+            vacation_days_override=dto.vacation_days_override,
             invited_by=current_user["sub"],
         )
         return member_to_dto(member)
@@ -76,15 +76,21 @@ def create_staff_router() -> APIRouter:
         current_user: dict = Depends(require_role("administrador")),
         use_case: UpdateStaffMemberUseCase = Depends(get_update_staff_member_use_case),
     ):
-        member = await use_case.execute(
-            user_id,
-            job_title=dto.job_title,
-            department=dto.department,
-            entity_code=dto.entity,
-            role_code=dto.role,
-            vacation_days_per_year=dto.vacation_days_per_year,
-            is_active=dto.is_active,
-        )
+        # `model_fields_set` distingue "el cliente no mandó
+        # `vacation_days_override`" (no tocar el override) de "mandó
+        # `vacation_days_override: null`" (vaciarlo -> automático) — un
+        # `Optional[float] = None` por sí solo no puede (mismo patrón que
+        # `holidays.update_holiday`).
+        kwargs = {
+            "job_title": dto.job_title,
+            "department": dto.department,
+            "entity_code": dto.entity,
+            "role_code": dto.role,
+            "is_active": dto.is_active,
+        }
+        if "vacation_days_override" in dto.model_fields_set:
+            kwargs["vacation_days_override"] = dto.vacation_days_override
+        member = await use_case.execute(user_id, **kwargs)
         return member_to_dto(member)
 
     return router

@@ -23,14 +23,24 @@ soft-borra filas cuyo `drive_file_id` ya no aparece en el listado de Drive
 ausencia en un listado es una operación demasiado sensible para inferirla
 sin que el equipo confirme la política de retención (ver Open Questions de
 `sdd/fase4-nominas-documentos/design`).
+
+Cada fila nueva conciliada avisa a su dueño (RF §6): `payslip_available` si
+`category='payslip'`, `document_uploaded` para el resto — ver
+`document_notifications.notify_document_created`, compartido con
+`UploadDocumentUseCase`. Nunca duplica aviso: solo se llama tras un `create`
+de un archivo genuinamente nuevo (`existing_drive_file_ids` ya excluye los
+ya indexados).
 """
 
 import logging
 import re
 from typing import Optional
 
+from src.features.notifications.application.use_cases.notify import NotifyUseCase
+
 from ...domain.models import DOCUMENT_CATEGORIES, SyncRun
 from ...domain.ports import IDocumentRepository, IDocumentStorage
+from ..document_notifications import notify_document_created
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +84,16 @@ class SyncDocumentsUseCase:
         repository: IDocumentRepository,
         storage: IDocumentStorage,
         max_upload_mb: int,
+        notify: Optional[NotifyUseCase] = None,
     ):
         self._repository = repository
         self._storage = storage
         # Mismo límite que la subida manual (`UploadDocumentUseCase`) — un
         # PDF colocado a mano que lo supere se omite, no rompe el sync.
         self._max_upload_bytes = max_upload_mb * 1024 * 1024
+        # Opcional para no romper los tests existentes que no lo pasan —
+        # mismo criterio que `UploadDocumentUseCase`.
+        self._notify = notify
 
     async def execute(self) -> SyncRun:
         sync_run = await self._repository.create_sync_run()
@@ -183,7 +197,7 @@ class SyncDocumentsUseCase:
                 continue
 
             category, period = _categorize(drive_file.name)
-            await self._repository.create(
+            document = await self._repository.create(
                 user_id=user_id,
                 category=category,
                 title=drive_file.name,
@@ -193,6 +207,7 @@ class SyncDocumentsUseCase:
                 content_hash=drive_file.content_hash,
                 uploaded_by=None,
             )
+            await notify_document_created(self._notify, document)
             created += 1
 
         return created, skipped
@@ -222,7 +237,7 @@ class SyncDocumentsUseCase:
                 continue
 
             period = _extract_payslip_period(drive_file.name) if category == "payslip" else None
-            await self._repository.create(
+            document = await self._repository.create(
                 user_id=user_id,
                 category=category,
                 title=drive_file.name,
@@ -232,6 +247,7 @@ class SyncDocumentsUseCase:
                 content_hash=drive_file.content_hash,
                 uploaded_by=None,
             )
+            await notify_document_created(self._notify, document)
             created += 1
 
         return created, skipped

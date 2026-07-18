@@ -13,6 +13,7 @@ from src.features.onboarding.domain.entities import (
     OnboardingDocument,
     OnboardingProgress,
     OnboardingStep,
+    ProfileCompletionData,
     QuizAttempt,
     StepProgressSnapshot,
 )
@@ -25,6 +26,8 @@ class FakeOnboardingRepository:
         steps: Optional[list[OnboardingStep]] = None,
         documents: Optional[list[OnboardingDocument]] = None,
         users: Optional[dict[str, dict]] = None,
+        department_ids: Optional[set[str]] = None,
+        missing_user_ids: Optional[set[str]] = None,
     ):
         self.steps: dict[str, OnboardingStep] = {s.id: s for s in (steps or [])}
         self.documents: dict[str, OnboardingDocument] = {
@@ -37,6 +40,13 @@ class FakeOnboardingRepository:
         # user_id -> {full_name, email, avatar_url, role} — solo lo que
         # necesita `list_employee_progress_snapshots` (panel de admin).
         self.users: dict[str, dict] = users or {}
+        # Departamentos "existentes" para `department_exists` — el paso 5
+        # valida la referencia antes de escribirla.
+        self.department_ids: set[str] = set(department_ids or set())
+        # user_id simulados como "no existe/borrado" — para probar la rama
+        # defensiva de `save_profile_completion`.
+        self.missing_user_ids: set[str] = set(missing_user_ids or set())
+        self.saved_profiles: dict[str, ProfileCompletionData] = {}
 
     async def list_active_steps(self) -> list[OnboardingStep]:
         return sorted(
@@ -270,3 +280,14 @@ class FakeOnboardingRepository:
         )
         self.progress[key] = updated
         return updated
+
+    async def department_exists(self, department_id: str) -> bool:
+        return department_id in self.department_ids
+
+    async def save_profile_completion(
+        self, user_id: str, profile: ProfileCompletionData
+    ) -> bool:
+        if user_id in self.missing_user_ids:
+            return False
+        self.saved_profiles[user_id] = profile
+        return True

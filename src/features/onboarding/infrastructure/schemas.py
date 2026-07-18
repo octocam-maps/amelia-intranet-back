@@ -1,9 +1,9 @@
 """DTOs de request/response (Pydantic) del feature `onboarding`."""
 
-from datetime import datetime
-from typing import Any, Optional
+from datetime import date, datetime
+from typing import Annotated, Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 
 class OnboardingStepDTO(BaseModel):
@@ -68,14 +68,43 @@ class AcknowledgementDTO(BaseModel):
     acknowledged_at: datetime
 
 
+_NON_BLANK_REQUIRED = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class CompleteProfileRequestDTO(BaseModel):
-    # Borrador: el esquema real del perfil (Fase 3) todavía no está
-    # diseñado — se acepta un payload básico de campos opcionales y se
-    # guarda tal cual en `onboarding_progress.data`.
-    phone: Optional[str] = None
-    address: Optional[str] = None
-    emergency_contact_name: Optional[str] = None
-    emergency_contact_phone: Optional[str] = None
+    """Paso 5 del onboarding ("Completar perfil", RF §3.5) — los 6 primeros
+    campos son obligatorios; `company_phone` es el único opcional ("móvil de
+    empresa, si aplica"). `_NON_BLANK_REQUIRED` (`StringConstraints` con
+    `strip_whitespace=True` + `min_length=1`) es la PRIMERA barrera
+    anti-vacío: recorta espacios ANTES de exigir longitud, así que " " no
+    cuela como si fuera un valor real (un `str` normal de Pydantic sí lo
+    dejaría pasar). Deliberadamente NO se usa un `field_validator` que
+    levante `ValueError` a mano: Pydantic v2 mete la excepción cruda en
+    `ctx.error` del error resultante, y `JSONResponse`/`json.dumps` no sabe
+    serializarla (`TypeError: Object of type ValueError is not JSON
+    serializable`, reproducido en la auditoría de esta migración) — los
+    errores NATIVOS de `StringConstraints` no tienen ese problema. El use
+    case repite el chequeo en el dominio como SEGUNDA barrera
+    (`ensure_profile_data_complete`) — no confía solo en este DTO."""
+
+    full_name: _NON_BLANK_REQUIRED
+    birth_date: date
+    dni_nie: _NON_BLANK_REQUIRED
+    personal_phone: _NON_BLANK_REQUIRED
+    address: _NON_BLANK_REQUIRED
+    department_id: _NON_BLANK_REQUIRED
+    company_phone: Optional[str] = None
+
+    @field_validator("company_phone")
+    @classmethod
+    def _blank_company_phone_to_none(cls, value: Optional[str]) -> Optional[str]:
+        # No levanta error: un móvil de empresa vacío es válido (campo
+        # opcional) — solo se normaliza " " -> `None` para no guardar
+        # espacios en blanco en `user_profiles.company_phone`.
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
 
 class AdminStepDTO(BaseModel):

@@ -76,6 +76,83 @@ def test_externo_invitado_cannot_complete_profile():
     assert response.status_code == 403
 
 
+def test_complete_profile_rejects_an_empty_body_with_422():
+    """RF §3.5: el DTO exige los 6 campos obligatorios — un body vacío se
+    rechaza en la capa de Pydantic, sin llegar al caso de uso."""
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/onboarding/steps/step-profile/complete-profile",
+                json={},
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+
+
+def test_complete_profile_rejects_a_whitespace_only_full_name_with_422():
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/onboarding/steps/step-profile/complete-profile",
+                json={
+                    "full_name": "   ",
+                    "birth_date": "1990-05-20",
+                    "dni_nie": "12345678Z",
+                    "personal_phone": "+34 600 111 222",
+                    "address": "Calle Mayor 1, Madrid",
+                    "department_id": "dept-1",
+                },
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+
+
+def test_complete_profile_accepts_a_valid_payload_without_the_optional_company_phone():
+    class FakeCompleteProfileUseCase:
+        async def execute(self, *, user_id, role, step_id, profile):
+            assert profile.company_phone is None
+
+            class _Progress:
+                id = "progress-1"
+                status = "completed"
+                progress_pct = 100
+                started_at = None
+                completed_at = "2026-07-18T10:00:00Z"
+
+            progress = _Progress()
+            progress.step_id = step_id
+            return progress
+
+    app.dependency_overrides[onboarding_dependencies.get_complete_profile_use_case] = (
+        lambda: FakeCompleteProfileUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/onboarding/steps/step-profile/complete-profile",
+                json={
+                    "full_name": "Sandra Ramírez",
+                    "birth_date": "1990-05-20",
+                    "dni_nie": "12345678Z",
+                    "personal_phone": "+34 600 111 222",
+                    "address": "Calle Mayor 1, Madrid",
+                    "department_id": "dept-1",
+                },
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+
+
 def test_externo_invitado_can_reach_get_me():
     class FakeGetMyOnboardingUseCase:
         async def execute(self, *, user_id, role):

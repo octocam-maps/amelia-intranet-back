@@ -17,4 +17,8 @@ def profile_to_dto(profile: UserProfile) -> ProfileDTO:
         is_external=profile.is_external,
         phone=profile.phone,
         city=profile.city,
+        dni_nie=profile.dni_nie,
+        birth_date=profile.birth_date,
+        address=profile.address,
+        company_phone=profile.company_phone,
     )

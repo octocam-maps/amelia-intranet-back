@@ -60,8 +60,14 @@ class IAbsenceRepository(Protocol):
     async def get_or_create_balance(
         self, user_id: str, absence_type_id: str, year: int
     ) -> AbsenceBalance:
-        """Crea la fila de saldo la primera vez que un usuario la necesita,
-        con `entitled_days = absence_types.default_entitled_days`."""
+        """Crea la fila de saldo la primera vez que un usuario la necesita.
+
+        Para el tipo "vacaciones", `entitled_days` NO usa el
+        `default_entitled_days` fijo del tipo — se calcula automáticamente
+        desde `users.hire_date` (o el override manual del admin en
+        `users.vacation_days_override`, si lo hay), ver
+        `domain/vacation_entitlement.py`. Para el resto de tipos sí se usa
+        `absence_types.default_entitled_days` sin cambios."""
         ...
 
     async def list_balances_for_user(self, user_id: str, year: int) -> list[AbsenceBalance]: ...

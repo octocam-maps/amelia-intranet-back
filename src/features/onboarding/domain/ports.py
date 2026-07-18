@@ -14,6 +14,7 @@ from .entities import (
     OnboardingDocument,
     OnboardingProgress,
     OnboardingStep,
+    ProfileCompletionData,
     QuizAttempt,
 )
 
@@ -147,4 +148,23 @@ class IOnboardingRepository(Protocol):
         se puede reabrir borrando la fila que lo bloquea. `None` si el
         usuario no tenía progreso inicializado en este paso (nada que
         reabrir)."""
+        ...
+
+    async def department_exists(self, department_id: str) -> bool:
+        """Referencia real a `departments` (el desplegable del paso 5 es
+        solo UI) — el use case la consulta ANTES de escribir
+        `users.department_id`, para no dejar que una FK violation
+        genérica llegue como 500."""
+        ...
+
+    async def save_profile_completion(
+        self, user_id: str, profile: ProfileCompletionData
+    ) -> bool:
+        """Persiste los datos REALES del paso 5 en `users` (nombre
+        completo + departamento) y `user_profiles` (DNI/NIE, fecha de
+        nacimiento, móviles, dirección) en UNA transacción — a diferencia
+        del borrador anterior, ya no se guardan en el JSONB de
+        `onboarding_progress.data` (evita duplicar PII fuera de su tabla
+        RGPD). `False` si el usuario no existe/está borrado (defensivo:
+        no debería pasar con un JWT válido)."""
         ...

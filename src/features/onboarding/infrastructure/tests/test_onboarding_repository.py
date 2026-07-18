@@ -6,11 +6,13 @@ Mismo patrón de mock de pool que
 `features/time_clock/infrastructure/tests/test_time_clock_repository.py`.
 """
 
+from datetime import date
 from unittest.mock import AsyncMock
 
 import asyncpg
 import pytest
 
+from src.features.onboarding.domain.entities import ProfileCompletionData
 from src.features.onboarding.domain.errors import QuizAlreadyAttemptedError
 from src.features.onboarding.infrastructure.repositories.onboarding_repository import (
     PostgresOnboardingRepository,
@@ -222,3 +224,76 @@ async def test_reset_quiz_attempt_returns_none_when_progress_was_never_initializ
     progress = await repository.reset_quiz_attempt("user-without-progress", "step-quiz")
 
     assert progress is None
+
+
+@pytest.mark.asyncio
+async def test_department_exists_returns_true_when_the_row_is_found():
+    pool = AsyncMock()
+    pool.fetchrow.return_value = {"?column?": 1}
+    repository = PostgresOnboardingRepository(pool)
+
+    assert await repository.department_exists("dept-1") is True
+
+    query, department_id = pool.fetchrow.await_args.args
+    assert "SELECT 1 FROM departments" in query
+    assert department_id == "dept-1"
+
+
+@pytest.mark.asyncio
+async def test_department_exists_returns_false_when_missing():
+    pool = AsyncMock()
+    pool.fetchrow.return_value = None
+    repository = PostgresOnboardingRepository(pool)
+
+    assert await repository.department_exists("missing-dept") is False
+
+
+def _profile_completion() -> ProfileCompletionData:
+    return ProfileCompletionData(
+        full_name="Sandra Ramírez",
+        birth_date=date(1990, 5, 20),
+        dni_nie="12345678Z",
+        personal_phone="+34 600 111 222",
+        address="Calle Mayor 1, Madrid",
+        department_id="dept-1",
+        company_phone=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_profile_completion_updates_users_and_upserts_user_profiles_in_one_transaction():
+    connection = _FakeConnection(fetchrow_return={"id": "user-1"})
+    pool = _FakePoolWithConnection(connection)
+    repository = PostgresOnboardingRepository(pool)
+
+    saved = await repository.save_profile_completion("user-1", _profile_completion())
+
+    assert saved is True
+
+    update_query = connection.fetchrow.await_args.args[0]
+    assert "UPDATE users" in update_query
+    assert "department_id = $3" in update_query
+
+    upsert_query, *upsert_args = connection.execute.await_args.args
+    assert "INSERT INTO user_profiles" in upsert_query
+    assert "ON CONFLICT (user_id) DO UPDATE" in upsert_query
+    assert upsert_args == [
+        "user-1",
+        "12345678Z",
+        date(1990, 5, 20),
+        "+34 600 111 222",
+        None,
+        "Calle Mayor 1, Madrid",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_save_profile_completion_returns_false_when_the_user_does_not_exist():
+    connection = _FakeConnection(fetchrow_return=None)
+    pool = _FakePoolWithConnection(connection)
+    repository = PostgresOnboardingRepository(pool)
+
+    saved = await repository.save_profile_completion("missing-user", _profile_completion())
+
+    assert saved is False
+    connection.execute.assert_not_called()

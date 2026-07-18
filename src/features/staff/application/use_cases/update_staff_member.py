@@ -1,5 +1,5 @@
 """Caso de uso: editar una persona de la plantilla — puesto, departamento,
-entidad, rol, días de vacaciones/año y estado (activo/suspendido).
+entidad, rol, override de vacaciones/año y estado (activo/suspendido).
 Actualización parcial: solo se tocan los campos que llegan informados."""
 
 from typing import Optional
@@ -11,6 +11,12 @@ from ...domain.errors import (
     StaffMemberNotFoundError,
 )
 from ...domain.ports import IStaffRepository
+
+# Sentinela: distingue "no me pasaron vacation_days_override" (no tocar el
+# override) de "me pasaron vacation_days_override=None explícitamente"
+# (vaciarlo -> vuelve al cálculo automático desde `hire_date`). Mismo patrón
+# que `holidays.UpdateHolidayUseCase._NOT_SET`.
+_NOT_SET = object()
 
 
 class UpdateStaffMemberUseCase:
@@ -25,7 +31,7 @@ class UpdateStaffMemberUseCase:
         department: Optional[str] = None,
         entity_code: Optional[str] = None,
         role_code: Optional[str] = None,
-        vacation_days_per_year: Optional[float] = None,
+        vacation_days_override: Optional[float] = _NOT_SET,  # type: ignore[assignment]
         is_active: Optional[bool] = None,
     ) -> StaffMember:
         member = await self._repository.find_by_id(user_id)
@@ -66,6 +72,19 @@ class UpdateStaffMemberUseCase:
         if is_active is not None:
             status = "active" if is_active else "suspended"
 
+        # `_NOT_SET` (no vino informado) -> no tocar el override, ni fijado
+        # ni vaciado. `None` explícito -> vaciarlo (vuelve a automático).
+        # Cualquier otro valor -> fijar ese override.
+        if vacation_days_override is _NOT_SET:
+            clear_vacation_days_override = False
+            effective_override: Optional[float] = None
+        elif vacation_days_override is None:
+            clear_vacation_days_override = True
+            effective_override = None
+        else:
+            clear_vacation_days_override = False
+            effective_override = vacation_days_override
+
         updated = await self._repository.update_staff_member(
             user_id,
             job_title=job_title,
@@ -73,7 +92,8 @@ class UpdateStaffMemberUseCase:
             entity_id=entity_id,
             role_id=role_id,
             is_external=is_external,
-            vacation_days_per_year=vacation_days_per_year,
+            vacation_days_override=effective_override,
+            clear_vacation_days_override=clear_vacation_days_override,
             status=status,
         )
         if updated is None:

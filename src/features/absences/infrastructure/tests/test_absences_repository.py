@@ -233,6 +233,115 @@ def _calendar_row(**overrides) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_get_or_create_balance_returns_existing_row_without_inserting():
+    pool = AsyncMock()
+    pool.fetchrow.return_value = {
+        "id": "balance-1",
+        "user_id": "user-1",
+        "absence_type_id": "type-vacaciones",
+        "year": 2026,
+        "entitled_days": 20,
+        "used_days": 0,
+        "pending_days": 0,
+    }
+    repository = PostgresAbsenceRepository(pool)
+
+    balance = await repository.get_or_create_balance("user-1", "type-vacaciones", 2026)
+
+    assert balance.entitled_days == 20.0
+    # Una sola consulta (el SELECT que encontró la fila) — no llega a
+    # resolver tipo/usuario ni a hacer el INSERT.
+    assert pool.fetchrow.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_balance_calculates_vacaciones_from_hire_date_when_no_override():
+    """Regresión del cálculo automático (RF §4.1.2, derogado): al crear la
+    fila de saldo por primera vez para "vacaciones", `entitled_days` sale de
+    `calculate_vacation_entitlement_days(hire_date, year)` — NO del
+    `default_entitled_days` fijo (23) del tipo."""
+    pool = AsyncMock()
+    pool.fetchrow.side_effect = [
+        None,  # SELECT * FROM absence_balances -> no existe todavía
+        {"code": "vacaciones", "default_entitled_days": 23},  # SELECT absence_types
+        {"hire_date": date(2020, 1, 1), "vacation_days_override": None},  # SELECT users
+        {  # INSERT ... RETURNING *
+            "id": "balance-1",
+            "user_id": "user-1",
+            "absence_type_id": "type-vacaciones",
+            "year": 2026,
+            "entitled_days": 20,
+            "used_days": 0,
+            "pending_days": 0,
+        },
+    ]
+    repository = PostgresAbsenceRepository(pool)
+
+    balance = await repository.get_or_create_balance("user-1", "type-vacaciones", 2026)
+
+    assert balance.entitled_days == 20.0
+    insert_query, *insert_args = pool.fetchrow.call_args_list[-1][0]
+    assert "INSERT INTO absence_balances" in insert_query
+    assert insert_args == ["user-1", "type-vacaciones", 2026, 20.0]
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_balance_respects_vacation_days_override():
+    """El override manual del admin (`users.vacation_days_override`) manda
+    sobre el cálculo automático, aunque `hire_date` diera otro resultado."""
+    pool = AsyncMock()
+    pool.fetchrow.side_effect = [
+        None,
+        {"code": "vacaciones", "default_entitled_days": 23},
+        {"hire_date": date(2026, 9, 1), "vacation_days_override": 15},  # calcularía 0
+        {
+            "id": "balance-1",
+            "user_id": "user-1",
+            "absence_type_id": "type-vacaciones",
+            "year": 2026,
+            "entitled_days": 15,
+            "used_days": 0,
+            "pending_days": 0,
+        },
+    ]
+    repository = PostgresAbsenceRepository(pool)
+
+    balance = await repository.get_or_create_balance("user-1", "type-vacaciones", 2026)
+
+    assert balance.entitled_days == 15.0
+    insert_args = list(pool.fetchrow.call_args_list[-1][0][1:])
+    assert insert_args == ["user-1", "type-vacaciones", 2026, 15.0]
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_balance_keeps_default_entitled_days_for_non_vacation_types():
+    """Los tipos que NO son "vacaciones" (baja médica, asuntos propios...)
+    conservan el comportamiento previo: `default_entitled_days` del tipo,
+    sin tocar `users`."""
+    pool = AsyncMock()
+    pool.fetchrow.side_effect = [
+        None,
+        {"code": "asuntos_propios", "default_entitled_days": 3},
+        {
+            "id": "balance-1",
+            "user_id": "user-1",
+            "absence_type_id": "type-asuntos",
+            "year": 2026,
+            "entitled_days": 3,
+            "used_days": 0,
+            "pending_days": 0,
+        },
+    ]
+    repository = PostgresAbsenceRepository(pool)
+
+    balance = await repository.get_or_create_balance("user-1", "type-asuntos", 2026)
+
+    assert balance.entitled_days == 3.0
+    # Solo 3 fetchrow: SELECT saldo, SELECT tipo, INSERT — nunca consulta `users`.
+    assert pool.fetchrow.await_count == 3
+
+
+@pytest.mark.asyncio
 async def test_list_calendar_entries_joins_users_and_absence_types():
     """LOTE 4 — "Calendario general de la plantilla": la query debe traer
     `user_full_name` y `absence_type_name`/`absence_type_color` ya

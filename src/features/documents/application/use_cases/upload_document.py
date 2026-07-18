@@ -8,14 +8,21 @@ No repite el chequeo de rol aquí — el único llamador es `POST /documents`,
 protegido con `require_role("administrador")` en la capa de FastAPI (WU-C2,
 mismo criterio que `ReviewAbsenceRequestUseCase`: la autorización real vive
 en el router, nunca solo en la UI).
+
+Tras persistir la fila de metadatos, avisa al DUEÑO del documento (RF §6):
+`payslip_available` si `category='payslip'`, `document_uploaded` para el
+resto — ver `document_notifications.notify_document_created`, compartido con
+`SyncDocumentsUseCase` para que el mapeo no diverja entre ambos flujos.
 """
 
 from typing import Optional
 
+from src.features.notifications.application.use_cases.notify import NotifyUseCase
 from src.features.staff.domain.ports import IStaffRepository
 
 from ...domain.models import DOCUMENT_CATEGORIES, Document
 from ...domain.ports import IDocumentRepository, IDocumentStorage
+from ..document_notifications import notify_document_created
 from ..errors import (
     DocumentOwnerNotFoundError,
     DocumentTooLargeError,
@@ -33,6 +40,7 @@ class UploadDocumentUseCase:
         storage: IDocumentStorage,
         staff_repository: IStaffRepository,
         max_upload_mb: int,
+        notify: Optional[NotifyUseCase] = None,
     ):
         self._repository = repository
         self._storage = storage
@@ -40,6 +48,9 @@ class UploadDocumentUseCase:
         # `DOCUMENTS_MAX_UPLOAD_MB` llega en MB desde config (WU-C2) — se
         # convierte a bytes una sola vez aquí, no en cada `execute`.
         self._max_upload_bytes = max_upload_mb * 1024 * 1024
+        # Opcional para no romper los tests existentes que no lo pasan —
+        # mismo criterio que `CreateAbsenceRequestUseCase`.
+        self._notify = notify
 
     async def execute(
         self,
@@ -88,7 +99,7 @@ class UploadDocumentUseCase:
             folder_id=category_folder_id, filename=filename, content=content, mime_type=mime_type
         )
 
-        return await self._repository.create(
+        document = await self._repository.create(
             user_id=user_id,
             category=category,
             title=title,
@@ -98,3 +109,7 @@ class UploadDocumentUseCase:
             content_hash=uploaded.content_hash,
             uploaded_by=uploaded_by,
         )
+
+        await notify_document_created(self._notify, document)
+
+        return document

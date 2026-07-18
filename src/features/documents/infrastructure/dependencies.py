@@ -3,6 +3,7 @@ concretos. `UploadDocumentUseCase` reutiliza `PostgresStaffRepository` del
 feature `staff` para validar que `user_id` corresponde a un miembro de la
 plantilla — no se duplica ese repositorio aquí."""
 
+from src.features.notifications.infrastructure.dependencies import get_notify_use_case
 from src.features.staff.infrastructure.repositories.staff_repository import (
     PostgresStaffRepository,
 )
@@ -33,6 +34,7 @@ def get_upload_document_use_case() -> UploadDocumentUseCase:
         get_document_storage(),
         PostgresStaffRepository(get_database_pool()),
         settings.documents_max_upload_mb,
+        get_notify_use_case(),
     )
 
 
@@ -47,5 +49,8 @@ def get_delete_document_use_case() -> DeleteDocumentUseCase:
 def get_sync_documents_use_case() -> SyncDocumentsUseCase:
     settings = get_settings()
     return SyncDocumentsUseCase(
-        _get_repository(), get_document_storage(), settings.documents_max_upload_mb
+        _get_repository(),
+        get_document_storage(),
+        settings.documents_max_upload_mb,
+        get_notify_use_case(),
     )

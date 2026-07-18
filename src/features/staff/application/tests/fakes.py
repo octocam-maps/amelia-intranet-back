@@ -8,8 +8,16 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from src.features.absences.domain.vacation_entitlement import (
+    calculate_vacation_entitlement_days,
+    resolve_vacation_entitlement_days,
+)
 from src.features.staff.domain.entities import StaffMember
 from src.shared.email.domain.entities import EmailResult
+
+
+def _current_year() -> int:
+    return datetime.now(timezone.utc).year
 
 _DEFAULT_INVITED_BY = "admin-1"
 
@@ -97,12 +105,18 @@ class FakeStaffRepository:
         role_id,
         is_external,
         hire_date,
-        vacation_days_per_year,
+        vacation_days_override,
         invited_by,
         expires_at,
     ) -> StaffMember:
         entity_code = next((code for code, eid in _ENTITIES.items() if eid == entity_id), None)
         role_code = next((code for code, rid in _ROLES.items() if rid == role_id), None)
+        year = _current_year()
+        # Mismo comportamiento que `PostgresStaffRepository.create_staff_member`:
+        # el saldo se siembra SIEMPRE, calculado o con override.
+        entitled_days = resolve_vacation_entitlement_days(
+            hire_date=hire_date, vacation_days_override=vacation_days_override, year=year
+        )
         member = StaffMember(
             id=str(uuid.uuid4()),
             full_name=full_name,
@@ -117,7 +131,9 @@ class FakeStaffRepository:
             role_code=role_code,
             status="invited",
             hire_date=hire_date,
-            vacation_days_per_year=vacation_days_per_year,
+            vacation_days_per_year=entitled_days,
+            vacation_days_override=vacation_days_override,
+            vacation_days_calculated=calculate_vacation_entitlement_days(hire_date, year),
             created_at=datetime.now(timezone.utc),
         )
         self.members[member.id] = member
@@ -141,7 +157,8 @@ class FakeStaffRepository:
         entity_id,
         role_id,
         is_external,
-        vacation_days_per_year,
+        vacation_days_override,
+        clear_vacation_days_override,
         status,
     ) -> Optional[StaffMember]:
         existing = self.members.get(user_id)
@@ -155,6 +172,27 @@ class FakeStaffRepository:
         if role_id is not None:
             role_code = next((code for code, rid in _ROLES.items() if rid == role_id), None)
 
+        # Mismo contrato tri-state que `PostgresStaffRepository.update_staff_member`:
+        # `clear_vacation_days_override=True` vacía el override (vuelve a
+        # automático); si no, `COALESCE` (no tocar si viene `None`).
+        if clear_vacation_days_override:
+            new_override = None
+        elif vacation_days_override is not None:
+            new_override = vacation_days_override
+        else:
+            new_override = existing.vacation_days_override
+
+        override_touched = clear_vacation_days_override or vacation_days_override is not None
+        new_hire_date = existing.hire_date
+        year = _current_year()
+        new_vacation_days_per_year = (
+            resolve_vacation_entitlement_days(
+                hire_date=new_hire_date, vacation_days_override=new_override, year=year
+            )
+            if override_touched
+            else existing.vacation_days_per_year
+        )
+
         updated = replace(
             existing,
             job_title=job_title if job_title is not None else existing.job_title,
@@ -163,11 +201,8 @@ class FakeStaffRepository:
             entity_code=entity_code,
             role_id=role_id if role_id is not None else existing.role_id,
             role_code=role_code,
-            vacation_days_per_year=(
-                vacation_days_per_year
-                if vacation_days_per_year is not None
-                else existing.vacation_days_per_year
-            ),
+            vacation_days_override=new_override,
+            vacation_days_per_year=new_vacation_days_per_year,
             status=status if status is not None else existing.status,
         )
         self.members[user_id] = updated

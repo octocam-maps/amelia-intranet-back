@@ -20,6 +20,13 @@ class ProfileDTO(BaseModel):
     is_external: bool
     phone: Optional[str]
     city: Optional[str]
+    # Completados en el paso 5 del onboarding (RF §3.5) — `None` hasta que
+    # el usuario termine ese paso (p.ej. un admin sembrado directamente en
+    # BD, sin pasar por onboarding).
+    dni_nie: Optional[str]
+    birth_date: Optional[date]
+    address: Optional[str]
+    company_phone: Optional[str]
 
 
 # Formato "razonable" de teléfono: dígitos y espacios, `+` opcional al

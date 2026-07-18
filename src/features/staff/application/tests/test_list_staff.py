@@ -17,7 +17,7 @@ async def test_filters_by_entity_and_search():
         entity_code="hub",
         role_code="empleado",
         hire_date=None,
-        vacation_days_per_year=None,
+        vacation_days_override=None,
         invited_by=_DEFAULT_INVITED_BY,
     )
     await create.execute(
@@ -28,7 +28,7 @@ async def test_filters_by_entity_and_search():
         entity_code="lab",
         role_code="empleado",
         hire_date=None,
-        vacation_days_per_year=None,
+        vacation_days_override=None,
         invited_by=_DEFAULT_INVITED_BY,
     )
     use_case = ListStaffUseCase(repository)
@@ -55,7 +55,7 @@ async def test_pagination_returns_total_regardless_of_page_size():
             entity_code="hub",
             role_code="empleado",
             hire_date=None,
-            vacation_days_per_year=None,
+            vacation_days_override=None,
             invited_by=_DEFAULT_INVITED_BY,
         )
     use_case = ListStaffUseCase(repository)

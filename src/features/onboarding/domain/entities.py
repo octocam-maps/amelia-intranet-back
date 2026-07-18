@@ -1,7 +1,7 @@
 """Entidades de dominio del feature `onboarding`. Sin dependencias de framework/SQL."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 
 
@@ -122,6 +122,26 @@ class EmployeeOnboardingSnapshot:
     avatar_url: Optional[str]
     role: str
     steps: list[StepProgressSnapshot]
+
+
+@dataclass(frozen=True)
+class ProfileCompletionData:
+    """Payload tipado del paso 5 (`profile`, "Completar perfil" — RF §3.5).
+    Value object de dominio puro: sin Pydantic ni SQL. Los 6 primeros campos
+    son obligatorios; `company_phone` es el único opcional ("móvil de
+    empresa, si aplica"). La validación anti-vacío/formato vive en
+    `domain.policy.ensure_profile_data_complete` — un `str` por sí solo no
+    basta porque no rechaza un valor de solo espacios ni un `None` llegado
+    por otra vía que no sea el DTO de FastAPI (defensa en profundidad, igual
+    criterio que el resto de reglas "no negociables" del requerimiento)."""
+
+    full_name: str
+    birth_date: Optional[date]
+    dni_nie: str
+    personal_phone: str
+    address: str
+    department_id: str
+    company_phone: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -31,7 +31,18 @@ class StaffMemberDTO(BaseModel):
     role_code: str
     status: str
     hire_date: Optional[date]
+    # Entitlement EFECTIVO y vigente (override si lo hay, si no el
+    # calculado) — fuente única: `absence_balances.entitled_days`.
     vacation_days_per_year: Optional[float]
+    # Override manual del admin. `None` = automático (calculado desde
+    # `hire_date`). Es el campo que el formulario de alta/edición usa para
+    # decidir si el input de "días de vacaciones" debe mostrarse vacío
+    # (automático) o con un valor (override vigente).
+    vacation_days_override: Optional[float]
+    # Lo que daría el cálculo automático ahora mismo, exista o no un
+    # override — para mostrar "Calculado automáticamente: X días" en el
+    # formulario sin reimplementar la fórmula de negocio en el frontend.
+    vacation_days_calculated: float
 
 
 class StaffMemberListDTO(BaseModel):
@@ -47,7 +58,10 @@ class CreateStaffMemberDTO(BaseModel):
     entity: EntityCode
     role: str = Field(..., min_length=1)
     hire_date: Optional[date] = None
-    vacation_days_per_year: Optional[float] = Field(None, ge=0)
+    # Vacío/`None` = automático (calculado desde `hire_date`); un número =
+    # override manual. Sin ambigüedad posible en el alta (no hay estado
+    # previo que "no tocar").
+    vacation_days_override: Optional[float] = Field(None, ge=0)
 
 
 class UpdateStaffMemberDTO(BaseModel):
@@ -55,5 +69,10 @@ class UpdateStaffMemberDTO(BaseModel):
     department: Optional[str] = None
     entity: Optional[EntityCode] = None
     role: Optional[str] = Field(None, min_length=1)
-    vacation_days_per_year: Optional[float] = Field(None, ge=0)
+    # Campo AUSENTE del payload -> no toca el override; `vacation_days_override:
+    # null` explícito -> lo vacía (vuelve a automático); un número -> lo fija.
+    # La ruta distingue "ausente" de "null" con `dto.model_fields_set` (mismo
+    # patrón que `holidays.entity`) — `Optional[float] = None` por sí solo
+    # no puede.
+    vacation_days_override: Optional[float] = Field(None, ge=0)
     is_active: Optional[bool] = None

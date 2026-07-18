@@ -44,7 +44,7 @@ class CreateStaffMemberUseCase:
         entity_code: str,
         role_code: str,
         hire_date: Optional[date],
-        vacation_days_per_year: Optional[float],
+        vacation_days_override: Optional[float],
         invited_by: str,
     ) -> StaffMember:
         normalized_email = email.strip().lower()
@@ -75,7 +75,7 @@ class CreateStaffMemberUseCase:
             role_id=role_id,
             is_external=role_code == "externo_invitado",
             hire_date=hire_date,
-            vacation_days_per_year=vacation_days_per_year,
+            vacation_days_override=vacation_days_override,
             invited_by=invited_by,
             expires_at=expires_at,
         )

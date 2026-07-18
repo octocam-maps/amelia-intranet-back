@@ -19,6 +19,7 @@ from ...domain.entities import (
     OnboardingDocument,
     OnboardingProgress,
     OnboardingStep,
+    ProfileCompletionData,
     QuizAttempt,
     StepProgressSnapshot,
 )
@@ -447,3 +448,62 @@ class PostgresOnboardingRepository(IOnboardingRepository):
                     {},
                 )
         return _row_to_progress(row) if row else None
+
+    async def department_exists(self, department_id: str) -> bool:
+        row = await self._db.fetchrow(
+            "SELECT 1 FROM departments WHERE id = $1", department_id
+        )
+        return row is not None
+
+    async def save_profile_completion(
+        self, user_id: str, profile: ProfileCompletionData
+    ) -> bool:
+        # UNA transacción: identidad/organización (`users`) + ficha
+        # personal (`user_profiles`) se escriben juntas o ninguna. UPSERT
+        # en `user_profiles` porque puede no haber fila todavía (mismo
+        # criterio que `ProfileRepository.update_profile_contact`) — a
+        # diferencia de ese PATCH parcial (COALESCE), aquí el paso 5 ya
+        # validó que TODOS los campos obligatorios llegaron, así que el
+        # UPDATE de la rama de conflicto reemplaza el valor entero, sin
+        # COALESCE.
+        async with self._db.acquire() as connection:
+            async with connection.transaction():
+                updated_user = await connection.fetchrow(
+                    """
+                    UPDATE users
+                    SET full_name = $2,
+                        department_id = $3,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $1 AND deleted_at IS NULL
+                    RETURNING id
+                    """,
+                    user_id,
+                    profile.full_name,
+                    profile.department_id,
+                )
+                if updated_user is None:
+                    return False
+
+                await connection.execute(
+                    """
+                    INSERT INTO user_profiles
+                        (user_id, dni_nif, birth_date, phone, company_phone,
+                         address, completed_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET dni_nif = $2,
+                        birth_date = $3,
+                        phone = $4,
+                        company_phone = $5,
+                        address = $6,
+                        completed_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    user_id,
+                    profile.dni_nie,
+                    profile.birth_date,
+                    profile.personal_phone,
+                    profile.company_phone,
+                    profile.address,
+                )
+        return True

@@ -11,6 +11,13 @@ from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
 from ...domain.entities import AbsenceBalance, AbsenceCalendarEntry, AbsenceRequest, AbsenceType
 from ...domain.ports import IAbsenceRepository
+from ...domain.vacation_entitlement import resolve_vacation_entitlement_days
+
+# El tipo "vacaciones" es el ÚNICO cuyo `entitled_days` se calcula desde
+# `hire_date`/`vacation_days_override` (users) en vez de usar el
+# `default_entitled_days` fijo del tipo — el resto de tipos (baja médica,
+# asuntos propios, etc.) no tienen devengo ligado a antigüedad.
+_VACATION_TYPE_CODE = "vacaciones"
 
 
 def _row_to_type(row) -> AbsenceType:
@@ -192,8 +199,8 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         if row:
             return _row_to_balance(row)
 
-        default_days = await self._db.fetchval(
-            "SELECT default_entitled_days FROM absence_types WHERE id = $1", absence_type_id
+        entitled_days = await self._resolve_entitled_days_for_new_balance(
+            user_id, absence_type_id, year
         )
         # ON CONFLICT hace este upsert seguro ante una carrera con otra
         # petición concurrente que intente crear el mismo saldo a la vez
@@ -209,9 +216,40 @@ class PostgresAbsenceRepository(IAbsenceRepository):
             user_id,
             absence_type_id,
             year,
-            default_days or 0,
+            entitled_days,
         )
         return _row_to_balance(row)
+
+    async def _resolve_entitled_days_for_new_balance(
+        self, user_id: str, absence_type_id: str, year: int
+    ) -> float:
+        """`entitled_days` con el que nace la fila de saldo la PRIMERA vez
+        que se necesita. Para "vacaciones" NO se usa el `default_entitled_days`
+        fijo del tipo (23, heredado del RF §4.1.2 ya derogado) sino el
+        cálculo automático desde `hire_date`/`vacation_days_override` — ver
+        `resolve_vacation_entitlement_days`. El resto de tipos conservan el
+        `default_entitled_days` de su fila en `absence_types` sin cambios."""
+        type_row = await self._db.fetchrow(
+            "SELECT code, default_entitled_days FROM absence_types WHERE id = $1",
+            absence_type_id,
+        )
+        if type_row is None:
+            return 0.0
+        if type_row["code"] != _VACATION_TYPE_CODE:
+            return float(type_row["default_entitled_days"] or 0)
+
+        user_row = await self._db.fetchrow(
+            "SELECT hire_date, vacation_days_override FROM users WHERE id = $1", user_id
+        )
+        hire_date = user_row["hire_date"] if user_row else None
+        vacation_days_override = (
+            float(user_row["vacation_days_override"])
+            if user_row and user_row["vacation_days_override"] is not None
+            else None
+        )
+        return resolve_vacation_entitlement_days(
+            hire_date=hire_date, vacation_days_override=vacation_days_override, year=year
+        )
 
     async def list_balances_for_user(self, user_id: str, year: int) -> list[AbsenceBalance]:
         rows = await self._db.fetch(

@@ -60,3 +60,24 @@ class InvalidStepConfigError(ValidationError):
 class OnboardingProgressNotFoundError(NotFoundError):
     """El usuario no tiene una fila de progreso inicializada para este
     paso (nunca llamó a `GET /onboarding/me`) — no hay nada que reabrir."""
+
+
+class IncompleteProfileDataError(ValidationError):
+    """El paso 5 ("Completar perfil", RF §3.5) llegó con algún campo
+    obligatorio vacío, de solo espacios, ausente o con formato inválido
+    (fecha de nacimiento, DNI/NIE). "Ocultar ≠ proteger": el formulario del
+    frontend puede marcar estos campos como requeridos, pero lo que
+    realmente bloquea el paso es este chequeo en el backend."""
+
+
+class InvalidDepartmentError(ValidationError):
+    """El `department_id` del paso 5 no corresponde a ningún departamento
+    existente — el desplegable del frontend es solo UI; el backend
+    verifica la referencia antes de asignarla."""
+
+
+class OnboardingUserNotFoundError(NotFoundError):
+    """El usuario del token no existe (o fue borrado) en el momento de
+    persistir el paso 5 — defensivo: no debería ocurrir con un JWT válido,
+    pero `save_profile_completion` escribe en `users`/`user_profiles` y
+    conviene no dejar pasar un `False` silencioso."""
