@@ -31,29 +31,119 @@ logger = get_logger("shared.email.sendgrid")
 
 _BRAND_GREEN = "#00D170"
 _BRAND_NAVY = "#0F1729"
-_BRAND_BG = "#F9FAFB"
+_BRAND_BG = "#F1F5F9"
+_TEXT = "#0F1729"
+_MUTED = "#6B7280"
+_BORDER = "#E5E7EB"
+# Pila de fuentes de sistema: se ve nativa en cada cliente y evita el look
+# "Arial genérico". Los clientes que no la soporten caen a Arial igual.
+_FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+
+# El logo se sirve como asset ESTÁTICO del frontend (`public/brand/`, sin hash
+# de bundler → ruta estable a prueba de deploys), en el MISMO dominio que la
+# intranet. Se referencia por URL absoluta (los emails no resuelven rutas
+# relativas) derivada de `frontend_url`, así dev usa localhost y prod usa
+# `people.amelia.am` sin tocar el template.
+_LOGO_PATH = "/brand/logo-amelia-blanco.png"
 
 
-def _shell(subject: str, body_html: str, cta_url: str, cta_label: str) -> str:
-    """Envoltorio HTML de marca (navy/verde Amelia) común a todos los correos."""
+def _logo_url(frontend_url: str) -> str:
+    return f"{frontend_url.rstrip('/')}{_LOGO_PATH}"
+
+
+def _cta_url(frontend_url: str, path: str) -> str:
+    """Construye el destino del botón a partir del deep-link (`data["url"]`,
+    p. ej. `/ausencias`) que ya trae cada notificación, para que el correo
+    lleve a la PANTALLA concreta y no a la home. Guarda anti open-redirect:
+    solo acepta rutas relativas propias (`/...`); descarta URLs absolutas y
+    protocol-relative (`//host`) cayendo a la raíz del frontend."""
+    p = (path or "").strip()
+    if p.startswith("/") and not p.startswith("//"):
+        return f"{frontend_url.rstrip('/')}{p}"
+    return frontend_url
+
+
+def _button(cta_url: str, cta_label: str) -> str:
+    """Botón "bulletproof" basado en tabla — se ve consistente en Outlook
+    (motor Word), Gmail y Apple Mail, donde un `<a>` con padding falla."""
     return (
-        f'<div style="background:{_BRAND_BG};padding:32px 0;font-family:Arial,Helvetica,sans-serif;">'
-        f'<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;'
-        f'border:1px solid #E5E7EB;">'
-        f'<div style="background:{_BRAND_NAVY};padding:20px 28px;">'
-        f'<span style="color:#ffffff;font-size:18px;font-weight:700;">Amelia</span></div>'
-        f'<div style="padding:28px;color:{_BRAND_NAVY};font-size:15px;line-height:1.6;">'
-        f"<h1 style=\"font-size:20px;margin:0 0 16px;\">{_html.escape(subject)}</h1>"
+        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
+        'style="margin:28px 0 4px;"><tr>'
+        f'<td align="center" bgcolor="{_BRAND_GREEN}" style="border-radius:8px;">'
+        f'<a href="{_html.escape(cta_url)}" target="_blank" '
+        f'style="display:inline-block;padding:13px 26px;font-family:{_FONT};font-size:15px;'
+        f'font-weight:700;color:{_BRAND_NAVY};text-decoration:none;border-radius:8px;">'
+        f'{_html.escape(cta_label)}</a></td></tr></table>'
+    )
+
+
+def _shell(
+    subject: str,
+    body_html: str,
+    cta_url: str,
+    cta_label: str,
+    *,
+    logo_url: str,
+    preheader: str = "",
+) -> str:
+    """Documento HTML de marca (navy/verde Amelia) común a todos los correos.
+
+    Documento COMPLETO (no un fragmento): `<!DOCTYPE>` + `<meta charset>` para
+    que las tildes se rendericen bien en cualquier cliente y en la vista previa
+    del navegador, y layout basado en TABLAS con estilos inline (lo único que
+    Outlook renderiza de forma fiable). `preheader` es el texto de vista previa
+    que la bandeja muestra junto al asunto — oculto en el cuerpo."""
+    pre = _html.escape((preheader or subject).strip())
+    return (
+        "<!DOCTYPE html>"
+        '<html lang="es" xmlns="http://www.w3.org/1999/xhtml">'
+        "<head>"
+        '<meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta http-equiv="X-UA-Compatible" content="IE=edge">'
+        '<meta name="x-apple-disable-message-reformatting">'
+        f"<title>{_html.escape(subject)}</title>"
+        "</head>"
+        f'<body style="margin:0;padding:0;background:{_BRAND_BG};">'
+        # Preheader oculto: controla el texto de preview en la bandeja de entrada.
+        f'<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;'
+        f'opacity:0;color:transparent;">{pre}</div>'
+        f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" '
+        f'border="0" style="background:{_BRAND_BG};"><tr>'
+        '<td align="center" style="padding:32px 16px;">'
+        f'<table role="presentation" width="560" cellspacing="0" cellpadding="0" '
+        f'border="0" style="max-width:560px;width:100%;background:#ffffff;'
+        f'border-radius:14px;overflow:hidden;border:1px solid {_BORDER};">'
+        # Cabecera navy con el logo de marca (wordmark blanco). `alt="Amelia"`
+        # cubre el caso de imágenes bloqueadas (Gmail/Outlook por defecto): el
+        # `color` blanco tiñe ese texto alternativo para que lea sobre el navy.
+        f'<tr><td style="background:{_BRAND_NAVY};padding:22px 32px;">'
+        f'<img src="{_html.escape(logo_url)}" alt="Amelia" width="148" height="25" '
+        'style="display:block;border:0;height:25px;width:148px;'
+        'color:#ffffff;font-family:' + _FONT + ';font-size:18px;font-weight:700;">'
+        "</td></tr>"
+        # Cuerpo.
+        f'<tr><td style="padding:32px;font-family:{_FONT};color:{_TEXT};'
+        'font-size:15px;line-height:1.6;">'
+        f'<h1 style="margin:0 0 16px;font-size:21px;line-height:1.3;'
+        f'font-weight:700;color:{_TEXT};">{_html.escape(subject)}</h1>'
         f"{body_html}"
-        f'<p style="margin:28px 0 0;">'
-        f'<a href="{_html.escape(cta_url)}" '
-        f'style="display:inline-block;background:{_BRAND_GREEN};color:{_BRAND_NAVY};'
-        f'text-decoration:none;font-weight:700;padding:12px 22px;border-radius:8px;">'
-        f"{_html.escape(cta_label)}</a></p>"
-        f"</div>"
-        f'<div style="padding:16px 28px;color:#6B7280;font-size:12px;border-top:1px solid #E5E7EB;">'
-        f"Este es un correo automático de la intranet de Amelia. No respondas a este mensaje.</div>"
-        f"</div></div>"
+        f"{_button(cta_url, cta_label)}"
+        "</td></tr>"
+        # Pie dentro de la tarjeta.
+        f'<tr><td style="padding:20px 32px;border-top:1px solid {_BORDER};'
+        f'font-family:{_FONT};color:{_MUTED};font-size:12px;line-height:1.5;">'
+        "Este es un correo automático de la intranet de Amelia. "
+        "Por favor, no respondas a este mensaje.</td></tr>"
+        "</table>"
+        # Sub-pie fuera de la tarjeta.
+        f'<table role="presentation" width="560" cellspacing="0" cellpadding="0" '
+        'border="0" style="max-width:560px;width:100%;"><tr>'
+        f'<td style="padding:16px 8px;text-align:center;font-family:{_FONT};'
+        f'color:{_MUTED};font-size:11px;">&copy; Amelia &middot; Intranet corporativa</td>'
+        "</tr></table>"
+        "</td></tr></table>"
+        "</body></html>"
     )
 
 
@@ -74,17 +164,36 @@ def render_email(
         subject = "Te damos la bienvenida a la intranet de Amelia"
         saludo = f"Hola {_html.escape(full_name)}," if full_name else "Hola,"
         body_html = (
-            f"<p>{saludo}</p>"
-            "<p>RRHH te ha dado de alta en la intranet de Amelia. Accede con tu "
-            "cuenta de Google corporativa para completar tu onboarding y empezar "
-            "a gestionar tu jornada, ausencias y documentos.</p>"
+            f'<p style="margin:0 0 14px;">{saludo}</p>'
+            '<p style="margin:0 0 14px;">RRHH te ha dado de alta en la intranet de '
+            "Amelia. Accede con tu cuenta de Google corporativa para completar tu "
+            "onboarding y empezar a gestionar tu jornada, ausencias y documentos.</p>"
         )
-        return subject, _shell(subject, body_html, login_url, "Entrar a la intranet")
+        return subject, _shell(
+            subject,
+            body_html,
+            login_url,
+            "Entrar a la intranet",
+            logo_url=_logo_url(login_url),
+            preheader="Completa tu onboarding y empieza a gestionar tu día a día en Amelia.",
+        )
 
     subject = str(context.get("title") or "Notificación de Amelia")
     raw_body = str(context.get("body") or "").strip()
-    body_html = f"<p>{_html.escape(raw_body)}</p>" if raw_body else ""
-    return subject, _shell(subject, body_html, frontend_url, "Abrir la intranet")
+    body_html = (
+        f'<p style="margin:0;">{_html.escape(raw_body)}</p>' if raw_body else ""
+    )
+    # El botón lleva al deep-link de la notificación (`/ausencias`,
+    # `/control-horario`, …) si viene; si no, a la raíz del frontend.
+    cta_url = _cta_url(frontend_url, str(context.get("url") or ""))
+    return subject, _shell(
+        subject,
+        body_html,
+        cta_url,
+        "Ver en la intranet",
+        logo_url=_logo_url(frontend_url),
+        preheader=raw_body or subject,
+    )
 
 
 def _describe_error(exc: httpx.HTTPError) -> str:
