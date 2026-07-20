@@ -4,7 +4,8 @@ Reglas de negocio puras del onboarding — sin SQL, sin FastAPI. Se usan desde
 chequeo de "paso operable" en cada caso de uso.
 """
 
-from datetime import datetime
+import re
+from datetime import date, datetime
 from typing import Optional
 
 from typing import Any
@@ -14,8 +15,10 @@ from .entities import (
     EmployeeOnboardingSummary,
     OnboardingProgress,
     OnboardingStep,
+    ProfileCompletionData,
 )
 from .errors import (
+    IncompleteProfileDataError,
     InvalidStepConfigError,
     InvalidVideoProgressError,
     StepLockedError,
@@ -189,6 +192,58 @@ def _validate_video_config(config: dict[str, Any]) -> None:
     ):
         raise InvalidStepConfigError(
             "El vídeo necesita una `duration` numérica positiva (segundos)."
+        )
+
+
+# DNI: 8 dígitos + letra. NIE: X/Y/Z + 7 dígitos + letra. Valida solo el
+# FORMATO (no la letra de control real, que requiere el algoritmo módulo 23
+# del BOE) — decisión deliberada: el requerimiento (RF §3.5) solo pide "sin
+# campos vacíos", no una validación notarial del documento, y el proyecto no
+# tiene hoy un helper de letra de control. Si en el futuro se necesita
+# verificar la letra, este es el único punto a tocar.
+_DNI_NIE_PATTERN = re.compile(r"^(\d{8}[A-Za-z]|[XYZxyz]\d{7}[A-Za-z])$")
+
+# Los 6 campos de texto obligatorios del paso 5 (RF §3.5) — `company_phone`
+# es el único opcional ("si aplica") y por eso no está en esta lista.
+_REQUIRED_PROFILE_TEXT_FIELDS = (
+    "full_name",
+    "dni_nie",
+    "personal_phone",
+    "address",
+    "department_id",
+)
+
+
+def ensure_profile_data_complete(profile: ProfileCompletionData) -> None:
+    """Anti-vacío server-side del paso 5 ("Completar perfil", RF §3.5):
+    rechaza cualquier campo obligatorio ausente, vacío o de solo espacios —
+    un `str` de Pydantic no basta por sí solo, y este chequeo es la SEGUNDA
+    barrera (además del DTO) para que el use case no dependa únicamente de
+    la validación HTTP. "Ocultar ≠ proteger": esto es lo que de verdad
+    bloquea el paso, no el formulario del frontend."""
+    missing = [
+        field
+        for field in _REQUIRED_PROFILE_TEXT_FIELDS
+        if not str(getattr(profile, field) or "").strip()
+    ]
+    if missing:
+        raise IncompleteProfileDataError(
+            "Faltan campos obligatorios del perfil: " + ", ".join(missing) + "."
+        )
+
+    if profile.birth_date is None:
+        raise IncompleteProfileDataError(
+            "La fecha de nacimiento es obligatoria."
+        )
+    if profile.birth_date >= date.today():
+        raise IncompleteProfileDataError(
+            "La fecha de nacimiento no es válida."
+        )
+
+    if not _DNI_NIE_PATTERN.match(profile.dni_nie.strip()):
+        raise IncompleteProfileDataError(
+            "El DNI/NIE no tiene un formato válido "
+            "(8 dígitos + letra, o X/Y/Z + 7 dígitos + letra)."
         )
 
 

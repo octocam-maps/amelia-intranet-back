@@ -32,6 +32,8 @@ una migración nueva.
 | `022_user_profiles_city.sql` | `user_profiles.city` (aditiva) — "Mi perfil" editable (Lote 2): el usuario edita su propio teléfono (`user_profiles.phone`, ya existía) y ciudad desde `PATCH /profile/me`. |
 | `023_time_clock_entry_notes.sql` | `time_clock_entry_notes` — incidencias/comentarios admin sobre un tramo de fichaje (B-2b, alta admin-only, lectura acotada al dueño del tramo o al admin). |
 | `024_socio_role.sql` | Amplía `roles.code` CHECK + seed del rol `socio` — igual que un empleado en toda la app + visión global del calendario de vacaciones (ver/exportar PDF/Excel), sin permisos de administración. |
+| `025_users_drive_folder_id.sql` | `users.drive_folder_id` (aditiva) — cachea el id de la subcarpeta de Google Drive del empleado (Fase 4 v2, Drive real: WU-A de `sdd/fase4-nominas-documentos`). |
+| `026_user_profiles_company_phone.sql` | `user_profiles.company_phone` (aditiva) — último campo que faltaba de los 7 del paso 5 del onboarding ("Completar perfil", RF §3.5); el resto (`dni_nif`, `birth_date`, `phone`, `address`, `users.full_name`, `users.department_id`) ya existía desde `001_core_identity.sql`. |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero

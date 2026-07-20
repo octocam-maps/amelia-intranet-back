@@ -28,6 +28,7 @@ from ..application.use_cases.sign_document import SignDocumentUseCase
 from ..application.use_cases.submit_quiz import SubmitQuizUseCase
 from ..application.use_cases.update_onboarding_step import UpdateOnboardingStepUseCase
 from ..application.use_cases.update_video_progress import UpdateVideoProgressUseCase
+from ..domain.entities import ProfileCompletionData
 from .dependencies import (
     get_acknowledge_manual_use_case,
     get_complete_profile_use_case,
@@ -171,13 +172,23 @@ def create_onboarding_router() -> APIRouter:
         current_user: dict = Depends(require_role(*_INTERNAL_ONLY)),
         use_case: CompleteProfileUseCase = Depends(get_complete_profile_use_case),
     ):
-        """Borrador: acepta un payload básico — el esquema real del perfil
-        llega con la Fase 3."""
+        """Paso 5 (RF §3.5): 6 campos obligatorios + `company_phone`
+        opcional. El backend rechaza (422) cualquier campo obligatorio
+        vacío/ausente o un `department_id` inexistente — el paso NO se
+        marca completado si esta validación falla."""
         progress = await use_case.execute(
             user_id=current_user["sub"],
             role=current_user["role"],
             step_id=step_id,
-            data=dto.model_dump(exclude_none=True),
+            profile=ProfileCompletionData(
+                full_name=dto.full_name,
+                birth_date=dto.birth_date,
+                dni_nie=dto.dni_nie,
+                personal_phone=dto.personal_phone,
+                company_phone=dto.company_phone,
+                address=dto.address,
+                department_id=dto.department_id,
+            ),
         )
         return progress_to_dto(progress)
 

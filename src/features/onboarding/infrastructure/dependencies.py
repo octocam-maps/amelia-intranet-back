@@ -1,5 +1,6 @@
 """Wiring de FastAPI: construye los casos de uso con sus adaptadores concretos."""
 
+from src.features.notifications.infrastructure.dependencies import get_notify_use_case
 from src.shared.database import get_database_pool
 
 from ..application.use_cases.acknowledge_manual import AcknowledgeManualUseCase
@@ -24,7 +25,7 @@ def _get_repository() -> PostgresOnboardingRepository:
 
 
 def get_my_onboarding_use_case() -> GetMyOnboardingUseCase:
-    return GetMyOnboardingUseCase(_get_repository())
+    return GetMyOnboardingUseCase(_get_repository(), get_notify_use_case())
 
 
 def get_update_video_progress_use_case() -> UpdateVideoProgressUseCase:
@@ -44,7 +45,7 @@ def get_acknowledge_manual_use_case() -> AcknowledgeManualUseCase:
 
 
 def get_complete_profile_use_case() -> CompleteProfileUseCase:
-    return CompleteProfileUseCase(_get_repository())
+    return CompleteProfileUseCase(_get_repository(), get_notify_use_case())
 
 
 def get_list_onboarding_steps_admin_use_case() -> ListOnboardingStepsForAdminUseCase:

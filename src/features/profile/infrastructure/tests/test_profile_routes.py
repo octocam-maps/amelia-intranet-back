@@ -49,6 +49,10 @@ def _profile(**overrides) -> UserProfile:
         is_external=False,
         phone="+34 600 111 222",
         city="Madrid",
+        dni_nie="12345678Z",
+        birth_date=date(1990, 5, 20),
+        address="Calle Mayor 1, Madrid",
+        company_phone="+34 900 000 000",
     )
     defaults.update(overrides)
     return UserProfile(**defaults)
@@ -88,6 +92,10 @@ def test_get_my_profile_returns_the_requesting_users_profile():
         "is_external": False,
         "phone": "+34 600 111 222",
         "city": "Madrid",
+        "dni_nie": "12345678Z",
+        "birth_date": "1990-05-20",
+        "address": "Calle Mayor 1, Madrid",
+        "company_phone": "+34 900 000 000",
     }
 
 

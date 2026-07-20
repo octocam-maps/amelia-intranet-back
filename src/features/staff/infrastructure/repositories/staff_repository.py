@@ -5,13 +5,22 @@ Adaptador asyncpg del puerto `IStaffRepository`. SQL crudo — sin ORM.
 `absence_types`/`absence_balances`. `create_staff_member` además escribe en
 `invitations` (001_core_identity.sql) — mismo acoplamiento cross-feature
 que ya tiene `auth.user_repository` (`create_user_from_invitation`).
+
+El cálculo automático del entitlement de vacaciones (`resolve_vacation_entitlement_days`,
+`users.hire_date` + override manual en `users.vacation_days_override`,
+027_users_vacation_days_override.sql) vive en el dominio de `absences` — se
+importa aquí igual que ya se cruzaba a sus tablas por SQL crudo.
 """
 
 import secrets
 from datetime import date, datetime
 from typing import Optional
 
+from src.features.absences.domain.vacation_entitlement import (
+    resolve_vacation_entitlement_days,
+)
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
+from src.shared.utils.timezone import today_in_madrid
 
 from ...domain.entities import StaffMember
 from ...domain.ports import IStaffRepository
@@ -19,6 +28,7 @@ from ...domain.ports import IStaffRepository
 _STAFF_SELECT = """
     SELECT
         u.id, u.full_name, u.email, u.avatar_url, u.job_title, u.status, u.hire_date, u.created_at,
+        u.vacation_days_override,
         u.department_id, d.name AS department_name,
         u.entity_id, e.code AS entity_code,
         u.role_id, r.code AS role_code,
@@ -38,8 +48,9 @@ _STAFF_SELECT = """
 
 # Upsert del entitlement anual — mismo patrón de "no-op upsert" que
 # `absence_repository.get_or_create_balance`, pero aquí SÍ sobreescribe
-# `entitled_days`: es el admin fijando explícitamente el valor, no un
-# valor por defecto que solo se rellena la primera vez.
+# `entitled_days`: se llama SIEMPRE que se crea/edita una persona (calculado
+# o con override, ver `_resolve_current_year_entitled_days`), no solo cuando
+# el admin escribe un número a mano.
 _UPSERT_VACATION_BALANCE = """
     INSERT INTO absence_balances (user_id, absence_type_id, year, entitled_days)
     SELECT $1, id, EXTRACT(YEAR FROM CURRENT_DATE)::int, $2
@@ -51,6 +62,7 @@ _UPSERT_VACATION_BALANCE = """
 
 def _row_to_member(row) -> StaffMember:
     vacation_days = row["vacation_days_per_year"]
+    override = row["vacation_days_override"]
     return StaffMember(
         id=str(row["id"]),
         full_name=row["full_name"],
@@ -66,6 +78,12 @@ def _row_to_member(row) -> StaffMember:
         status=row["status"],
         hire_date=row["hire_date"],
         vacation_days_per_year=float(vacation_days) if vacation_days is not None else None,
+        vacation_days_override=float(override) if override is not None else None,
+        vacation_days_calculated=resolve_vacation_entitlement_days(
+            hire_date=row["hire_date"],
+            vacation_days_override=None,  # queremos el cálculo puro, no el override
+            year=today_in_madrid().year,
+        ),
         created_at=row["created_at"],
     )
 
@@ -155,7 +173,7 @@ class PostgresStaffRepository(IStaffRepository):
         role_id: str,
         is_external: bool,
         hire_date: Optional[date],
-        vacation_days_per_year: Optional[float],
+        vacation_days_override: Optional[float],
         invited_by: str,
         expires_at: datetime,
     ) -> StaffMember:
@@ -165,9 +183,10 @@ class PostgresStaffRepository(IStaffRepository):
                     """
                     INSERT INTO users (
                         full_name, email, job_title, department_id,
-                        entity_id, role_id, is_external, hire_date, status
+                        entity_id, role_id, is_external, hire_date,
+                        vacation_days_override, status
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'invited')
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'invited')
                     RETURNING id
                     """,
                     full_name,
@@ -178,11 +197,18 @@ class PostgresStaffRepository(IStaffRepository):
                     role_id,
                     is_external,
                     hire_date,
+                    vacation_days_override,
                 )
-                if vacation_days_per_year is not None:
-                    await connection.execute(
-                        _UPSERT_VACATION_BALANCE, user_id, vacation_days_per_year
-                    )
+                # Se siembra SIEMPRE (calculado o con override) — a
+                # diferencia del comportamiento previo (solo si el admin
+                # escribía un número), así el contador nunca queda en blanco
+                # hasta la primera lectura lazy.
+                entitled_days = resolve_vacation_entitlement_days(
+                    hire_date=hire_date,
+                    vacation_days_override=vacation_days_override,
+                    year=today_in_madrid().year,
+                )
+                await connection.execute(_UPSERT_VACATION_BALANCE, user_id, entitled_days)
                 # Traza de la invitación (feature `invitations`: listar
                 # pendientes/reenviar/cancelar). `token` NO se usa en ningún
                 # enlace hoy — el acceso sigue siendo 100% Google OIDC, solo
@@ -214,14 +240,21 @@ class PostgresStaffRepository(IStaffRepository):
         entity_id: Optional[str],
         role_id: Optional[str],
         is_external: Optional[bool],
-        vacation_days_per_year: Optional[float],
+        vacation_days_override: Optional[float],
+        clear_vacation_days_override: bool,
         status: Optional[str],
     ) -> Optional[StaffMember]:
         async with self._db.acquire() as connection:
             async with connection.transaction():
                 # COALESCE: cada parámetro en NULL deja la columna como
                 # estaba — semántica PATCH (actualización parcial).
-                found = await connection.fetchval(
+                # `vacation_days_override` es la excepción: necesita
+                # distinguir "no tocar" de "vaciar" con un solo `None`, así
+                # que se resuelve con el `CASE WHEN $8` (mismo patrón que
+                # `holidays.update_holiday`/`clear_entity`). `RETURNING
+                # hire_date, vacation_days_override` deja recalcular el saldo
+                # sin una segunda ida y vuelta a `users`.
+                row = await connection.fetchrow(
                     """
                     UPDATE users
                     SET job_title = COALESCE($2, job_title),
@@ -230,9 +263,13 @@ class PostgresStaffRepository(IStaffRepository):
                         role_id = COALESCE($5, role_id),
                         is_external = COALESCE($6, is_external),
                         status = COALESCE($7, status),
+                        vacation_days_override = CASE
+                            WHEN $8 THEN NULL
+                            ELSE COALESCE($9, vacation_days_override)
+                        END,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = $1 AND deleted_at IS NULL
-                    RETURNING id
+                    RETURNING id, hire_date, vacation_days_override
                     """,
                     user_id,
                     job_title,
@@ -241,12 +278,29 @@ class PostgresStaffRepository(IStaffRepository):
                     role_id,
                     is_external,
                     status,
+                    clear_vacation_days_override,
+                    vacation_days_override,
                 )
-                if found is None:
+                if row is None:
                     return None
-                if vacation_days_per_year is not None:
+
+                # Solo se recalcula/reescribe el saldo cuando el override
+                # realmente cambió esta petición (se fijó o se vació) — una
+                # edición no relacionada (p. ej. solo el puesto) no debe
+                # tocar `absence_balances` de rebote.
+                if clear_vacation_days_override or vacation_days_override is not None:
+                    new_override = (
+                        float(row["vacation_days_override"])
+                        if row["vacation_days_override"] is not None
+                        else None
+                    )
+                    entitled_days = resolve_vacation_entitlement_days(
+                        hire_date=row["hire_date"],
+                        vacation_days_override=new_override,
+                        year=today_in_madrid().year,
+                    )
                     await connection.execute(
-                        _UPSERT_VACATION_BALANCE, user_id, vacation_days_per_year
+                        _UPSERT_VACATION_BALANCE, user_id, entitled_days
                     )
 
         return await self.find_by_id(user_id)

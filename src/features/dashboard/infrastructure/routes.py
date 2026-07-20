@@ -35,7 +35,11 @@ def create_dashboard_router() -> APIRouter:
     @router.get("/admin/metrics", response_model=AdminMetricsDTO)
     async def get_admin_metrics(
         entity_id: Optional[str] = Query(None),
-        department_id: Optional[str] = Query(None),
+        # Repetible (`?department_id=a&department_id=b`): los departamentos
+        # se agrupan por NOMBRE en el filtro del front (mismo nombre existe
+        # una vez por sede, con `department_id` distinto) — elegir un nombre
+        # sin sede filtra por el conjunto de ids que lo comparten.
+        department_id: Optional[list[str]] = Query(None),
         period_days: int = Query(14, ge=1, le=90),
         # Exclusivo del admin — igual que el resto de "Administración" en la
         # matriz de permisos, se rechaza en el backend, no solo ocultando el
@@ -44,9 +48,9 @@ def create_dashboard_router() -> APIRouter:
         use_case: GetAdminMetricsUseCase = Depends(get_admin_metrics_use_case),
     ):
         """KPIs + sparklines del periodo + radar de asistencia (top 5) del
-        Home del administrador, acotados opcionalmente por entidad/depto."""
+        Home del administrador, acotados opcionalmente por entidad/depto(s)."""
         metrics = await use_case.execute(
-            entity_id=entity_id, department_id=department_id, period_days=period_days
+            entity_id=entity_id, department_ids=department_id, period_days=period_days
         )
         return metrics_to_dto(metrics)
 

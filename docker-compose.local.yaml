@@ -53,6 +53,10 @@ services:
       # (las dependencias instaladas en la imagen). NO usar en prod.
       - ./src:/app/src
       - ./main.py:/app/main.py
+      # Credencial de la Service Account de Google Drive (Fase 4, solo local).
+      # Read-only; la ruta dentro del contenedor la consume
+      # GOOGLE_SERVICE_ACCOUNT_KEY_PATH del .env. El archivo está gitignored.
+      - ./secrets/sa-drive.json:/app/secrets/sa-drive.json:ro
     environment:
       UVICORN_RELOAD: ${UVICORN_RELOAD:-true}
     command: ["python", "run_server.py"]

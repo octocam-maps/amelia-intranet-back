@@ -117,6 +117,35 @@ async def test_notify_team_excluding_role_also_excludes_explicit_user_ids():
 
 
 @pytest.mark.asyncio
+async def test_already_notified_recipient_reflects_existing_notification():
+    repository = FakeNotificationRepository()
+    use_case = NotifyUseCase(repository, FakeEmailSender())
+
+    before = await use_case.already_notified_recipient(
+        user_id="user-1",
+        type="document_pending_signature",
+        data_key="step_id",
+        data_value="step-signature",
+    )
+    assert before is False
+
+    await use_case.execute(
+        recipient_ids=["user-1"],
+        type="document_pending_signature",
+        title="Tienes un documento pendiente de firma",
+        data={"step_id": "step-signature"},
+    )
+
+    after = await use_case.already_notified_recipient(
+        user_id="user-1",
+        type="document_pending_signature",
+        data_key="step_id",
+        data_value="step-signature",
+    )
+    assert after is True
+
+
+@pytest.mark.asyncio
 async def test_notify_announcement_resolves_recipients_scoped_to_the_audience():
     repository = FakeNotificationRepository()
     repository.announcement_recipients = {

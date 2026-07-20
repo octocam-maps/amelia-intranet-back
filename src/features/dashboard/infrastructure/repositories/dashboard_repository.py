@@ -113,7 +113,7 @@ class PostgresDashboardRepository(IDashboardRepository):
     # --- `GET /dashboard/admin/metrics` --------------------------------
 
     async def count_absent_today(
-        self, today: date, entity_id: Optional[str], department_id: Optional[str]
+        self, today: date, entity_id: Optional[str], department_ids: Optional[list[str]]
     ) -> int:
         count = await self._db.fetchval(
             """
@@ -124,16 +124,16 @@ class PostgresDashboardRepository(IDashboardRepository):
               AND $1::date BETWEEN r.start_date AND r.end_date
               AND u.deleted_at IS NULL
               AND ($2::uuid IS NULL OR u.entity_id = $2::uuid)
-              AND ($3::uuid IS NULL OR u.department_id = $3::uuid)
+              AND ($3::uuid[] IS NULL OR u.department_id = ANY($3::uuid[]))
             """,
             today,
             entity_id,
-            department_id,
+            department_ids,
         )
         return int(count or 0)
 
     async def count_pending_absence_approvals(
-        self, entity_id: Optional[str], department_id: Optional[str]
+        self, entity_id: Optional[str], department_ids: Optional[list[str]]
     ) -> int:
         count = await self._db.fetchval(
             """
@@ -143,15 +143,15 @@ class PostgresDashboardRepository(IDashboardRepository):
             WHERE r.status = 'pending'
               AND u.deleted_at IS NULL
               AND ($1::uuid IS NULL OR u.entity_id = $1::uuid)
-              AND ($2::uuid IS NULL OR u.department_id = $2::uuid)
+              AND ($2::uuid[] IS NULL OR u.department_id = ANY($2::uuid[]))
             """,
             entity_id,
-            department_id,
+            department_ids,
         )
         return int(count or 0)
 
     async def count_clocked_in_now_filtered(
-        self, today: date, entity_id: Optional[str], department_id: Optional[str]
+        self, today: date, entity_id: Optional[str], department_ids: Optional[list[str]]
     ) -> int:
         count = await self._db.fetchval(
             """
@@ -162,11 +162,11 @@ class PostgresDashboardRepository(IDashboardRepository):
               AND t.clock_out IS NULL
               AND u.deleted_at IS NULL
               AND ($2::uuid IS NULL OR u.entity_id = $2::uuid)
-              AND ($3::uuid IS NULL OR u.department_id = $3::uuid)
+              AND ($3::uuid[] IS NULL OR u.department_id = ANY($3::uuid[]))
             """,
             today,
             entity_id,
-            department_id,
+            department_ids,
         )
         return int(count or 0)
 
@@ -175,7 +175,7 @@ class PostgresDashboardRepository(IDashboardRepository):
         from_date: date,
         to_date: date,
         entity_id: Optional[str],
-        department_id: Optional[str],
+        department_ids: Optional[list[str]],
     ) -> list[DailyTrendPoint]:
         # Dos consultas separadas (fichajes / ausencias) en lugar de una sola
         # con dos JOINs: cruzar `time_clock_entries` y `absence_requests` por
@@ -193,7 +193,7 @@ class PostgresDashboardRepository(IDashboardRepository):
                 JOIN users u ON u.id = t.user_id
                 WHERE u.deleted_at IS NULL
                   AND ($3::uuid IS NULL OR u.entity_id = $3::uuid)
-                  AND ($4::uuid IS NULL OR u.department_id = $4::uuid)
+                  AND ($4::uuid[] IS NULL OR u.department_id = ANY($4::uuid[]))
             )
             SELECT
                 d.day,
@@ -209,7 +209,7 @@ class PostgresDashboardRepository(IDashboardRepository):
             from_date,
             to_date,
             entity_id,
-            department_id,
+            department_ids,
         )
         absence_rows = await self._db.fetch(
             """
@@ -223,7 +223,7 @@ class PostgresDashboardRepository(IDashboardRepository):
                 WHERE r.status = 'approved'
                   AND u.deleted_at IS NULL
                   AND ($3::uuid IS NULL OR u.entity_id = $3::uuid)
-                  AND ($4::uuid IS NULL OR u.department_id = $4::uuid)
+                  AND ($4::uuid[] IS NULL OR u.department_id = ANY($4::uuid[]))
             )
             SELECT d.day, COUNT(DISTINCT a.user_id) AS absences
             FROM days d
@@ -234,7 +234,7 @@ class PostgresDashboardRepository(IDashboardRepository):
             from_date,
             to_date,
             entity_id,
-            department_id,
+            department_ids,
         )
         absences_by_day = {row["day"]: int(row["absences"] or 0) for row in absence_rows}
         return [

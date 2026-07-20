@@ -28,6 +28,10 @@ def _row(**overrides) -> dict:
         "manager_name": "Beatriz Luna",
         "phone": "+34 600 111 222",
         "city": "Madrid",
+        "dni_nie": "12345678Z",
+        "birth_date": date(1990, 5, 20),
+        "address": "Calle Mayor 1, Madrid",
+        "company_phone": "+34 900 000 000",
     }
     row.update(overrides)
     return row
@@ -61,6 +65,10 @@ async def test_find_profile_by_user_id_maps_all_joined_fields():
     assert profile.is_external is False
     assert profile.phone == "+34 600 111 222"
     assert profile.city == "Madrid"
+    assert profile.dni_nie == "12345678Z"
+    assert profile.birth_date == date(1990, 5, 20)
+    assert profile.address == "Calle Mayor 1, Madrid"
+    assert profile.company_phone == "+34 900 000 000"
 
 
 @pytest.mark.asyncio

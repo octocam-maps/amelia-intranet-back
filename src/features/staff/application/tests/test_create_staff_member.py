@@ -38,7 +38,7 @@ async def test_creates_invited_user_with_initial_vacation_balance():
         entity_code="hub",
         role_code="empleado",
         hire_date=date(2026, 1, 12),
-        vacation_days_per_year=23,
+        vacation_days_override=23,
         invited_by=_INVITED_BY,
     )
 
@@ -66,7 +66,7 @@ async def test_creates_invitation_row_and_sends_the_invited_email():
         entity_code="hub",
         role_code="empleado",
         hire_date=None,
-        vacation_days_per_year=None,
+        vacation_days_override=None,
         invited_by=_INVITED_BY,
     )
 
@@ -104,7 +104,7 @@ async def test_email_failure_does_not_revert_the_staff_alta():
         entity_code="hub",
         role_code="empleado",
         hire_date=None,
-        vacation_days_per_year=None,
+        vacation_days_override=None,
         invited_by=_INVITED_BY,
     )
 
@@ -125,7 +125,7 @@ async def test_duplicate_email_is_rejected():
         entity_code="hub",
         role_code="empleado",
         hire_date=None,
-        vacation_days_per_year=None,
+        vacation_days_override=None,
         invited_by=_INVITED_BY,
     )
 
@@ -138,7 +138,7 @@ async def test_duplicate_email_is_rejected():
             entity_code="lab",
             role_code="empleado",
             hire_date=None,
-            vacation_days_per_year=None,
+            vacation_days_override=None,
             invited_by=_INVITED_BY,
         )
 
@@ -157,7 +157,7 @@ async def test_unknown_entity_code_is_rejected():
             entity_code="not-a-real-entity",
             role_code="empleado",
             hire_date=None,
-            vacation_days_per_year=None,
+            vacation_days_override=None,
             invited_by=_INVITED_BY,
         )
 
@@ -182,7 +182,7 @@ async def test_creates_a_member_with_each_assignable_role(role_code):
         entity_code="hub",
         role_code=role_code,
         hire_date=None,
-        vacation_days_per_year=None,
+        vacation_days_override=None,
         invited_by=_INVITED_BY,
     )
 
@@ -203,6 +203,6 @@ async def test_unknown_role_code_is_rejected():
             entity_code="hub",
             role_code="not-a-real-role",
             hire_date=None,
-            vacation_days_per_year=None,
+            vacation_days_override=None,
             invited_by=_INVITED_BY,
         )

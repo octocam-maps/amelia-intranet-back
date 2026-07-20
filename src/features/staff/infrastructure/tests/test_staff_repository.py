@@ -7,7 +7,7 @@ mockean con un pool/conexión falsos que respetan el mismo protocolo async
 context manager que `asyncpg`.
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -34,6 +34,7 @@ def _row(**overrides) -> dict:
         "role_id": "role-empleado",
         "role_code": "empleado",
         "vacation_days_per_year": 23,
+        "vacation_days_override": 23,
     }
     row.update(overrides)
     return row
@@ -145,7 +146,7 @@ async def test_create_staff_member_inserts_user_and_initial_vacation_balance():
         role_id="role-empleado",
         is_external=False,
         hire_date=None,
-        vacation_days_per_year=23,
+        vacation_days_override=23,
         invited_by="admin-1",
         expires_at=expires_at,
     )
@@ -154,8 +155,8 @@ async def test_create_staff_member_inserts_user_and_initial_vacation_balance():
     insert_query = connection.fetchval.call_args[0][0]
     assert "INSERT INTO users" in insert_query
     assert "'invited'" in insert_query
-    # Se sembró el saldo inicial (porque se pasó `vacation_days_per_year`) Y
-    # la fila de `invitations`, en la MISMA transacción que `users`.
+    # Se sembró el saldo inicial (override=23) Y la fila de `invitations`,
+    # en la MISMA transacción que `users`.
     assert connection.execute.await_count == 2
     balance_query, *balance_args = connection.execute.call_args_list[0][0]
     assert "absence_balances" in balance_query
@@ -170,7 +171,10 @@ async def test_create_staff_member_inserts_user_and_initial_vacation_balance():
 
 
 @pytest.mark.asyncio
-async def test_create_staff_member_skips_balance_when_no_vacation_days_given():
+async def test_create_staff_member_seeds_balance_from_automatic_calculation_when_no_override():
+    """Regresión del cálculo automático: sin override, el saldo inicial se
+    siembra SIEMPRE (no solo cuando el admin escribe un número) usando
+    `calculate_vacation_entitlement_days(hire_date, year)`."""
     connection = _FakeConnection()
     connection.fetchval.return_value = "user-1"
     pool = _FakePool(connection)
@@ -185,23 +189,23 @@ async def test_create_staff_member_skips_balance_when_no_vacation_days_given():
         entity_id="entity-hub",
         role_id="role-empleado",
         is_external=False,
-        hire_date=None,
-        vacation_days_per_year=None,
+        hire_date=date(2020, 1, 1),  # año completo -> 20 días calculados
+        vacation_days_override=None,
         invited_by="admin-1",
         expires_at=datetime(2026, 7, 24, tzinfo=timezone.utc),
     )
 
-    # Sin saldo de vacaciones que sembrar, pero la fila de `invitations`
-    # se escribe siempre.
-    assert connection.execute.await_count == 1
-    invitation_query = connection.execute.call_args[0][0]
-    assert "INSERT INTO invitations" in invitation_query
+    # Saldo (calculado) + invitación — nunca se salta el saldo.
+    assert connection.execute.await_count == 2
+    balance_query, *balance_args = connection.execute.call_args_list[0][0]
+    assert "absence_balances" in balance_query
+    assert balance_args == ["user-1", 20.0]
 
 
 @pytest.mark.asyncio
 async def test_update_staff_member_returns_none_when_not_found():
     connection = _FakeConnection()
-    connection.fetchval.return_value = None
+    connection.fetchrow.return_value = None
     pool = _FakePool(connection)
     repository = PostgresStaffRepository(pool)
 
@@ -212,7 +216,8 @@ async def test_update_staff_member_returns_none_when_not_found():
         entity_id=None,
         role_id=None,
         is_external=None,
-        vacation_days_per_year=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=False,
         status=None,
     )
 
@@ -223,7 +228,11 @@ async def test_update_staff_member_returns_none_when_not_found():
 @pytest.mark.asyncio
 async def test_update_staff_member_deactivating_sets_status_suspended():
     connection = _FakeConnection()
-    connection.fetchval.return_value = "user-1"
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "hire_date": None,
+        "vacation_days_override": 23,
+    }
     pool = _FakePool(connection)
     pool.fetchrow.return_value = _row(status="suspended")
     repository = PostgresStaffRepository(pool)
@@ -235,11 +244,108 @@ async def test_update_staff_member_deactivating_sets_status_suspended():
         entity_id=None,
         role_id=None,
         is_external=None,
-        vacation_days_per_year=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=False,
         status="suspended",
     )
 
     assert updated.status == "suspended"
-    update_query, *update_args = connection.fetchval.call_args[0]
+    update_query, *update_args = connection.fetchrow.call_args[0]
     assert "COALESCE($7, status)" in update_query
-    assert update_args[-1] == "suspended"
+    assert "vacation_days_override = CASE" in update_query
+    assert update_args[6] == "suspended"
+    # No se tocó el override en esta petición -> no se recalcula el saldo.
+    connection.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_staff_member_not_touching_override_does_not_recompute_balance():
+    """Editar un campo no relacionado (p. ej. el puesto) no debe reescribir
+    `absence_balances` de rebote — solo se recalcula cuando el override
+    realmente se fija o se vacía esta petición."""
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "hire_date": date(2020, 1, 1),
+        "vacation_days_override": None,
+    }
+    pool = _FakePool(connection)
+    pool.fetchrow.return_value = _row()
+    repository = PostgresStaffRepository(pool)
+
+    await repository.update_staff_member(
+        "user-1",
+        job_title="Nuevo puesto",
+        department_id=None,
+        entity_id=None,
+        role_id=None,
+        is_external=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=False,
+        status=None,
+    )
+
+    connection.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_staff_member_clearing_override_recomputes_from_hire_date():
+    """`clear_vacation_days_override=True` (el admin vació el campo en el
+    formulario) fuerza `vacation_days_override = NULL` y recalcula el saldo
+    desde `hire_date` — vuelve a automático."""
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "hire_date": date(2020, 1, 1),  # calcularía 20
+        "vacation_days_override": None,
+    }
+    pool = _FakePool(connection)
+    pool.fetchrow.return_value = _row()
+    repository = PostgresStaffRepository(pool)
+
+    await repository.update_staff_member(
+        "user-1",
+        job_title=None,
+        department_id=None,
+        entity_id=None,
+        role_id=None,
+        is_external=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=True,
+        status=None,
+    )
+
+    update_query, *update_args = connection.fetchrow.call_args[0]
+    assert update_args[7] is True  # clear_vacation_days_override
+    connection.execute.assert_awaited_once()
+    balance_args = connection.execute.call_args[0][1:]
+    assert balance_args == ("user-1", 20.0)
+
+
+@pytest.mark.asyncio
+async def test_update_staff_member_setting_a_new_override_recomputes_balance():
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "hire_date": date(2020, 1, 1),  # calcularía 20, pero manda el override
+        "vacation_days_override": 15,
+    }
+    pool = _FakePool(connection)
+    pool.fetchrow.return_value = _row()
+    repository = PostgresStaffRepository(pool)
+
+    await repository.update_staff_member(
+        "user-1",
+        job_title=None,
+        department_id=None,
+        entity_id=None,
+        role_id=None,
+        is_external=None,
+        vacation_days_override=15,
+        clear_vacation_days_override=False,
+        status=None,
+    )
+
+    connection.execute.assert_awaited_once()
+    balance_args = connection.execute.call_args[0][1:]
+    assert balance_args == ("user-1", 15.0)

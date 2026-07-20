@@ -47,14 +47,21 @@ class IStaffRepository(Protocol):
         role_id: str,
         is_external: bool,
         hire_date: Optional[date],
-        vacation_days_per_year: Optional[float],
+        vacation_days_override: Optional[float],
         invited_by: str,
         expires_at: datetime,
     ) -> StaffMember:
         """Crea el usuario con `status='invited'` (accede por primera vez
-        con Google, igual que cualquier alta — 007_seed_initial_admin.sql)
-        y, si se indica `vacation_days_per_year`, el saldo inicial del tipo
-        `vacaciones` del año en curso.
+        con Google, igual que cualquier alta — 007_seed_initial_admin.sql).
+
+        `vacation_days_override` es la INTENCIÓN del admin sobre el
+        entitlement de vacaciones: `None` = automático (se calcula desde
+        `hire_date`, ver `absences.domain.vacation_entitlement`); un valor
+        concreto = override manual. En AMBOS casos se siembra el saldo
+        inicial del tipo `vacaciones` del año en curso (resuelto vía
+        `resolve_vacation_entitlement_days`) — a diferencia del
+        comportamiento previo, que solo sembraba saldo si el admin escribía
+        un número.
 
         En la MISMA transacción registra la fila de `invitations`
         (trazabilidad + feature `invitations` para reenviar/cancelar) —
@@ -72,9 +79,22 @@ class IStaffRepository(Protocol):
         entity_id: Optional[str],
         role_id: Optional[str],
         is_external: Optional[bool],
-        vacation_days_per_year: Optional[float],
+        vacation_days_override: Optional[float],
+        clear_vacation_days_override: bool,
         status: Optional[str],
     ) -> Optional[StaffMember]:
         """Actualización parcial: cada parámetro en `None` significa "no
-        tocar esta columna" (semántica PATCH), no "vaciarla"."""
+        tocar esta columna" (semántica PATCH), no "vaciarla" — EXCEPTO
+        `vacation_days_override`, que necesita distinguir tres estados
+        ("no tocar" / "fijar un valor" / "volver a automático") con un
+        `None` solo. `clear_vacation_days_override=True` es lo que fuerza
+        "volver a automático" (mismo patrón que `holidays.clear_entity`):
+        cuando es `True`, `vacation_days_override` (el valor) se ignora y la
+        columna se vacía a NULL.
+
+        Tanto si se fija como si se vacía el override, se recalcula y
+        reescribe el saldo (`absence_balances.entitled_days`) del tipo
+        `vacaciones` del año en curso — así el contador queda coherente de
+        inmediato, sin esperar a la próxima lectura lazy
+        (`get_or_create_balance`)."""
         ...

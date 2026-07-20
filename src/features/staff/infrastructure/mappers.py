@@ -18,6 +18,8 @@ def member_to_dto(member: StaffMember) -> StaffMemberDTO:
         status=member.status,
         hire_date=member.hire_date,
         vacation_days_per_year=member.vacation_days_per_year,
+        vacation_days_override=member.vacation_days_override,
+        vacation_days_calculated=member.vacation_days_calculated,
     )
 
 

@@ -29,7 +29,11 @@ _PROFILE_SELECT = """
         d.name AS department_name,
         m.full_name AS manager_name,
         p.phone AS phone,
-        p.city AS city
+        p.city AS city,
+        p.dni_nif AS dni_nie,
+        p.birth_date AS birth_date,
+        p.address AS address,
+        p.company_phone AS company_phone
     FROM users u
     JOIN roles r ON r.id = u.role_id
     LEFT JOIN entities e ON e.id = u.entity_id
@@ -74,6 +78,10 @@ def _row_to_profile(row) -> UserProfile:
         is_external=row["is_external"],
         phone=row["phone"],
         city=row["city"],
+        dni_nie=row["dni_nie"],
+        birth_date=row["birth_date"],
+        address=row["address"],
+        company_phone=row["company_phone"],
     )
 
 

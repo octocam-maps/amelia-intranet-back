@@ -106,6 +106,23 @@ class NotifyUseCase:
             recipient_ids=recipient_ids, type=type, title=title, body=body, data=data
         )
 
+    async def already_notified_recipient(
+        self, *, user_id: str, type: str, data_key: str, data_value: str
+    ) -> bool:
+        """Atajo de idempotencia para disparadores que NO son un job
+        por-tiempo (esos ya hacen el chequeo inline contra su propio
+        repositorio — ver `run_daily_notification_job`/
+        `run_clock_out_notification_job`): ¿ya existe una notificación de
+        este `type` para este destinatario con este dato? Lo usa
+        `GetMyOnboardingUseCase` para no duplicar `document_pending_signature`
+        ante dos primeras visitas casi simultáneas (dos pestañas en el primer
+        login) — mismo criterio de idempotencia, expuesto aquí para que un
+        disparador que solo conoce `NotifyUseCase` (no el repositorio de
+        notificaciones directamente) pueda aplicarlo."""
+        return await self._repository.exists_recipient_notification_with_data(
+            user_id=user_id, type=type, data_key=data_key, data_value=data_value
+        )
+
     async def notify_announcement(
         self,
         *,

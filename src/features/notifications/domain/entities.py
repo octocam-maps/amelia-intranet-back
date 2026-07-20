@@ -6,9 +6,11 @@ from datetime import datetime
 from typing import Any, Optional
 
 # Catálogo cerrado de los 12 tipos transaccionales (docs/requerimientos-
-# amelia-intranet.pdf §6). Los 8 primeros ya tienen disparador cableado en
-# esta fase; los 4 últimos solo se registran aquí — sus features de origen
-# (onboarding, documentos/Drive) todavía no existen.
+# amelia-intranet.pdf §6). Los 12 tienen disparador cableado:
+# `onboarding_completed` en `CompleteProfileUseCase` (paso 5, el último de
+# los 5); `document_pending_signature` en `GetMyOnboardingUseCase` (arranque
+# del flujo, paso 3); `payslip_available`/`document_uploaded` en
+# `UploadDocumentUseCase`/`SyncDocumentsUseCase` (según `category`).
 NOTIFICATION_TYPES = frozenset(
     {
         "absence_approved",
@@ -19,10 +21,10 @@ NOTIFICATION_TYPES = frozenset(
         "birthday",
         "work_anniversary",
         "clock_out_missing",
-        "onboarding_completed",  # FASE 2 — sin disparador todavía
-        "document_pending_signature",  # FASE 4 Drive — sin disparador todavía
-        "payslip_available",  # FASE 4 Drive — sin disparador todavía
-        "document_uploaded",  # FASE 4 Drive — sin disparador todavía
+        "onboarding_completed",
+        "document_pending_signature",
+        "payslip_available",
+        "document_uploaded",
     }
 )
 
