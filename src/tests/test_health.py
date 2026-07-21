@@ -22,13 +22,14 @@ def test_health_check_ok():
     assert response.json() == {"status": "healthy"}
 
 
-def test_root_ok():
+def test_root_does_not_leak_environment_or_version():
+    """INFO-1: el root público NO debe ayudar a fingerprintear prod/stage
+    devolviendo `environment`/`version` — solo un status mínimo."""
     with TestClient(app) as client:
         response = client.get("/")
 
     assert response.status_code == 200
-    body = response.json()
-    assert body["service"] == "amelia-intranet-back"
+    assert response.json() == {"status": "ok"}
 
 
 def test_protected_route_without_token_is_rejected():
