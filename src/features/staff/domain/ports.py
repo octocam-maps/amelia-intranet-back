@@ -98,3 +98,27 @@ class IStaffRepository(Protocol):
         inmediato, sin esperar a la próxima lectura lazy
         (`get_or_create_balance`)."""
         ...
+
+
+class ISessionRevoker(Protocol):
+    """Puerto mínimo (defensa en profundidad de AUTHN-2): al suspender a
+    alguien, además del corte inmediato por `ensure_user_is_active` en
+    cada request (`src/shared/auth/dependencies.py`), conviene revocar
+    también sus refresh tokens vigentes para que no pueda sacar un access
+    token NUEVO vía `/auth/refresh` mientras el suspendido dure.
+
+    `refresh_session.py` YA rechaza a un usuario `suspended` (chequea
+    `user.status` antes de rotar), así que esto es belt-and-suspenders, no
+    la defensa principal — de ahí que sea opcional (`Optional[...] = None`
+    en `UpdateStaffMemberUseCase`) y no bloquee el caso de uso si no se
+    inyecta.
+
+    Forma estructural idéntica a `features.auth.domain.ports.ISessionRepository.
+    revoke_all_sessions_for_user` — `staff.domain` NO importa `auth.domain`
+    (evita acoplar dos features en la capa de dominio); el adaptador real
+    (`PostgresSessionRepository`) se inyecta en
+    `staff/infrastructure/dependencies.py`, que sí puede componer con otro
+    feature (mismo patrón que `documents/infrastructure/dependencies.py`
+    reutilizando `PostgresStaffRepository`)."""
+
+    async def revoke_all_sessions_for_user(self, user_id: str) -> int: ...

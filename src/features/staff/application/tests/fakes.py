@@ -209,6 +209,19 @@ class FakeStaffRepository:
         return updated
 
 
+class FakeSessionRevoker:
+    """Doble en memoria de `ISessionRevoker` (defensa en profundidad de
+    AUTHN-2) — registra las llamadas para poder aseverar que suspender
+    revoca sesiones y que cualquier otra edición NO lo hace."""
+
+    def __init__(self):
+        self.revoked_user_ids: list[str] = []
+
+    async def revoke_all_sessions_for_user(self, user_id: str) -> int:
+        self.revoked_user_ids.append(user_id)
+        return 1
+
+
 class FakeEmailSender:
     """Mismo patrón que `features/notifications/application/tests/fakes.py`
     — `fail_for` simula un proveedor caído para probar que el alta es

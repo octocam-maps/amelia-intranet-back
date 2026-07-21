@@ -7,7 +7,12 @@ from src.features.staff.application.use_cases.update_staff_member import (
 )
 from src.features.staff.domain.errors import StaffMemberNotFoundError
 
-from .fakes import _DEFAULT_INVITED_BY, FakeStaffRepository, build_create_staff_member_use_case
+from .fakes import (
+    _DEFAULT_INVITED_BY,
+    FakeSessionRevoker,
+    FakeStaffRepository,
+    build_create_staff_member_use_case,
+)
 
 
 async def _seed_member(repository: FakeStaffRepository):
@@ -26,6 +31,63 @@ async def _seed_member(repository: FakeStaffRepository):
 
 @pytest.mark.asyncio
 async def test_deactivating_sets_status_to_suspended():
+    repository = FakeStaffRepository()
+    member = await _seed_member(repository)
+    use_case = UpdateStaffMemberUseCase(repository)
+
+    updated = await use_case.execute(member.id, is_active=False)
+
+    assert updated.status == "suspended"
+
+
+@pytest.mark.asyncio
+async def test_deactivating_revokes_all_active_sessions():
+    """Defensa en profundidad de AUTHN-2: suspender (`is_active=False`)
+    revoca de una vez las sesiones de refresh vigentes del usuario, para no
+    depender solo del corte inmediato por request (`ensure_user_is_active`)
+    ni del rechazo de `/auth/refresh` a un `suspended`."""
+    repository = FakeStaffRepository()
+    member = await _seed_member(repository)
+    session_revoker = FakeSessionRevoker()
+    use_case = UpdateStaffMemberUseCase(repository, session_revoker)
+
+    await use_case.execute(member.id, is_active=False)
+
+    assert session_revoker.revoked_user_ids == [member.id]
+
+
+@pytest.mark.asyncio
+async def test_reactivating_does_not_revoke_sessions():
+    """Reactivar (`is_active=True`) no debe disparar la revocación — solo
+    suspender corta el acceso."""
+    repository = FakeStaffRepository()
+    member = await _seed_member(repository)
+    session_revoker = FakeSessionRevoker()
+    use_case = UpdateStaffMemberUseCase(repository, session_revoker)
+
+    await use_case.execute(member.id, is_active=True)
+
+    assert session_revoker.revoked_user_ids == []
+
+
+@pytest.mark.asyncio
+async def test_editing_other_fields_does_not_revoke_sessions():
+    """Editar cualquier otro campo (sin tocar `is_active`) no debe revocar
+    nada — solo la transición explícita a suspendido."""
+    repository = FakeStaffRepository()
+    member = await _seed_member(repository)
+    session_revoker = FakeSessionRevoker()
+    use_case = UpdateStaffMemberUseCase(repository, session_revoker)
+
+    await use_case.execute(member.id, job_title="Senior PM")
+
+    assert session_revoker.revoked_user_ids == []
+
+
+@pytest.mark.asyncio
+async def test_deactivating_without_a_session_revoker_still_suspends():
+    """`session_revoker` es opcional — si no se inyecta (`None`, el
+    default), suspender sigue funcionando igual que antes de AUTHN-2."""
     repository = FakeStaffRepository()
     member = await _seed_member(repository)
     use_case = UpdateStaffMemberUseCase(repository)

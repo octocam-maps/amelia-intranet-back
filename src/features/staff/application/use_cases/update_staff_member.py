@@ -4,13 +4,15 @@ Actualización parcial: solo se tocan los campos que llegan informados."""
 
 from typing import Optional
 
+from src.shared.auth.roles import RoleCode
+
 from ...domain.entities import StaffMember
 from ...domain.errors import (
     InvalidEntityCodeError,
     InvalidRoleCodeError,
     StaffMemberNotFoundError,
 )
-from ...domain.ports import IStaffRepository
+from ...domain.ports import ISessionRevoker, IStaffRepository
 
 # Sentinela: distingue "no me pasaron vacation_days_override" (no tocar el
 # override) de "me pasaron vacation_days_override=None explícitamente"
@@ -20,8 +22,16 @@ _NOT_SET = object()
 
 
 class UpdateStaffMemberUseCase:
-    def __init__(self, repository: IStaffRepository):
+    def __init__(
+        self,
+        repository: IStaffRepository,
+        session_revoker: Optional[ISessionRevoker] = None,
+    ):
         self._repository = repository
+        # Opcional a propósito (defensa en profundidad de AUTHN-2, no la
+        # defensa principal): si no se inyecta, suspender sigue funcionando
+        # igual que antes, solo sin revocar sesiones de refresh.
+        self._session_revoker = session_revoker
 
     async def execute(
         self,
@@ -50,7 +60,7 @@ class UpdateStaffMemberUseCase:
             role_id = await self._repository.resolve_role_id(role_code)
             if role_id is None:
                 raise InvalidRoleCodeError(f"El rol '{role_code}' no existe.")
-            is_external = role_code == "externo_invitado"
+            is_external = role_code == RoleCode.EXTERNO_INVITADO
 
         department_id: Optional[str] = None
         if department is not None:
@@ -98,4 +108,14 @@ class UpdateStaffMemberUseCase:
         )
         if updated is None:
             raise StaffMemberNotFoundError("La persona no existe.")
+
+        # Defensa en profundidad de AUTHN-2: el corte de acceso YA es
+        # inmediato vía `ensure_user_is_active` (SELECT por request en
+        # `get_current_user`); esto además impide que el suspendido saque
+        # un access token NUEVO vía `/auth/refresh` mientras dure suspendido
+        # (`refresh_session.py` ya lo rechaza, pero revocar de una vez sus
+        # sesiones evita depender solo de esa comprobación).
+        if status == "suspended" and self._session_revoker is not None:
+            await self._session_revoker.revoke_all_sessions_for_user(user_id)
+
         return updated
