@@ -1,0 +1,31 @@
+# CD: al hacer push a main, despliega el backend en el utils-server
+# (people.amelia.am/api). El servidor hace git pull + docker compose build
+# via /app/amelia-intranet/deploy/deploy.sh — ver awsinfraestructura
+# (INFRASTRUCTURE.md, sección Utils Server) para el detalle del stack.
+#
+# ⚠️ Las migraciones SQL (database/migrations/) NO se aplican en automático:
+# si el deploy trae migraciones nuevas, el job lo avisa con un ::warning::
+# y hay que aplicarlas a mano en la BD (túnel SSH, puerto 5433 loopback).
+name: Deploy people.amelia.am (back)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-utils-intranet
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH al utils-server
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.UTILS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 54.228.92.111 >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes ec2-user@54.228.92.111 \
+            '/app/amelia-intranet/deploy/deploy.sh back'
