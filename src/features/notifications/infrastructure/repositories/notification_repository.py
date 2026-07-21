@@ -9,6 +9,7 @@ de fan-out y alimentar los jobs por-tiempo — mismo patrón que
 from datetime import date, datetime
 from typing import Any, Optional
 
+from src.shared.auth.roles import RoleCode
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
 from ...domain.entities import Notification
@@ -120,10 +121,10 @@ class PostgresNotificationRepository(INotificationRepository):
 
     async def list_admin_ids(self) -> list[str]:
         rows = await self._db.fetch(
-            """
+            f"""
             SELECT u.id FROM users u
             JOIN roles r ON r.id = u.role_id
-            WHERE r.code = 'administrador' AND u.status = 'active' AND u.deleted_at IS NULL
+            WHERE r.code = '{RoleCode.ADMINISTRADOR.value}' AND u.status = 'active' AND u.deleted_at IS NULL
             """
         )
         return [str(row["id"]) for row in rows]
@@ -144,8 +145,15 @@ class PostgresNotificationRepository(INotificationRepository):
     ) -> list[str]:
         # La exclusión de externo_invitado va SIEMPRE, sin importar la
         # audiencia — si audience='role' apunta justo a ese rol, el AND la
-        # deja vacía en vez de colarlo por el filtro extra.
-        conditions = ["r.code != 'externo_invitado'", "u.status = 'active'", "u.deleted_at IS NULL"]
+        # deja vacía en vez de colarlo por el filtro extra. Interpolado
+        # directamente (no como bind param): es un valor de un `Enum`
+        # controlado, no un input del cliente, y así los placeholders
+        # `$1`/`$2` de más abajo (SÍ ligados a input externo) no se corren.
+        conditions = [
+            f"r.code != '{RoleCode.EXTERNO_INVITADO.value}'",
+            "u.status = 'active'",
+            "u.deleted_at IS NULL",
+        ]
         params: list[Any] = []
         if audience == "entity":
             params.append(entity_id)

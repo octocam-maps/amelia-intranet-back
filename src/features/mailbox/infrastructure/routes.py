@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from src.shared.auth.dependencies import require_role
+from src.shared.auth.roles import ADMIN_ONLY, INTERNAL_ROLES
 from src.shared.middleware import limiter
 
 from ..application.use_cases.list_mailbox_messages import ListMailboxMessagesUseCase
@@ -50,7 +51,7 @@ def create_mailbox_router() -> APIRouter:
         # intencional (docs/permisos-roles.md § Buzón anónimo). `socio`
         # [migración 024] puede enviar igual que cualquier empleado — sigue
         # sin acceso a la recepción (`GET/POST /messages/*` más abajo).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: SubmitAnonymousMessageUseCase = Depends(get_submit_anonymous_message_use_case),
     ):
         message = await use_case.execute(category=dto.category, subject=dto.subject, body=dto.body)
@@ -61,7 +62,7 @@ def create_mailbox_router() -> APIRouter:
         status: Optional[str] = Query(
             None, pattern="^(unread|all|resolved)$", description="unread|all|resolved"
         ),
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: ListMailboxMessagesUseCase = Depends(get_list_mailbox_messages_use_case),
     ):
         """Recepción del buzón — exclusiva del admin (docs/permisos-roles.md § Buzón anónimo)."""
@@ -72,7 +73,7 @@ def create_mailbox_router() -> APIRouter:
     async def reply_to_message(
         message_id: str,
         dto: ReplyToMessageDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: ReplyToMailboxMessageUseCase = Depends(get_reply_to_message_use_case),
     ):
         """La respuesta queda en el propio mensaje — el emisor la ve por su
@@ -84,7 +85,7 @@ def create_mailbox_router() -> APIRouter:
     @router.post("/messages/{message_id}/resolve", response_model=AnonymousMessageDTO)
     async def resolve_message(
         message_id: str,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: ResolveMailboxMessageUseCase = Depends(get_resolve_message_use_case),
     ):
         message = await use_case.execute(message_id=message_id)

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from src.shared.auth.dependencies import require_role
+from src.shared.auth.roles import ADMIN_ONLY, ADMIN_SOCIO, INTERNAL_ROLES
 from src.shared.utils.timezone import today_in_madrid
 
 from ..application.use_cases.create_absence_request import CreateAbsenceRequestUseCase
@@ -90,7 +91,7 @@ def create_absences_router() -> APIRouter:
         # visión global/exportación del calendario general es un permiso
         # ADICIONAL (ver los 3 endpoints `/calendar/*` más abajo), no un
         # reemplazo de este acceso de empleado.
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ListAbsenceTypesUseCase = Depends(get_list_absence_types_use_case),
     ):
         types = await use_case.execute()
@@ -98,7 +99,7 @@ def create_absences_router() -> APIRouter:
 
     @router.get("/types/admin", response_model=AbsenceTypeAdminListDTO)
     async def list_all_types(
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: ListAllAbsenceTypesUseCase = Depends(get_list_all_absence_types_use_case),
     ):
         """Vista de gestión — incluye los tipos desactivados
@@ -110,7 +111,7 @@ def create_absences_router() -> APIRouter:
     @router.post("/types", response_model=AbsenceTypeAdminDTO, status_code=201)
     async def create_type(
         dto: CreateAbsenceTypeDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: CreateAbsenceTypeUseCase = Depends(get_create_absence_type_use_case),
     ):
         absence_type = await use_case.execute(
@@ -130,7 +131,7 @@ def create_absences_router() -> APIRouter:
     async def update_type(
         absence_type_id: str,
         dto: UpdateAbsenceTypeDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: UpdateAbsenceTypeUseCase = Depends(get_update_absence_type_use_case),
     ):
         """No hay DELETE: desactivar (`is_active=false`) es el único
@@ -162,7 +163,7 @@ def create_absences_router() -> APIRouter:
         # visión global/exportación del calendario general es un permiso
         # ADICIONAL (ver los 3 endpoints `/calendar/*` más abajo), no un
         # reemplazo de este acceso de empleado.
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: GetAbsenceBalanceUseCase = Depends(get_absence_balance_use_case),
     ):
         """Contador en tiempo real: entitled/used/pending/available por tipo."""
@@ -182,7 +183,7 @@ def create_absences_router() -> APIRouter:
         # visión global/exportación del calendario general es un permiso
         # ADICIONAL (ver los 3 endpoints `/calendar/*` más abajo), no un
         # reemplazo de este acceso de empleado.
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: CreateAbsenceRequestUseCase = Depends(get_create_absence_request_use_case),
     ):
         """Autoaprobación del administrador (B-1c, docs/permisos-roles.md §
@@ -207,7 +208,7 @@ def create_absences_router() -> APIRouter:
         # visión global/exportación del calendario general es un permiso
         # ADICIONAL (ver los 3 endpoints `/calendar/*` más abajo), no un
         # reemplazo de este acceso de empleado.
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ListAbsenceRequestsUseCase = Depends(get_list_absence_requests_use_case),
     ):
         """Propias por defecto; el admin puede pasar `user_id` para ver las de otro."""
@@ -221,7 +222,7 @@ def create_absences_router() -> APIRouter:
 
     @router.get("/requests/pending", response_model=AbsenceRequestListDTO)
     async def list_pending_requests(
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: ListAbsenceRequestsUseCase = Depends(get_list_absence_requests_use_case),
     ):
         """Bandeja de aprobación — exclusiva del admin."""
@@ -232,7 +233,7 @@ def create_absences_router() -> APIRouter:
 
     @router.get("/requests/all", response_model=AbsenceRequestListDTO)
     async def list_all_requests(
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: ListAbsenceRequestsUseCase = Depends(get_list_absence_requests_use_case),
     ):
         """Calendario global — exclusivo del admin (docs/permisos-roles.md § Ausencias)."""
@@ -250,14 +251,14 @@ def create_absences_router() -> APIRouter:
     # `socio` [migración 024] tiene visión global de este calendario (ver +
     # exportar) igual que el admin, pero NO el resto de "Administración"
     # (aprobar ausencias, festivos, tipos de ausencia, buzón, onboarding
-    # admin, plantilla) — esos endpoints siguen `require_role("administrador")`
+    # admin, plantilla) — esos endpoints siguen `require_role(*ADMIN_ONLY)`
     # exclusivamente, sin tocar. ---
 
     @router.get("/calendar/all", response_model=AbsenceCalendarEntryListDTO)
     async def get_calendar_all(
         date_from: Optional[date] = Query(None),
         date_to: Optional[date] = Query(None),
-        current_user: dict = Depends(require_role("administrador", "socio")),
+        current_user: dict = Depends(require_role(*ADMIN_SOCIO)),
         use_case: GetAbsenceCalendarUseCase = Depends(get_absence_calendar_use_case),
     ):
         """Calendario general de RRHH: TODOS los empleados, acotado por
@@ -273,7 +274,7 @@ def create_absences_router() -> APIRouter:
     async def export_calendar_xlsx(
         date_from: Optional[date] = Query(None),
         date_to: Optional[date] = Query(None),
-        current_user: dict = Depends(require_role("administrador", "socio")),
+        current_user: dict = Depends(require_role(*ADMIN_SOCIO)),
         use_case: GetAbsenceCalendarUseCase = Depends(get_absence_calendar_use_case),
     ):
         """Informe XLSX con logo de marca del calendario general — mismo
@@ -297,7 +298,7 @@ def create_absences_router() -> APIRouter:
     async def export_calendar_pdf(
         date_from: Optional[date] = Query(None),
         date_to: Optional[date] = Query(None),
-        current_user: dict = Depends(require_role("administrador", "socio")),
+        current_user: dict = Depends(require_role(*ADMIN_SOCIO)),
         use_case: GetAbsenceCalendarUseCase = Depends(get_absence_calendar_use_case),
     ):
         """Informe PDF con logo de marca del calendario general —
@@ -320,7 +321,7 @@ def create_absences_router() -> APIRouter:
     async def review_request(
         request_id: str,
         dto: ReviewAbsenceRequestDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: ReviewAbsenceRequestUseCase = Depends(get_review_absence_request_use_case),
     ):
         """Aprueba/rechaza — exclusivo del admin. RBAC real vía `require_role`,

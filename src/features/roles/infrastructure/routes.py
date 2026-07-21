@@ -11,6 +11,7 @@ se generaliza a "cualquier autenticado" solo porque sea más simple.
 from fastapi import APIRouter, Depends
 
 from src.shared.auth.dependencies import require_role
+from src.shared.auth.roles import ADMIN_ONLY
 
 from ..application.use_cases.list_roles import ListRolesUseCase
 from .dependencies import get_list_roles_use_case
@@ -23,7 +24,7 @@ def create_roles_router() -> APIRouter:
 
     @router.get("", response_model=RoleListDTO)
     async def list_roles(
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: ListRolesUseCase = Depends(get_list_roles_use_case),
     ):
         roles = await use_case.execute()

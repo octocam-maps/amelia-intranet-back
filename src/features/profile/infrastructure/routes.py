@@ -9,6 +9,7 @@ exclusivo de un rol, a diferencia de `/staff` (solo admin, sobre terceros).
 from fastapi import APIRouter, Depends
 
 from src.shared.auth.dependencies import require_role
+from src.shared.auth.roles import ALL_ROLES
 
 from ..application.use_cases.get_my_profile import GetMyProfileUseCase
 from ..application.use_cases.update_my_profile import UpdateMyProfileUseCase
@@ -23,7 +24,7 @@ def create_profile_router() -> APIRouter:
     @router.get("/me", response_model=ProfileDTO)
     async def get_my_profile(
         current_user: dict = Depends(
-            require_role("administrador", "empleado", "externo_invitado", "socio")
+            require_role(*ALL_ROLES)
         ),
         use_case: GetMyProfileUseCase = Depends(get_my_profile_use_case),
     ):
@@ -34,7 +35,7 @@ def create_profile_router() -> APIRouter:
     async def update_my_profile(
         dto: UpdateMyProfileDTO,
         current_user: dict = Depends(
-            require_role("administrador", "empleado", "externo_invitado", "socio")
+            require_role(*ALL_ROLES)
         ),
         use_case: UpdateMyProfileUseCase = Depends(get_update_my_profile_use_case),
     ):

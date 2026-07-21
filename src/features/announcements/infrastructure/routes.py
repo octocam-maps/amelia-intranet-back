@@ -16,6 +16,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from src.shared.auth.dependencies import require_role
+from src.shared.auth.roles import ADMIN_ONLY, ALL_ROLES
 
 from ..application.use_cases.create_announcement import CreateAnnouncementUseCase
 from ..application.use_cases.delete_announcement import DeleteAnnouncementUseCase
@@ -43,7 +44,7 @@ def create_announcements_router() -> APIRouter:
         # amelia-intranet-web] = solo lectura del feed, misma regla de
         # audiencia que el resto — sigue sin poder publicar/editar/borrar.
         current_user: dict = Depends(
-            require_role("administrador", "empleado", "socio", "externo_invitado")
+            require_role(*ALL_ROLES)
         ),
         use_case: ListAnnouncementsUseCase = Depends(get_list_announcements_use_case),
     ):
@@ -57,7 +58,7 @@ def create_announcements_router() -> APIRouter:
     @router.post("", response_model=AnnouncementDTO, status_code=201)
     async def create_announcement(
         dto: CreateAnnouncementDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: CreateAnnouncementUseCase = Depends(get_create_announcement_use_case),
     ):
         announcement = await use_case.execute(
@@ -76,7 +77,7 @@ def create_announcements_router() -> APIRouter:
     async def update_announcement(
         announcement_id: str,
         dto: UpdateAnnouncementDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: UpdateAnnouncementUseCase = Depends(get_update_announcement_use_case),
     ):
         announcement = await use_case.execute(
@@ -94,7 +95,7 @@ def create_announcements_router() -> APIRouter:
     @router.delete("/{announcement_id}", status_code=204)
     async def delete_announcement(
         announcement_id: str,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: DeleteAnnouncementUseCase = Depends(get_delete_announcement_use_case),
     ):
         await use_case.execute(announcement_id)

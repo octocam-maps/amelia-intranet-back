@@ -13,6 +13,8 @@ filtrado por audiencia.
 
 from typing import Optional
 
+from src.shared.auth.roles import RoleCode
+
 from ...domain.entities import Announcement
 from ...domain.ports import IAnnouncementRepository
 
@@ -28,7 +30,7 @@ class ListAnnouncementsUseCase:
         requester_entity_id: Optional[str],
         limit: Optional[int] = None,
     ) -> list[Announcement]:
-        if requester_role == "administrador":
+        if requester_role == RoleCode.ADMINISTRADOR:
             return await self._repository.list_all()
 
         return await self._repository.list_feed(

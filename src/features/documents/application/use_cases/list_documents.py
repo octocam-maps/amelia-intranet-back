@@ -10,6 +10,8 @@ SOLO ve sus propios documentos — el alcance se resuelve AQUÍ, no en la UI.
 
 from typing import Optional
 
+from src.shared.auth.roles import RoleCode
+
 from ...domain.models import DOCUMENT_CATEGORIES, Document
 from ...domain.ports import IDocumentRepository
 from ..errors import DocumentForbiddenError, InvalidDocumentCategoryError
@@ -30,7 +32,7 @@ class ListDocumentsUseCase:
         if category is not None and category not in DOCUMENT_CATEGORIES:
             raise InvalidDocumentCategoryError(f"category='{category}' no es válida.")
 
-        if requester_role == "administrador":
+        if requester_role == RoleCode.ADMINISTRADOR:
             # Vista de administración: sin `user_id` ve TODA la plantilla;
             # con `user_id` filtra por un empleado concreto (AdminDocumentsPage).
             return await self._repository.list_all(category=category, user_id=user_id)

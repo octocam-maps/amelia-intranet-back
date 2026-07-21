@@ -6,6 +6,8 @@ descargar SUS propios documentos; el administrador puede descargar
 cualquiera. Mismo criterio de ownership que `ListDocumentsUseCase`.
 """
 
+from src.shared.auth.roles import RoleCode
+
 from ...domain.ports import IDocumentRepository, IDocumentStorage
 from ..errors import DocumentForbiddenError, DocumentNotFoundError
 from ..results import DocumentDownload
@@ -23,7 +25,7 @@ class DownloadDocumentUseCase:
         if document is None:
             raise DocumentNotFoundError(f"No existe el documento id='{document_id}'.")
 
-        is_admin = requester_role == "administrador"
+        is_admin = requester_role == RoleCode.ADMINISTRADOR
         if not is_admin and document.user_id != requester_id:
             raise DocumentForbiddenError("No puedes descargar el documento de otro usuario.")
 

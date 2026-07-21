@@ -6,6 +6,8 @@ RBAC: solo el dueño del tramo o el admin.
 from datetime import datetime
 from typing import Optional
 
+from src.shared.auth.roles import RoleCode
+
 from ...domain.entities import TimeClockEntry
 from ...domain.errors import (
     InvalidTimeRangeError,
@@ -33,7 +35,7 @@ class UpdateTimeClockEntryUseCase:
         if entry is None:
             raise TimeClockEntryNotFoundError("El tramo de fichaje no existe.")
 
-        if requester_role != "administrador" and entry.user_id != requester_id:
+        if requester_role != RoleCode.ADMINISTRADOR and entry.user_id != requester_id:
             raise TimeClockForbiddenError("No puedes editar el fichaje de otro usuario.")
 
         if clock_in.date() != entry.work_date:

@@ -6,6 +6,7 @@ Adaptador asyncpg del puerto `IUserRepository`. SQL crudo — sin ORM.
 
 from typing import Optional
 
+from src.shared.auth.roles import RoleCode
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
 from ...domain.entities import AuthenticatedUser, PendingInvitation
@@ -85,7 +86,7 @@ class PostgresUserRepository(IUserRepository):
         avatar_url: Optional[str],
         hosted_domain: Optional[str],
     ) -> AuthenticatedUser:
-        is_external = invitation.role_code == "externo_invitado"
+        is_external = invitation.role_code == RoleCode.EXTERNO_INVITADO
 
         async with self._db.acquire() as connection:
             async with connection.transaction():
@@ -137,7 +138,7 @@ class PostgresUserRepository(IUserRepository):
             )
             VALUES (
                 $1, $2, $3, $4, $5,
-                (SELECT id FROM roles WHERE code = 'empleado'),
+                (SELECT id FROM roles WHERE code = $6),
                 'active', FALSE, CURRENT_TIMESTAMP
             )
             RETURNING id
@@ -147,6 +148,7 @@ class PostgresUserRepository(IUserRepository):
             hosted_domain,
             full_name,
             avatar_url,
+            RoleCode.EMPLEADO.value,
         )
         user = await self.find_by_id(str(user_id))
         assert user is not None

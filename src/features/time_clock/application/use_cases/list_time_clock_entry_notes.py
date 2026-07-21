@@ -5,6 +5,8 @@ puede ver las de cualquiera — mismo criterio de alcance que
 `UpdateTimeClockEntryUseCase`/`DeleteTimeClockEntryUseCase`.
 """
 
+from src.shared.auth.roles import RoleCode
+
 from ...domain.entities import TimeClockEntryNote
 from ...domain.errors import TimeClockEntryNotFoundError, TimeClockForbiddenError
 from ...domain.ports import ITimeClockRepository
@@ -21,7 +23,7 @@ class ListTimeClockEntryNotesUseCase:
         if entry is None:
             raise TimeClockEntryNotFoundError("El tramo de fichaje no existe.")
 
-        if requester_role != "administrador" and entry.user_id != requester_id:
+        if requester_role != RoleCode.ADMINISTRADOR and entry.user_id != requester_id:
             raise TimeClockForbiddenError(
                 "No puedes ver las incidencias del fichaje de otro usuario."
             )

@@ -7,6 +7,7 @@ primer login con Google, igual que cualquier alta existente
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
+from src.shared.auth.roles import RoleCode
 from src.shared.email.domain.ports import IEmailSender
 from src.shared.logger import get_logger
 
@@ -73,7 +74,7 @@ class CreateStaffMemberUseCase:
             department_id=department_id,
             entity_id=entity_id,
             role_id=role_id,
-            is_external=role_code == "externo_invitado",
+            is_external=role_code == RoleCode.EXTERNO_INVITADO,
             hire_date=hire_date,
             vacation_days_override=vacation_days_override,
             invited_by=invited_by,
