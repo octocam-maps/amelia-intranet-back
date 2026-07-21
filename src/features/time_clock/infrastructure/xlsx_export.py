@@ -37,8 +37,23 @@ _COLUMN_TITLES = [
     "Entrada",
     "Salida",
     "Horas trabajadas",
+    "Origen",
 ]
-_COLUMN_WIDTHS = [16, 20, 14, 16, 12, 10, 10, 18]
+_COLUMN_WIDTHS = [16, 20, 14, 16, 12, 10, 10, 18, 14]
+
+# LOGIC-2 (pentest ético, severidad ALTA): etiqueta legible del `source` para
+# que RRHH distinga de un vistazo horas autodeclaradas (alta manual) de
+# fichadas en vivo. Los valores históricos ("web"/"mobile", anteriores al fix)
+# no se migran — se muestran tal cual, en mayúscula inicial, para no perder
+# el dato de filas antiguas.
+_SOURCE_LABELS = {
+    "manual": "Manual",
+    "live": "En vivo",
+}
+
+
+def _source_label(source: str) -> str:
+    return _SOURCE_LABELS.get(source, source.capitalize())
 
 _LOGO_ROW = 1
 _TITLE_ROW = 2
@@ -131,11 +146,13 @@ def _write_rows(ws: Worksheet, rows: list[TimeClockExportRow]) -> None:
             _fmt_time(row.clock_in),
             _fmt_time(row.clock_out),
             _worked_hours(row),
+            _source_label(row.source),
         ]
+        hours_col_index = len(values) - 1  # "Horas trabajadas" — penúltima columna
         for col_index, value in enumerate(values, start=1):
             cell = ws.cell(row=excel_row, column=col_index, value=value)
             cell.alignment = Alignment(horizontal="center" if col_index >= 5 else "left")
-            if col_index == len(values):
+            if col_index == hours_col_index:
                 cell.number_format = "0.00"
         ws.row_dimensions[excel_row].height = 18
 

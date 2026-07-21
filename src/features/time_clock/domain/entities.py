@@ -2,7 +2,25 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from enum import Enum
 from typing import Optional
+
+
+class TimeClockSource(str, Enum):  # noqa: UP042 — mismo mixin deliberado que `RoleCode`
+    """Origen de un tramo de fichaje (LOGIC-2, pentest ético, severidad ALTA):
+    antes del fix, tanto el alta manual (`CreateTimeClockEntryUseCase`) como
+    el fichaje en vivo (`ClockInUseCase`) escribían el mismo valor histórico
+    `"web"`, así que RRHH no podía auditar cuántas horas eran autodeclaradas
+    frente a fichadas en tiempo real. Hereda de `str` para que comparaciones
+    contra la columna `source` (un string plano en BD/DTOs) sigan funcionando
+    sin cambios, igual que `RoleCode`.
+
+    Los valores históricos `"web"`/`"mobile"` (CHECK de `time_clock_entries`,
+    migración inicial) siguen siendo válidos para filas YA existentes — no se
+    migran datos viejos, solo se deja de escribirlos en flujos nuevos."""
+
+    MANUAL = "manual"
+    LIVE = "live"
 
 
 @dataclass(frozen=True)
@@ -67,6 +85,10 @@ class TimeClockExportRow:
     work_date: date
     clock_in: datetime
     clock_out: Optional[datetime]
+    # LOGIC-2 (pentest ético): sin este campo, el informe XLSX de RRHH no
+    # podía distinguir horas autodeclaradas (alta manual) de fichadas en vivo
+    # — ver `TimeClockSource`.
+    source: str
 
     @property
     def worked_minutes(self) -> Optional[int]:

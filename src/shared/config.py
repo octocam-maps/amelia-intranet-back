@@ -151,6 +151,19 @@ class Settings:
         # a mano en Drive fuera de la app.
         self.documents_max_upload_mb = int(os.getenv("DOCUMENTS_MAX_UPLOAD_MB", "10"))
 
+        # LOGIC-2 (pentest ético, severidad ALTA): el alta manual de un tramo
+        # de fichaje (`CreateTimeClockEntryUseCase`, "me olvidé de fichar")
+        # acepta `work_date` del body sin ningún límite — permitía fichar
+        # para hace 3 años o para el año que viene. RRHH pidió conservar la
+        # feature (no restringirla a admin), así que se blinda con una
+        # ventana hacia atrás configurable en vez de una constante fija en
+        # el código — mismo patrón que `invitation_expires_days`. El límite
+        # hacia adelante (no se puede fichar el futuro) no se hace tunable:
+        # no tiene ningún caso de uso legítimo.
+        self.time_clock_manual_entry_max_past_days = int(
+            os.getenv("TIME_CLOCK_MANUAL_ENTRY_MAX_PAST_DAYS", "30")
+        )
+
         # Nager.Date (https://date.nager.at) — festivos oficiales de España
         # para la importación automática de Festivos (Fase 6, ronda 2).
         # Configurable para poder apuntar a un stub en tests/staging sin

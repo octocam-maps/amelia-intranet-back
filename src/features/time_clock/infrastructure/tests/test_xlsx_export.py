@@ -16,7 +16,9 @@ from src.features.time_clock.infrastructure.xlsx_export import (
 )
 
 
-def _row(full_name: str, with_clock_out: bool = True) -> TimeClockExportRow:
+def _row(
+    full_name: str, with_clock_out: bool = True, source: str = "manual"
+) -> TimeClockExportRow:
     clock_in = datetime(2026, 7, 9, 8, 0, tzinfo=timezone.utc)
     clock_out = datetime(2026, 7, 9, 16, 30, tzinfo=timezone.utc) if with_clock_out else None
     return TimeClockExportRow(
@@ -27,6 +29,7 @@ def _row(full_name: str, with_clock_out: bool = True) -> TimeClockExportRow:
         work_date=date(2026, 7, 9),
         clock_in=clock_in,
         clock_out=clock_out,
+        source=source,
     )
 
 
@@ -36,7 +39,10 @@ def test_split_full_name_first_word_is_nombre_rest_is_apellido():
 
 
 def test_workbook_has_header_and_data_rows():
-    rows = [_row("Ana García"), _row("Luis Pérez", with_clock_out=False)]
+    rows = [
+        _row("Ana García", source="manual"),
+        _row("Luis Pérez", with_clock_out=False, source="live"),
+    ]
 
     workbook_bytes = build_time_clock_export_workbook(
         rows, date_from=date(2026, 6, 15), date_to=date(2026, 7, 15)
@@ -55,6 +61,7 @@ def test_workbook_has_header_and_data_rows():
         "Entrada",
         "Salida",
         "Horas trabajadas",
+        "Origen",
     ]
 
     first_data_row = [cell.value for cell in ws[6]]
@@ -66,10 +73,14 @@ def test_workbook_has_header_and_data_rows():
     assert first_data_row[5] == "10:00"
     assert first_data_row[6] == "18:30"
     assert first_data_row[7] == 8.5  # duración absoluta: no depende de la TZ de visualización
+    # LOGIC-2 (pentest ético): RRHH necesita distinguir autodeclarado (alta
+    # manual) de fichado en vivo directamente en el informe exportable.
+    assert first_data_row[8] == "Manual"
 
     open_entry_row = [cell.value for cell in ws[7]]
     assert not open_entry_row[6]  # sin salida (openpyxl relee "" como None)
     assert open_entry_row[7] == 0.0  # tramo en curso no suma horas al informe
+    assert open_entry_row[8] == "En vivo"
 
 
 def test_workbook_title_defaults_to_admin_scope():

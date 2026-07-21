@@ -10,7 +10,13 @@ from src.features.time_clock.domain.entities import TimeClockEntry
 from .fakes import FakeTimeClockRepository
 
 
-def _entry(entry_id: str, user_id: str, day: date, with_clock_out: bool = True) -> TimeClockEntry:
+def _entry(
+    entry_id: str,
+    user_id: str,
+    day: date,
+    with_clock_out: bool = True,
+    source: str = "web",
+) -> TimeClockEntry:
     clock_in = datetime(2026, 7, 9, 8, tzinfo=timezone.utc)
     clock_out = datetime(2026, 7, 9, 12, tzinfo=timezone.utc) if with_clock_out else None
     return TimeClockEntry(
@@ -19,7 +25,7 @@ def _entry(entry_id: str, user_id: str, day: date, with_clock_out: bool = True) 
         work_date=day,
         clock_in=clock_in,
         clock_out=clock_out,
-        source="web",
+        source=source,
         created_at=clock_in,
         updated_at=clock_in,
     )
@@ -81,3 +87,24 @@ async def test_export_with_user_id_returns_only_that_users_rows():
     )
 
     assert {row.user_id for row in rows} == {"user-1"}
+
+
+@pytest.mark.asyncio
+async def test_export_row_carries_the_source_of_the_underlying_entry():
+    """LOGIC-2 (pentest ético): RRHH necesita distinguir en el informe XLSX
+    cuántas horas son autodeclaradas (alta manual, `source='manual'`) frente
+    a fichadas en vivo (`source='live'`) — el informe debe reflejar el
+    `source` real del tramo, no perderlo en el camino."""
+    repository = FakeTimeClockRepository(
+        entries=[
+            _entry("e1", "user-1", date(2026, 7, 9), source="manual"),
+            _entry("e2", "user-2", date(2026, 7, 9), source="live"),
+        ],
+        full_names={"user-1": "Ana García", "user-2": "Luis Pérez Ruiz"},
+    )
+    use_case = ExportTimeClockEntriesUseCase(repository)
+
+    rows = await use_case.execute(date_from=date(2026, 7, 1), date_to=date(2026, 7, 31))
+
+    sources_by_user = {row.user_id: row.source for row in rows}
+    assert sources_by_user == {"user-1": "manual", "user-2": "live"}

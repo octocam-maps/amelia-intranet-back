@@ -8,7 +8,7 @@ tramo con `clock_in=ahora` y `clock_out=None`; se cierra con
 
 from datetime import datetime, timezone
 
-from ...domain.entities import TimeClockEntry
+from ...domain.entities import TimeClockEntry, TimeClockSource
 from ...domain.errors import TimeClockAlreadyClockedInError
 from ...domain.ports import ITimeClockRepository
 from src.shared.utils.timezone import today_in_madrid
@@ -31,5 +31,9 @@ class ClockInUseCase:
             work_date=today_in_madrid(),
             clock_in=now,
             clock_out=None,
-            source="web",
+            # LOGIC-2 (pentest ético): distingue el fichaje en vivo del alta
+            # manual (`CreateTimeClockEntryUseCase`, `source="manual"`) —
+            # antes ambos escribían "web" y RRHH no podía auditar cuántas
+            # horas eran autodeclaradas.
+            source=TimeClockSource.LIVE,
         )

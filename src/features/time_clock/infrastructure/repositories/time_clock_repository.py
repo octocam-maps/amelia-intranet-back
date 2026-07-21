@@ -67,7 +67,8 @@ _EXPORT_SELECT = """
         p.phone,
         e.work_date,
         e.clock_in,
-        e.clock_out
+        e.clock_out,
+        e.source
     FROM time_clock_entries e
     JOIN users u ON u.id = e.user_id
     LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -95,7 +96,8 @@ _EXPORT_SELECT_FOR_USER = """
         p.phone,
         e.work_date,
         e.clock_in,
-        e.clock_out
+        e.clock_out,
+        e.source
     FROM time_clock_entries e
     JOIN users u ON u.id = e.user_id
     LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -142,6 +144,7 @@ def _row_to_export_row(row) -> TimeClockExportRow:
         work_date=row["work_date"],
         clock_in=row["clock_in"],
         clock_out=row["clock_out"],
+        source=row["source"],
     )
 
 

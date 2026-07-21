@@ -13,6 +13,18 @@ class InvalidTimeRangeError(ValidationError):
     """`clock_out` no es posterior a `clock_in`, o el tramo cruza de día."""
 
 
+class ManualEntryOutOfWindowError(ValidationError):
+    """`work_date` del alta manual cae fuera de la ventana permitida — en el
+    futuro, o más allá de `Settings.time_clock_manual_entry_max_past_days`
+    días atrás (LOGIC-2, pentest ético, severidad ALTA: sin este límite,
+    cualquier interno podía fichar un tramo para hace 3 años o para el año
+    que viene, ya que `work_date`/`clock_in`/`clock_out` del alta manual
+    llegan arbitrarios en el body). Solo aplica al ALTA MANUAL
+    (`CreateTimeClockEntryUseCase`) — el fichaje en vivo (`clock_in`/
+    `clock_out`) usa siempre la hora del servidor y no recibe fecha del
+    cliente, así que no puede estar fuera de ventana."""
+
+
 class TimeClockForbiddenError(InsufficientPermissionsError):
     """Un empleado intenta leer/editar/borrar el fichaje de otro usuario.
 
