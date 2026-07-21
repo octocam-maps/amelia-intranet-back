@@ -174,9 +174,9 @@ class Settings:
         # X-Forwarded-For/X-Real-IP (ver src/shared/utils/client_ip.py). Vacío
         # por defecto: sin esta allowlist, cualquier cliente podría falsear su
         # IP con esas cabeceras y saltarse el rate-limit del login o falsear
-        # auth_sessions.ip_address / document_signatures.ip_address. Decisión
-        # del usuario: por ahora se despliega directo (sin proxy delante), así
-        # que queda vacía hasta que haya un balanceador/proxy real que la use.
+        # `auth_sessions.ip_address`. Decisión del usuario: por ahora se
+        # despliega directo (sin proxy delante), así que queda vacía hasta que
+        # haya un balanceador/proxy real que la use.
         self.trusted_proxy_ips = {
             ip.strip()
             for ip in os.getenv("TRUSTED_PROXY_IPS", "").split(",")

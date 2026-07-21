@@ -1,5 +1,13 @@
-"""Wiring de FastAPI: construye los casos de uso con sus adaptadores concretos."""
+"""Wiring de FastAPI: construye los casos de uso con sus adaptadores
+concretos. `UploadSignedOnboardingDocumentUseCase` reutiliza
+`UploadDocumentUseCase` del feature `documents` (D1,
+sdd/docs-firmados-upload-drive) — el dominio de onboarding no importa nada
+de `documents`, solo esta capa de infraestructura cruza, igual patrón que
+`get_notify_use_case` de `notifications`."""
 
+from src.features.documents.infrastructure.dependencies import (
+    get_upload_document_use_case,
+)
 from src.features.notifications.infrastructure.dependencies import get_notify_use_case
 from src.shared.database import get_database_pool
 
@@ -13,10 +21,12 @@ from ..application.use_cases.list_onboarding_steps_admin import (
     ListOnboardingStepsForAdminUseCase,
 )
 from ..application.use_cases.reset_quiz_attempt import ResetQuizAttemptUseCase
-from ..application.use_cases.sign_document import SignDocumentUseCase
 from ..application.use_cases.submit_quiz import SubmitQuizUseCase
 from ..application.use_cases.update_onboarding_step import UpdateOnboardingStepUseCase
 from ..application.use_cases.update_video_progress import UpdateVideoProgressUseCase
+from ..application.use_cases.upload_signed_document import (
+    UploadSignedOnboardingDocumentUseCase,
+)
 from .repositories.onboarding_repository import PostgresOnboardingRepository
 
 
@@ -36,8 +46,10 @@ def get_submit_quiz_use_case() -> SubmitQuizUseCase:
     return SubmitQuizUseCase(_get_repository())
 
 
-def get_sign_document_use_case() -> SignDocumentUseCase:
-    return SignDocumentUseCase(_get_repository())
+def get_upload_signed_document_use_case() -> UploadSignedOnboardingDocumentUseCase:
+    return UploadSignedOnboardingDocumentUseCase(
+        _get_repository(), get_upload_document_use_case()
+    )
 
 
 def get_acknowledge_manual_use_case() -> AcknowledgeManualUseCase:

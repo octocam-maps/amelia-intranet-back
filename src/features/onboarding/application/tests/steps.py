@@ -55,7 +55,12 @@ SIGNATURE_STEP = OnboardingStep(
     id="step-signature",
     step_order=3,
     type="signature",
-    title="Firma de documentación laboral",
+    # Título actualizado por `029_onboarding_document_uploads.sql`
+    # (sdd/docs-firmados-upload-drive) — el sembrado original en
+    # `020_onboarding_steps_seed.sql` decía "Firma de documentación laboral"
+    # (histórico, esa migración no se toca). El `type` sigue siendo
+    # `signature` (D6: no se renombra el discriminador).
+    title="Sube tu documentación firmada",
     config={},
     is_active=True,
 )

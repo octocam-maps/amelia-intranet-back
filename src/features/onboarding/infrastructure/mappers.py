@@ -2,8 +2,8 @@ from typing import Any
 
 from ..domain.entities import (
     DocumentAcknowledgement,
-    DocumentSignature,
     EmployeeOnboardingSummary,
+    OnboardingDocumentUpload,
     OnboardingProgress,
     OnboardingStep,
     QuizAttempt,
@@ -18,7 +18,7 @@ from .schemas import (
     OnboardingProgressOverviewDTO,
     OnboardingStepDTO,
     QuizResultDTO,
-    SignatureDTO,
+    UploadSignedDocumentDTO,
 )
 
 
@@ -82,13 +82,14 @@ def quiz_attempt_to_dto(attempt: QuizAttempt) -> QuizResultDTO:
     )
 
 
-def signature_to_dto(signature: DocumentSignature, step_id: str) -> SignatureDTO:
-    return SignatureDTO(
-        id=signature.id,
+def document_upload_to_dto(
+    upload: OnboardingDocumentUpload, step_id: str
+) -> UploadSignedDocumentDTO:
+    return UploadSignedDocumentDTO(
+        id=upload.id,
         step_id=step_id,
-        document_id=signature.document_id,
-        document_version=signature.document_version,
-        signed_at=signature.signed_at,
+        employee_document_id=upload.employee_document_id,
+        uploaded_at=upload.uploaded_at,
     )
 
 

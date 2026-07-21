@@ -10,6 +10,8 @@ from typing import Optional
 
 from typing import Any
 
+from src.shared.auth.roles import RoleCode
+
 from .entities import (
     EmployeeOnboardingSnapshot,
     EmployeeOnboardingSummary,
@@ -59,7 +61,7 @@ def steps_applicable_to_role(
     /onboarding/me y la inicialización de progreso SOLO consideran estos
     pasos — el externo-invitado ni siquiera llega a tener una fila de
     progreso para quiz/signature/profile."""
-    if role == "externo_invitado":
+    if role == RoleCode.EXTERNO_INVITADO:
         return [s for s in steps if s.type in _EXTERNAL_GUEST_ALLOWED_TYPES]
     return list(steps)
 
@@ -68,7 +70,7 @@ def ensure_step_allowed_for_role(step: OnboardingStep, role: str) -> None:
     """Ramificación por rol validada en el backend (regla no negociable):
     escribir el endpoint a mano no le da a un externo-invitado acceso a
     quiz/signature/profile."""
-    if role == "externo_invitado" and step.type not in _EXTERNAL_GUEST_ALLOWED_TYPES:
+    if role == RoleCode.EXTERNO_INVITADO and step.type not in _EXTERNAL_GUEST_ALLOWED_TYPES:
         raise StepNotAvailableForRoleError(
             "Tu invitación no incluye este paso del onboarding."
         )

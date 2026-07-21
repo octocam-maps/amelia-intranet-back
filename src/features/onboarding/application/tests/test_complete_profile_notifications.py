@@ -43,9 +43,10 @@ def _valid_profile(**overrides) -> ProfileCompletionData:
 
 def _repository_with_full_flow_completed(**kwargs) -> FakeOnboardingRepository:
     """Simula un usuario que ya completó vídeo, cuestionario (nota 75%) y
-    firma — solo le falta el paso 5. Los pasos 2/3 quedan `completed` con el
-    mismo shape de `data` que dejan sus propios use cases
-    (`SubmitQuizUseCase`/`SignDocumentUseCase`)."""
+    la subida del documento firmado — solo le falta el paso 5. Los pasos
+    2/3 quedan `completed` con el mismo shape de `data` que dejan sus
+    propios use cases (`SubmitQuizUseCase`/
+    `UploadSignedOnboardingDocumentUseCase`)."""
     kwargs.setdefault("department_ids", {"dept-1"})
     repository = FakeOnboardingRepository(steps=ALL_STEPS, **kwargs)
     now = datetime.now(timezone.utc)

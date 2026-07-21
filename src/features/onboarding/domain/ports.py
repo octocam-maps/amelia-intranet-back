@@ -4,14 +4,13 @@ Puertos (Protocols) del feature `onboarding`. `domain` no importa nada de
 en `infrastructure` y se inyecta aquí por duck typing estructural.
 """
 
-from datetime import datetime
 from typing import Any, Optional, Protocol
 
 from .entities import (
     DocumentAcknowledgement,
-    DocumentSignature,
     EmployeeOnboardingSnapshot,
     OnboardingDocument,
+    OnboardingDocumentUpload,
     OnboardingProgress,
     OnboardingStep,
     ProfileCompletionData,
@@ -113,18 +112,15 @@ class IOnboardingRepository(Protocol):
         pedido — `None` si el admin todavía no lo ha configurado (Fase 5)."""
         ...
 
-    async def create_signature(
-        self,
-        *,
-        user_id: str,
-        document_id: str,
-        document_version: int,
-        document_hash: str,
-        signature_hash: str,
-        signed_at: datetime,
-        ip_address: str,
-        user_agent: Optional[str],
-    ) -> DocumentSignature: ...
+    async def create_document_upload(
+        self, *, user_id: str, onboarding_document_id: str, employee_document_id: str
+    ) -> OnboardingDocumentUpload:
+        """INSERT en `onboarding_document_uploads` — enlace, no trazabilidad
+        (sin IP/hash: el propio `employee_documents` ya guarda cuándo y quién
+        subió el binario). `UNIQUE(user_id, onboarding_document_id)` es la
+        garantía real bajo concurrencia de que un mismo requisito no se
+        satisface dos veces."""
+        ...
 
     async def create_acknowledgement(
         self, *, user_id: str, document_id: str, ip_address: Optional[str]

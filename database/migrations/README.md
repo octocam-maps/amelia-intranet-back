@@ -34,6 +34,10 @@ una migración nueva.
 | `024_socio_role.sql` | Amplía `roles.code` CHECK + seed del rol `socio` — igual que un empleado en toda la app + visión global del calendario de vacaciones (ver/exportar PDF/Excel), sin permisos de administración. |
 | `025_users_drive_folder_id.sql` | `users.drive_folder_id` (aditiva) — cachea el id de la subcarpeta de Google Drive del empleado (Fase 4 v2, Drive real: WU-A de `sdd/fase4-nominas-documentos`). |
 | `026_user_profiles_company_phone.sql` | `user_profiles.company_phone` (aditiva) — último campo que faltaba de los 7 del paso 5 del onboarding ("Completar perfil", RF §3.5); el resto (`dni_nif`, `birth_date`, `phone`, `address`, `users.full_name`, `users.department_id`) ya existía desde `001_core_identity.sql`. |
+| `028_employee_documents_signed_category.sql` | Amplía `employee_documents.category` CHECK con `signed` (sdd/docs-firmados-upload-drive) — el paso 3 del onboarding deja de firmar dentro de la plataforma y pasa a exigir la subida del PDF ya firmado, indexado como un documento más. |
+| `029_onboarding_document_uploads.sql` | `onboarding_document_uploads` (nueva) — enlace "este upload satisfizo el paso 3 de ESTE usuario" + corrige el título sembrado del paso 3 ("Sube tu documentación firmada"). |
+| `030_drop_document_signatures.sql` | `DROP TABLE document_signatures` — última pieza de la firma nativa eliminada; irreversible, sin histórico (decisión de producto). Aplicada al FINAL, tras verificar el reemplazo completo (028+029 + backend/frontend nuevos). |
+| `031_time_clock_entries_source_manual_live.sql` | Amplía `time_clock_entries.source` CHECK con `manual`/`live` (LOGIC-2, pentest ético) — el alta manual y el fichaje en vivo dejan de compartir el histórico `web` para que RRHH pueda auditar horas autodeclaradas vs. fichadas en tiempo real. |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero

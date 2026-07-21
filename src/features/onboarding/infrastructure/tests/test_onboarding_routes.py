@@ -1,12 +1,15 @@
 """
-Test route-level: `quiz`, `sign` y `complete-profile` son exclusivos de
-roles internos — el externo-invitado debe rechazarse en el BACKEND
-(403), no solo ocultarse del navbar. `video-progress` y `acknowledge` sí
-están abiertos al externo-invitado (onboarding parcial). Mismo patrón que
+Test route-level: `quiz` y `complete-profile` son exclusivos de roles
+internos — el externo-invitado debe rechazarse en el BACKEND (403), no solo
+ocultarse del navbar. `video-progress` y `acknowledge` sí están abiertos al
+externo-invitado (onboarding parcial). Mismo patrón que
 `features/absences/infrastructure/tests/test_absences_routes.py`.
 """
 
+import io
 import os
+from datetime import datetime, timezone
+from typing import Optional
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 os.environ.setdefault(
@@ -16,6 +19,7 @@ os.environ.setdefault(
 from fastapi.testclient import TestClient  # noqa: E402
 from main import app  # noqa: E402
 
+from src.features.onboarding.domain.entities import OnboardingDocumentUpload  # noqa: E402
 from src.features.onboarding.infrastructure import (
     dependencies as onboarding_dependencies,  # noqa: E402
 )
@@ -41,19 +45,6 @@ def test_externo_invitado_cannot_submit_quiz():
             response = client.post(
                 "/onboarding/steps/step-quiz/quiz",
                 json={"answers": {"q1": "7"}},
-                headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
-            )
-    finally:
-        app.dependency_overrides.clear()
-
-    assert response.status_code == 403
-
-
-def test_externo_invitado_cannot_sign():
-    try:
-        with TestClient(app) as client:
-            response = client.post(
-                "/onboarding/steps/step-signature/sign",
                 headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
             )
     finally:
@@ -338,6 +329,99 @@ def test_administrador_can_list_admin_steps():
             assert response.json() == {"steps": []}
     finally:
         app.dependency_overrides.clear()
+
+
+# --- POST /steps/{step_id}/documents — self-upload del documento firmado
+# del paso 3 (sdd/docs-firmados-upload-drive, reemplaza a `/sign`). ---
+
+
+def _signed_pdf_file() -> dict:
+    return {"file": ("firmado.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")}
+
+
+class _FakeUploadSignedDocumentUseCase:
+    def __init__(
+        self,
+        upload: Optional[OnboardingDocumentUpload] = None,
+        error: Optional[Exception] = None,
+    ):
+        self._upload = upload or OnboardingDocumentUpload(
+            id="upload-1",
+            user_id="user-1",
+            onboarding_document_id="doc-signature",
+            employee_document_id="employee-doc-1",
+            uploaded_at=datetime.now(timezone.utc),
+        )
+        self._error = error
+        self.received_kwargs: Optional[dict] = None
+
+    async def execute(self, **kwargs):
+        self.received_kwargs = kwargs
+        if self._error is not None:
+            raise self._error
+        return self._upload
+
+
+def test_externo_invitado_cannot_upload_signed_document():
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/onboarding/steps/step-signature/documents",
+                files=_signed_pdf_file(),
+                headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_empleado_can_upload_signed_document():
+    fake_use_case = _FakeUploadSignedDocumentUseCase()
+    app.dependency_overrides[
+        onboarding_dependencies.get_upload_signed_document_use_case
+    ] = lambda: fake_use_case
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/onboarding/steps/step-signature/documents",
+                files=_signed_pdf_file(),
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 201
+    assert response.json()["employee_document_id"] == "employee-doc-1"
+    # `user_id` viene SIEMPRE del JWT (`current_user["sub"]`) — el endpoint
+    # ni siquiera declara un campo de formulario para el dueño del
+    # documento, así que no hay canal para suplantar a otro usuario.
+    assert fake_use_case.received_kwargs["user_id"] == "user-1"
+
+
+def test_upload_signed_document_ignores_any_user_id_field_sent_in_the_payload():
+    """Anti-suplantación (RGPD): aunque un cliente manipulado envíe
+    `user_id` en el multipart, el endpoint no lo lee de ningún lado — el
+    caso de uso recibe SIEMPRE el `sub` del token, nunca un valor del
+    payload."""
+    fake_use_case = _FakeUploadSignedDocumentUseCase()
+    app.dependency_overrides[
+        onboarding_dependencies.get_upload_signed_document_use_case
+    ] = lambda: fake_use_case
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/onboarding/steps/step-signature/documents",
+                data={"user_id": "user-2"},
+                files=_signed_pdf_file(),
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 201
+    assert fake_use_case.received_kwargs["user_id"] == "user-1"
+    assert fake_use_case.received_kwargs["user_id"] != "user-2"
 
 
 def test_administrador_can_get_progress_overview():

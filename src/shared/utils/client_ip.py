@@ -1,17 +1,21 @@
 """
-Resolución de la IP real del cliente detrás de un proxy inverso. Crítico para
-la firma digital trazable (document_signatures.ip_address) y para la clave
-del rate-limiter del login (src/shared/middleware/rate_limiter.py).
+Resolución de la IP real del cliente detrás de un proxy inverso. Usada para
+la clave del rate-limiter del login (src/shared/middleware/rate_limiter.py)
+y para la IP informativa de `document_acknowledgements.ip_address` (paso 4
+del onboarding, confirmación de lectura del manual — no es una firma legal,
+la firma nativa que sí trazaba IP/hash se eliminó en
+sdd/docs-firmados-upload-drive: el paso 3 ahora sube un PDF ya firmado
+fuera de la plataforma).
 
 SEC-1 (auditoría QA Fase 3): confiar en X-Forwarded-For/X-Real-IP sin validar
 de dónde vienen permite que cualquier cliente falsee su IP con esas
 cabeceras — saltándose el rate-limit del login y falseando
-auth_sessions.ip_address/document_signatures.ip_address (rompe la
-trazabilidad legal). Por defecto usamos `request.client.host` (la IP con la
-que TCP conectó de verdad, imposible de falsear) y SOLO leemos las cabeceras
-si esa conexión directa viene de un proxy en el que confiamos explícitamente
-(`TRUSTED_PROXY_IPS`). Decisión del usuario: despliegue directo por ahora, así
-que la allowlist queda vacía y las cabeceras se ignoran del todo.
+`auth_sessions.ip_address` (rompe la trazabilidad de sesiones). Por defecto
+usamos `request.client.host` (la IP con la que TCP conectó de verdad,
+imposible de falsear) y SOLO leemos las cabeceras si esa conexión directa
+viene de un proxy en el que confiamos explícitamente (`TRUSTED_PROXY_IPS`).
+Decisión del usuario: despliegue directo por ahora, así que la allowlist
+queda vacía y las cabeceras se ignoran del todo.
 """
 
 from fastapi import Request
