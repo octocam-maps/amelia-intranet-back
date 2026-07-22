@@ -38,3 +38,20 @@ class SyncRunDTO(BaseModel):
     status: str
     files_synced: int
     error_detail: Optional[str] = None
+
+
+class DriveFolderProvisionRunDTO(BaseModel):
+    """Resumen de `POST /documents/provision-folders` (batch de backfill):
+    misma fila de auditoría `drive_sync_runs` que `SyncRunDTO`, pero con
+    `created`/`skipped`/`failed` desglosados (no solo texto libre en
+    `error_detail`) — `BulkFolderProvisionResult` los calcula en el caso de
+    uso, no vienen de columnas propias de la tabla."""
+
+    id: str
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    status: str
+    created: int
+    skipped: int
+    failed: int
+    error_detail: Optional[str] = None

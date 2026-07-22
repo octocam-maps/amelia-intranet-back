@@ -11,17 +11,23 @@ from src.features.staff.domain.errors import (
     StaffEmailAlreadyExistsError,
 )
 
-from .fakes import FakeEmailSender, FakeStaffRepository
+from .fakes import FakeDriveFolderProvisioner, FakeEmailSender, FakeStaffRepository
 
 _INVITED_BY = "admin-1"
 
 
-def _build_use_case(repository=None, email_sender=None, invitation_expires_days=7):
+def _build_use_case(
+    repository=None,
+    email_sender=None,
+    invitation_expires_days=7,
+    drive_folder_provisioner=None,
+):
     return CreateStaffMemberUseCase(
         repository or FakeStaffRepository(),
         email_sender or FakeEmailSender(),
         invitation_expires_days,
         "http://localhost:5173",
+        drive_folder_provisioner,
     )
 
 
@@ -111,6 +117,56 @@ async def test_email_failure_does_not_revert_the_staff_alta():
     assert member.status == "invited"
     assert len(repository.invitations) == 1  # la fila de invitations ya se creó
     assert email_sender.sent == []  # el envío falló y no dejó traza de éxito
+
+
+@pytest.mark.asyncio
+async def test_successful_staff_creation_triggers_drive_folder_provisioning():
+    """Decisión de producto "hook en alta + batch de backfill": toda alta
+    exitosa debe disparar el provisioning de la carpeta de Drive del
+    empleado (best-effort, `IDriveFolderProvisioner`)."""
+    repository = FakeStaffRepository()
+    provisioner = FakeDriveFolderProvisioner()
+    use_case = _build_use_case(repository, drive_folder_provisioner=provisioner)
+
+    member = await use_case.execute(
+        full_name="Sandra Ramírez",
+        email="sandra@ameliahub.com",
+        job_title=None,
+        department=None,
+        entity_code="hub",
+        role_code="empleado",
+        hire_date=None,
+        vacation_days_override=None,
+        invited_by=_INVITED_BY,
+    )
+
+    assert provisioner.calls == [(member.id, member.email)]
+
+
+@pytest.mark.asyncio
+async def test_drive_folder_provisioning_failure_does_not_revert_the_staff_alta():
+    """Best-effort OBLIGATORIO: un fallo de Drive (timeout, credenciales,
+    error de API) NUNCA debe revertir ni bloquear el alta del empleado — la
+    carpeta se resuelve luego (batch de backfill o primer upload manual)."""
+    repository = FakeStaffRepository()
+    provisioner = FakeDriveFolderProvisioner(fail_for={"sandra@ameliahub.com"})
+    use_case = _build_use_case(repository, drive_folder_provisioner=provisioner)
+
+    member = await use_case.execute(
+        full_name="Sandra Ramírez",
+        email="sandra@ameliahub.com",
+        job_title=None,
+        department=None,
+        entity_code="hub",
+        role_code="empleado",
+        hire_date=None,
+        vacation_days_override=None,
+        invited_by=_INVITED_BY,
+    )
+
+    assert member.status == "invited"  # el alta se completó igual
+    assert len(repository.invitations) == 1
+    assert provisioner.calls == [(member.id, member.email)]  # se intentó
 
 
 @pytest.mark.asyncio

@@ -2,8 +2,9 @@
 no se exponen al cliente: son detalles del proveedor de almacenamiento
 (`sdd/fase4-nominas-documentos/design` — nunca se expone la URL/id de Drive)."""
 
+from ..application.results import BulkFolderProvisionResult
 from ..domain.models import Document, SyncRun
-from .schemas import DocumentDTO, DocumentListDTO, SyncRunDTO
+from .schemas import DocumentDTO, DocumentListDTO, DriveFolderProvisionRunDTO, SyncRunDTO
 
 
 def document_to_dto(document: Document) -> DocumentDTO:
@@ -32,4 +33,19 @@ def sync_run_to_dto(sync_run: SyncRun) -> SyncRunDTO:
         status=sync_run.status,
         files_synced=sync_run.files_synced,
         error_detail=sync_run.error_detail,
+    )
+
+
+def bulk_folder_provision_result_to_dto(
+    result: BulkFolderProvisionResult,
+) -> DriveFolderProvisionRunDTO:
+    return DriveFolderProvisionRunDTO(
+        id=result.sync_run.id,
+        started_at=result.sync_run.started_at,
+        finished_at=result.sync_run.finished_at,
+        status=result.sync_run.status,
+        created=result.created,
+        skipped=result.skipped,
+        failed=result.failed,
+        error_detail=result.sync_run.error_detail,
     )

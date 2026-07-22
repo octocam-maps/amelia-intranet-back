@@ -122,3 +122,22 @@ class ISessionRevoker(Protocol):
     reutilizando `PostgresStaffRepository`)."""
 
     async def revoke_all_sessions_for_user(self, user_id: str) -> int: ...
+
+
+class IDriveFolderProvisioner(Protocol):
+    """Puerto mínimo hacia el provisioning de la carpeta de Google Drive del
+    empleado (feature `documents`, `ProvisionEmployeeDriveFolderUseCase`) —
+    decisión de producto "hook en alta + batch de backfill": toda alta
+    exitosa dispara el provisioning BEST-EFFORT (nunca revierte ni bloquea
+    el alta si Drive falla).
+
+    Forma estructural análoga a `ISessionRevoker`: `staff.domain` NO importa
+    `documents.domain`/`documents.application` (evita acoplar dos features en
+    la capa de dominio) — el adaptador real se compone en
+    `staff/infrastructure/dependencies.py`, que sí puede combinar con otro
+    feature (mismo patrón que `_get_session_revoker` reutilizando
+    `PostgresSessionRepository` del feature `auth`, y que
+    `documents/infrastructure/dependencies.py` reutilizando
+    `PostgresStaffRepository` del feature `staff`)."""
+
+    async def provision_folder(self, user_id: str, email: str) -> None: ...

@@ -525,6 +525,95 @@ def test_externo_invitado_cannot_trigger_sync():
     assert response.status_code == 403
 
 
+# --- POST /documents/provision-folders — backfill de carpetas de Drive (admin). ---
+
+
+class _FakeBulkProvisionDriveFoldersUseCase:
+    def __init__(self, result=None, error: Optional[Exception] = None):
+        from src.features.documents.application.results import BulkFolderProvisionResult
+
+        self._result = result or BulkFolderProvisionResult(
+            sync_run=SyncRun(
+                id="sync-run-1",
+                started_at=datetime.now(timezone.utc),
+                finished_at=datetime.now(timezone.utc),
+                status="success",
+                files_synced=2,
+                error_detail=None,
+            ),
+            created=2,
+            skipped=1,
+            failed=0,
+        )
+        self._error = error
+
+    async def execute(self, **kwargs):
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+def test_admin_can_trigger_provision_folders():
+    app.dependency_overrides[
+        documents_dependencies.get_bulk_provision_drive_folders_use_case
+    ] = lambda: _FakeBulkProvisionDriveFoldersUseCase()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/documents/provision-folders",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "sync-run-1"
+    assert body["status"] == "success"
+    assert body["created"] == 2
+    assert body["skipped"] == 1
+    assert body["failed"] == 0
+
+
+def test_empleado_cannot_trigger_provision_folders():
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/documents/provision-folders",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_socio_cannot_trigger_provision_folders():
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/documents/provision-folders",
+                headers={"Authorization": f"Bearer {_token_for('socio')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_externo_invitado_cannot_trigger_provision_folders():
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/documents/provision-folders",
+                headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
 def test_admin_delete_returns_404_when_not_found():
     app.dependency_overrides[documents_dependencies.get_delete_document_use_case] = (
         lambda: _FakeDeleteDocumentUseCase(
