@@ -68,22 +68,19 @@ class OnboardingDocument:
 
 
 @dataclass(frozen=True)
-class DocumentSignature:
-    """Firma digital trazable (paso 3): fecha/hora (`signed_at`), IP
-    (`ip_address`) y hash del documento firmado (`document_hash`, congelado
-    en el momento de la firma) — regla no negociable del requerimiento §7.
-    `document_id`/`user_id` en la BD usan `ON DELETE RESTRICT`: una firma
-    nunca se borra en cascada."""
+class OnboardingDocumentUpload:
+    """Enlace "este documento firmado subido satisfizo el paso 3 de
+    onboarding de ESTE usuario" (`onboarding_document_uploads`) —
+    distingue esto de un documento `category='signed'` que un admin subiera
+    suelto vía `POST /documents` fuera del flujo de onboarding.
+    `onboarding_document_id`/`employee_document_id` usan `ON DELETE
+    RESTRICT` en la BD: el enlace nunca se borra en cascada."""
 
     id: str
     user_id: str
-    document_id: str
-    document_version: int
-    document_hash: str
-    signature_hash: str
-    signed_at: datetime
-    ip_address: str
-    user_agent: Optional[str]
+    onboarding_document_id: str
+    employee_document_id: str
+    uploaded_at: datetime
 
 
 @dataclass(frozen=True)

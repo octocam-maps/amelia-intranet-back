@@ -84,7 +84,7 @@ async def test_caches_drive_folder_id_across_uploads():
         title="Nómina julio 2026",
         period="2026-07",
         filename="nomina-2026-07.pdf",
-        content=b"contenido",
+        content=b"%PDF-1.4 contenido",
         mime_type="application/pdf",
     )
     await use_case.execute(
@@ -94,7 +94,7 @@ async def test_caches_drive_folder_id_across_uploads():
         title="Contrato",
         period=None,
         filename="contrato.pdf",
-        content=b"contenido",
+        content=b"%PDF-1.4 contenido",
         mime_type="application/pdf",
     )
 
@@ -115,7 +115,7 @@ async def test_uploads_to_the_category_subfolder_not_to_the_employee_root():
         title="Nómina julio 2026",
         period="2026-07",
         filename="nomina-2026-07.pdf",
-        content=b"contenido",
+        content=b"%PDF-1.4 contenido",
         mime_type="application/pdf",
     )
 
@@ -138,7 +138,7 @@ async def test_different_categories_of_the_same_employee_use_different_subfolder
         title="Nómina julio 2026",
         period="2026-07",
         filename="nomina-2026-07.pdf",
-        content=b"contenido",
+        content=b"%PDF-1.4 contenido",
         mime_type="application/pdf",
     )
     await use_case.execute(
@@ -148,7 +148,7 @@ async def test_different_categories_of_the_same_employee_use_different_subfolder
         title="Contrato",
         period=None,
         filename="contrato.pdf",
-        content=b"contenido",
+        content=b"%PDF-1.4 contenido",
         mime_type="application/pdf",
     )
 
@@ -156,6 +156,30 @@ async def test_different_categories_of_the_same_employee_use_different_subfolder
         call["folder_id"] for call in storage.upload_calls
     )
     assert payslip_folder_id != contract_folder_id
+
+
+@pytest.mark.asyncio
+async def test_rejects_pdf_with_a_spoofed_content_type_header():
+    """LOGIC-1: `content_type` es un header multipart que controla el
+    cliente — declarar `application/pdf` no basta si el CONTENIDO real no es
+    un PDF (magic bytes `%PDF-`). Sin esta validación, se puede subir
+    cualquier basura y marcar el paso 3 de firma del onboarding como
+    completado."""
+    use_case, _, storage, _ = _use_case()
+
+    with pytest.raises(InvalidDocumentMimeTypeError):
+        await use_case.execute(
+            user_id="user-1",
+            uploaded_by="user-1",
+            category="signed",
+            title="Documentación laboral",
+            period=None,
+            filename="falso.pdf",
+            content=b"esto no es un PDF, solo texto plano",
+            mime_type="application/pdf",
+        )
+
+    assert storage.upload_calls == []
 
 
 @pytest.mark.asyncio
@@ -193,6 +217,28 @@ async def test_rejects_file_over_max_upload_size():
 
 
 @pytest.mark.asyncio
+async def test_accepts_signed_category():
+    """`signed` (sdd/docs-firmados-upload-drive): documento firmado subido
+    por el propio empleado en el paso 3 del onboarding — se indexa como un
+    documento más, misma validación que el resto de categorías."""
+    use_case, _, storage, _ = _use_case()
+
+    document = await use_case.execute(
+        user_id="user-1",
+        uploaded_by="user-1",
+        category="signed",
+        title="Documentación laboral",
+        period=None,
+        filename="firmado.pdf",
+        content=b"%PDF-1.4 contenido",
+        mime_type="application/pdf",
+    )
+
+    assert document.category == "signed"
+    assert len(storage.upload_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_rejects_invalid_category():
     use_case, *_ = _use_case()
 
@@ -221,7 +267,7 @@ async def test_rejects_unknown_user_id():
             title="Documento",
             period=None,
             filename="doc.pdf",
-            content=b"contenido",
+            content=b"%PDF-1.4 contenido",
             mime_type="application/pdf",
         )
 

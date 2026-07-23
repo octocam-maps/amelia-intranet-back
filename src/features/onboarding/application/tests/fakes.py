@@ -8,9 +8,9 @@ from typing import Any, Optional
 
 from src.features.onboarding.domain.entities import (
     DocumentAcknowledgement,
-    DocumentSignature,
     EmployeeOnboardingSnapshot,
     OnboardingDocument,
+    OnboardingDocumentUpload,
     OnboardingProgress,
     OnboardingStep,
     ProfileCompletionData,
@@ -35,7 +35,7 @@ class FakeOnboardingRepository:
         }
         self.progress: dict[tuple[str, str], OnboardingProgress] = {}
         self.quiz_attempts: dict[tuple[str, str], QuizAttempt] = {}
-        self.signatures: list[DocumentSignature] = []
+        self.document_uploads: list[OnboardingDocumentUpload] = []
         self.acknowledgements: list[DocumentAcknowledgement] = []
         # user_id -> {full_name, email, avatar_url, role} — solo lo que
         # necesita `list_employee_progress_snapshots` (panel de admin).
@@ -194,31 +194,18 @@ class FakeOnboardingRepository:
             return None
         return max(candidates, key=lambda d: d.version)
 
-    async def create_signature(
-        self,
-        *,
-        user_id: str,
-        document_id: str,
-        document_version: int,
-        document_hash: str,
-        signature_hash: str,
-        signed_at: datetime,
-        ip_address: str,
-        user_agent: Optional[str],
-    ) -> DocumentSignature:
-        signature = DocumentSignature(
+    async def create_document_upload(
+        self, *, user_id: str, onboarding_document_id: str, employee_document_id: str
+    ) -> OnboardingDocumentUpload:
+        upload = OnboardingDocumentUpload(
             id=str(uuid.uuid4()),
             user_id=user_id,
-            document_id=document_id,
-            document_version=document_version,
-            document_hash=document_hash,
-            signature_hash=signature_hash,
-            signed_at=signed_at,
-            ip_address=ip_address,
-            user_agent=user_agent,
+            onboarding_document_id=onboarding_document_id,
+            employee_document_id=employee_document_id,
+            uploaded_at=datetime.now(timezone.utc),
         )
-        self.signatures.append(signature)
-        return signature
+        self.document_uploads.append(upload)
+        return upload
 
     async def create_acknowledgement(
         self, *, user_id: str, document_id: str, ip_address: Optional[str]

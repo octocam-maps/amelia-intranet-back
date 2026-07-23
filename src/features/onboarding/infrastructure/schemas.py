@@ -53,12 +53,16 @@ class QuizResultDTO(BaseModel):
     submitted_at: datetime
 
 
-class SignatureDTO(BaseModel):
+class UploadSignedDocumentDTO(BaseModel):
+    """Resultado de `POST /steps/{step_id}/documents` (sdd/docs-firmados-
+    upload-drive) — reemplaza a `SignatureDTO`. Sin hash/IP: la trazabilidad
+    de "cuándo y quién" ya la guarda `employee_documents.uploaded_at`/
+    `uploaded_by`; aquí solo se expone el enlace con el paso de onboarding."""
+
     id: str
     step_id: str
-    document_id: str
-    document_version: int
-    signed_at: datetime
+    employee_document_id: str
+    uploaded_at: datetime
 
 
 class AcknowledgementDTO(BaseModel):

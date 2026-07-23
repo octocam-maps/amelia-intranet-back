@@ -31,6 +31,11 @@ from ..errors import (
 )
 
 _ALLOWED_MIME_TYPE = "application/pdf"
+# Magic bytes de un PDF real (firma `%PDF-` al comienzo del archivo). El
+# header `Content-Type` multipart lo controla el cliente y NO es de fiar
+# (LOGIC-1): se puede declarar `application/pdf` subiendo cualquier otro
+# contenido para marcar el paso 3 de firma del onboarding como completado.
+_PDF_MAGIC_BYTES = b"%PDF-"
 
 
 class UploadDocumentUseCase:
@@ -73,6 +78,13 @@ class UploadDocumentUseCase:
         if len(content) > self._max_upload_bytes:
             raise DocumentTooLargeError(
                 f"El archivo supera el límite de {self._max_upload_bytes // (1024 * 1024)} MB."
+            )
+        # El header es solo la primera barrera (barata); la que manda es el
+        # contenido REAL — un cliente puede declarar `application/pdf` y
+        # subir cualquier otra cosa.
+        if not content.startswith(_PDF_MAGIC_BYTES):
+            raise InvalidDocumentMimeTypeError(
+                "El contenido del archivo no es un PDF válido."
             )
 
         staff_member = await self._staff_repository.find_by_id(user_id)

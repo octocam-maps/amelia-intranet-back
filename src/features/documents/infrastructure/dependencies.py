@@ -10,6 +10,9 @@ from src.features.staff.infrastructure.repositories.staff_repository import (
 from src.shared.config import get_settings
 from src.shared.database import get_database_pool
 
+from ..application.use_cases.bulk_provision_drive_folders import (
+    BulkProvisionDriveFoldersUseCase,
+)
 from ..application.use_cases.delete_document import DeleteDocumentUseCase
 from ..application.use_cases.download_document import DownloadDocumentUseCase
 from ..application.use_cases.list_documents import ListDocumentsUseCase
@@ -54,3 +57,7 @@ def get_sync_documents_use_case() -> SyncDocumentsUseCase:
         settings.documents_max_upload_mb,
         get_notify_use_case(),
     )
+
+
+def get_bulk_provision_drive_folders_use_case() -> BulkProvisionDriveFoldersUseCase:
+    return BulkProvisionDriveFoldersUseCase(_get_repository(), get_document_storage())

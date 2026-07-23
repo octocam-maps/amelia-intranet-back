@@ -278,6 +278,55 @@ async def test_add_note_inserts_and_returns_the_note():
     assert note.author_full_name is None  # el INSERT no resuelve el JOIN
 
 
+# --- LOGIC-2 (pentest ético): el informe XLSX debe exponer `source` para
+# que RRHH distinga horas autodeclaradas (alta manual) de fichadas en vivo. ---
+
+
+def _export_row(**overrides) -> dict:
+    row = {
+        "user_id": "user-1",
+        "full_name": "Ana García",
+        "dni_nif": "12345678A",
+        "phone": "600111222",
+        "work_date": date(2026, 7, 9),
+        "clock_in": datetime(2026, 7, 9, 8, 0, tzinfo=timezone.utc),
+        "clock_out": datetime(2026, 7, 9, 12, 0, tzinfo=timezone.utc),
+        "source": "manual",
+    }
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.asyncio
+async def test_list_export_rows_for_all_selects_and_maps_source():
+    pool = AsyncMock()
+    pool.fetch.return_value = [_export_row(source="live")]
+    repository = PostgresTimeClockRepository(pool)
+
+    rows = await repository.list_export_rows_for_all(
+        date_from=date(2026, 7, 1), date_to=date(2026, 7, 31)
+    )
+
+    query = pool.fetch.call_args[0][0]
+    assert "e.source" in query
+    assert rows[0].source == "live"
+
+
+@pytest.mark.asyncio
+async def test_list_export_rows_for_user_selects_and_maps_source():
+    pool = AsyncMock()
+    pool.fetch.return_value = [_export_row(source="manual")]
+    repository = PostgresTimeClockRepository(pool)
+
+    rows = await repository.list_export_rows_for_user(
+        "user-1", date_from=date(2026, 7, 1), date_to=date(2026, 7, 31)
+    )
+
+    query = pool.fetch.call_args[0][0]
+    assert "e.source" in query
+    assert rows[0].source == "manual"
+
+
 @pytest.mark.asyncio
 async def test_list_notes_for_entry_joins_users_for_author_name():
     pool = AsyncMock()

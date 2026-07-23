@@ -193,21 +193,11 @@ CREATE TABLE IF NOT EXISTS onboarding_documents (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Firma digital trazable (paso 3): fecha/hora + IP + hash del documento firmado.
-CREATE TABLE IF NOT EXISTS document_signatures (
-    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    document_id       UUID NOT NULL REFERENCES onboarding_documents(id) ON DELETE RESTRICT,
-    document_version  INTEGER NOT NULL,
-    document_hash     VARCHAR(64) NOT NULL,
-    signature_hash    VARCHAR(128) NOT NULL,
-    signed_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    ip_address        INET NOT NULL,
-    user_agent        TEXT,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_signature_user_doc_version UNIQUE (user_id, document_id, document_version)
-);
-CREATE INDEX IF NOT EXISTS idx_document_signatures_user_id ON document_signatures(user_id);
+-- La firma nativa (`document_signatures`, fecha/hora + IP + hash) se
+-- eliminó en `030_drop_document_signatures.sql` (sdd/docs-firmados-upload-
+-- drive): el paso 3 ya no firma dentro de la plataforma, sube el PDF ya
+-- firmado — ver `employee_documents.category='signed'` y
+-- `onboarding_document_uploads` más abajo.
 
 CREATE TABLE IF NOT EXISTS document_acknowledgements (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -217,6 +207,7 @@ CREATE TABLE IF NOT EXISTS document_acknowledgements (
     ip_address      INET,
     CONSTRAINT uq_ack_user_doc UNIQUE (user_id, document_id)
 );
+
 
 -- ----------------------------------------------------------------------------
 -- RRHH core: control horario, ausencias, festivos (Fase 3 / Fase 6 R2)
@@ -230,7 +221,8 @@ CREATE TABLE IF NOT EXISTS time_clock_entries (
     work_date  DATE NOT NULL,
     clock_in   TIMESTAMPTZ NOT NULL,
     clock_out  TIMESTAMPTZ,                  -- NULL = jornada abierta
-    source     VARCHAR(20) NOT NULL DEFAULT 'web' CHECK (source IN ('web', 'mobile')),
+    source     VARCHAR(20) NOT NULL DEFAULT 'web'
+                   CHECK (source IN ('web', 'mobile', 'manual', 'live')), -- 'manual'/'live' [031]
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT time_clock_entries_no_overlap EXCLUDE USING gist (
@@ -337,8 +329,11 @@ CREATE TABLE IF NOT EXISTS holidays (
 CREATE TABLE IF NOT EXISTS employee_documents (
     id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,   -- dueño
+    -- 'signed' [028]: documento firmado FUERA de la plataforma que el
+    -- propio empleado sube en el paso 3 del onboarding (self-upload, ver
+    -- onboarding_document_uploads más abajo) — sustituye a la firma nativa.
     category      VARCHAR(20) NOT NULL
-                    CHECK (category IN ('payslip', 'contract', 'general', 'other')),
+                    CHECK (category IN ('payslip', 'contract', 'general', 'other', 'signed')),
     title         VARCHAR(200) NOT NULL,
     period        VARCHAR(7),                 -- 'YYYY-MM' para nóminas
     drive_file_id VARCHAR(120),
@@ -360,6 +355,23 @@ CREATE TABLE IF NOT EXISTS drive_sync_runs (
     files_synced INTEGER NOT NULL DEFAULT 0,
     error_detail TEXT
 );
+
+-- Enlace "este upload de employee_documents satisfizo el paso 3 de
+-- onboarding de ESTE usuario" [029] — sin él, `category='signed'` por sí
+-- sola no distingue esto de un `signed` suelto que un admin subiera vía
+-- `POST /documents` fuera del flujo de onboarding. Referencia tanto a
+-- `onboarding_documents` (arriba) como a `employee_documents` (esta
+-- sección) — por eso vive aquí y no junto al resto de tablas de Onboarding.
+CREATE TABLE IF NOT EXISTS onboarding_document_uploads (
+    id                     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id                UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    onboarding_document_id UUID NOT NULL REFERENCES onboarding_documents(id) ON DELETE RESTRICT,
+    employee_document_id   UUID NOT NULL REFERENCES employee_documents(id) ON DELETE RESTRICT,
+    uploaded_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_onboarding_document_upload_user_doc UNIQUE (user_id, onboarding_document_id)
+);
+CREATE INDEX IF NOT EXISTS idx_onboarding_document_uploads_user_id
+    ON onboarding_document_uploads(user_id);
 
 -- ----------------------------------------------------------------------------
 -- Comunicación: anuncios + buzón anónimo (Fase 5 / Fase 6)

@@ -16,6 +16,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 
 from src.shared.auth.dependencies import require_role
+from src.shared.auth.roles import ADMIN_ONLY, ALL_ROLES
 from src.shared.errors.base import ValidationError
 from src.shared.middleware import limiter
 
@@ -43,8 +44,6 @@ from .schemas import (
     UnreadCountDTO,
 )
 
-_ANY_AUTHENTICATED_ROLE = ("administrador", "empleado", "externo_invitado", "socio")
-
 
 def create_notifications_router() -> APIRouter:
     router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -53,7 +52,7 @@ def create_notifications_router() -> APIRouter:
     async def list_notifications(
         limit: int = Query(20, ge=1, le=100),
         before: Optional[datetime] = Query(None),
-        current_user: dict = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
+        current_user: dict = Depends(require_role(*ALL_ROLES)),
         use_case: ListNotificationsUseCase = Depends(get_list_notifications_use_case),
     ):
         page = await use_case.execute(user_id=current_user["sub"], limit=limit, before=before)
@@ -61,7 +60,7 @@ def create_notifications_router() -> APIRouter:
 
     @router.get("/unread-count", response_model=UnreadCountDTO)
     async def get_unread_count(
-        current_user: dict = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
+        current_user: dict = Depends(require_role(*ALL_ROLES)),
         use_case: GetUnreadCountUseCase = Depends(get_unread_count_use_case),
     ):
         count = await use_case.execute(user_id=current_user["sub"])
@@ -69,7 +68,7 @@ def create_notifications_router() -> APIRouter:
 
     @router.patch("/read-all", response_model=MarkAllReadResponseDTO)
     async def mark_all_read(
-        current_user: dict = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
+        current_user: dict = Depends(require_role(*ALL_ROLES)),
         use_case: MarkAllNotificationsReadUseCase = Depends(
             get_mark_all_notifications_read_use_case
         ),
@@ -80,7 +79,7 @@ def create_notifications_router() -> APIRouter:
     @router.patch("/{notification_id}/read", status_code=204)
     async def mark_read(
         notification_id: str,
-        current_user: dict = Depends(require_role(*_ANY_AUTHENTICATED_ROLE)),
+        current_user: dict = Depends(require_role(*ALL_ROLES)),
         use_case: MarkNotificationReadUseCase = Depends(get_mark_notification_read_use_case),
     ):
         """404 si la notificación no existe O es de otro usuario — el
@@ -93,7 +92,7 @@ def create_notifications_router() -> APIRouter:
     async def run_job(
         request: Request,
         job: str = Query(..., pattern="^(daily|clock_out)$"),
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         daily_use_case: RunDailyNotificationJobUseCase = Depends(
             get_run_daily_notification_job_use_case
         ),

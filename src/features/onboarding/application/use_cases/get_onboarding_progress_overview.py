@@ -8,11 +8,11 @@ se resuelve cuántos pasos le tocan a CADA usuario según su rol (el
 externo-invitado hace onboarding parcial, ver `steps_applicable_to_role`).
 """
 
+from src.shared.auth.roles import ALL_ROLES
+
 from ...domain.entities import EmployeeOnboardingSummary
 from ...domain.policy import steps_applicable_to_role, summarize_employee_onboarding
 from ...domain.ports import IOnboardingRepository
-
-_ROLES = ("administrador", "empleado", "externo_invitado", "socio")
 
 
 class GetOnboardingProgressOverviewUseCase:
@@ -22,7 +22,7 @@ class GetOnboardingProgressOverviewUseCase:
     async def execute(self) -> list[EmployeeOnboardingSummary]:
         catalog = await self._repository.list_active_steps()
         total_steps_by_role = {
-            role: len(steps_applicable_to_role(catalog, role)) for role in _ROLES
+            role.value: len(steps_applicable_to_role(catalog, role)) for role in ALL_ROLES
         }
 
         snapshots = await self._repository.list_employee_progress_snapshots()

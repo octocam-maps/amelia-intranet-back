@@ -8,6 +8,8 @@ Caso de uso: listar solicitudes de ausencia. RBAC (docs/permisos-roles.md § Aus
 
 from typing import Literal, Optional
 
+from src.shared.auth.roles import RoleCode
+
 from ...domain.entities import AbsenceRequest
 from ...domain.errors import AbsenceForbiddenError
 from ...domain.ports import IAbsenceRepository
@@ -27,7 +29,7 @@ class ListAbsenceRequestsUseCase:
         mode: Mode = "own",
         target_user_id: Optional[str] = None,
     ) -> list[AbsenceRequest]:
-        is_admin = requester_role == "administrador"
+        is_admin = requester_role == RoleCode.ADMINISTRADOR
 
         if mode in ("pending", "all") and not is_admin:
             raise AbsenceForbiddenError("Solo el administrador puede ver esta bandeja.")

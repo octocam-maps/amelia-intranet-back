@@ -1,15 +1,19 @@
 """Caso de uso: listado de anuncios, condicionado por rol
 (docs/permisos-roles.md § "Anuncios"):
 - Admin: ve TODOS los anuncios (publicados o no) — es la vista de gestión.
-- Empleado: ve solo el feed que le aplica (publicados + audiencia propia) —
-  es la tarjeta del dashboard, de ahí el `limit` opcional.
+- Cualquier otro rol (empleado/socio/externo_invitado): ve solo el feed que
+  le aplica (publicados + audiencia propia) — es la tarjeta del dashboard
+  (o del "Inicio" recortado del externo), de ahí el `limit` opcional.
 
-El externo-invitado no tiene "Inicio" ni "Anuncios" en la matriz de permisos
-(❌) — la ruta que llama a este caso de uso ya lo bloquea con `require_role`
-antes de llegar aquí.
+El rol en sí NO se valida aquí — la ruta que llama a este caso de uso ya
+decide con `require_role` quién puede llegar hasta aquí; este caso de uso
+solo distingue "es admin" de "no lo es" para elegir feed completo vs. feed
+filtrado por audiencia.
 """
 
 from typing import Optional
+
+from src.shared.auth.roles import RoleCode
 
 from ...domain.entities import Announcement
 from ...domain.ports import IAnnouncementRepository
@@ -26,7 +30,7 @@ class ListAnnouncementsUseCase:
         requester_entity_id: Optional[str],
         limit: Optional[int] = None,
     ) -> list[Announcement]:
-        if requester_role == "administrador":
+        if requester_role == RoleCode.ADMINISTRADOR:
             return await self._repository.list_all()
 
         return await self._repository.list_feed(

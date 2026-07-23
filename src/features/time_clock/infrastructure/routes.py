@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from src.shared.auth.dependencies import require_role
+from src.shared.auth.roles import ADMIN_ONLY, INTERNAL_ROLES, RoleCode
 from src.shared.utils.timezone import today_in_madrid
 
 from ..application.use_cases.add_time_clock_entry_note import AddTimeClockEntryNoteUseCase
@@ -89,7 +90,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: CreateTimeClockEntryUseCase = Depends(get_create_time_clock_entry_use_case),
     ):
         """Registra un tramo — siempre para el propio usuario autenticado."""
@@ -118,7 +119,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ListTimeClockEntriesUseCase = Depends(get_list_time_clock_entries_use_case),
     ):
         """Historial de tramos, paginado (`limit`/`offset`). Sin `user_id`/
@@ -147,7 +148,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ListTimeClockEntriesUseCase = Depends(get_list_time_clock_entries_use_case),
     ):
         """Exportación básica en CSV del mismo listado de `GET /time-clock/entries`
@@ -190,7 +191,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ExportTimeClockEntriesUseCase = Depends(get_export_time_clock_entries_use_case),
     ):
         """Informe XLSX con logo de marca de los fichajes, últimos 30 días —
@@ -205,7 +206,7 @@ def create_time_clock_router() -> APIRouter:
 
         El externo-invitado sigue rechazado por `require_role` (no tiene
         "Control horario" en la matriz de permisos)."""
-        is_admin = current_user["role"] == "administrador"
+        is_admin = current_user["role"] == RoleCode.ADMINISTRADOR
         scoped_user_id = None if is_admin else current_user["sub"]
         title = XLSX_TITLE_ADMIN if is_admin else XLSX_TITLE_EMPLOYEE
 
@@ -231,7 +232,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: UpdateTimeClockEntryUseCase = Depends(get_update_time_clock_entry_use_case),
     ):
         entry = await use_case.execute(
@@ -249,7 +250,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: DeleteTimeClockEntryUseCase = Depends(get_delete_time_clock_entry_use_case),
     ):
         await use_case.execute(
@@ -266,7 +267,7 @@ def create_time_clock_router() -> APIRouter:
     async def add_entry_note(
         entry_id: str,
         dto: AddTimeClockEntryNoteDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: AddTimeClockEntryNoteUseCase = Depends(get_add_time_clock_entry_note_use_case),
     ):
         """Solo el admin puede dejar incidencias sobre un tramo — no es una
@@ -283,7 +284,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ListTimeClockEntryNotesUseCase = Depends(get_list_time_clock_entry_notes_use_case),
     ):
         """El dueño del tramo puede leer sus propias incidencias; el admin,
@@ -313,7 +314,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
     ):
         return await _current_status(current_user["sub"], use_case)
@@ -323,7 +324,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ClockInUseCase = Depends(get_clock_in_use_case),
         status_use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
     ):
@@ -335,7 +336,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ClockOutUseCase = Depends(get_clock_out_use_case),
         status_use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
     ):
@@ -347,7 +348,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: StartBreakUseCase = Depends(get_start_break_use_case),
         status_use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
     ):
@@ -359,7 +360,7 @@ def create_time_clock_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado -> ficha su propio
         # horario como cualquier trabajador; solo `/entries/{id}/notes` (POST)
         # sigue exclusivo del admin (incidencia de RRHH, no del titular).
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: EndBreakUseCase = Depends(get_end_break_use_case),
         status_use_case: GetLiveStatusUseCase = Depends(get_live_status_use_case),
     ):

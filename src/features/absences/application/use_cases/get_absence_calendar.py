@@ -14,15 +14,16 @@ exports PDF/XLSX (mismo rango, mismos datos).
 
 from datetime import date
 
+from src.shared.auth.roles import ADMIN_SOCIO
+
 from ...domain.entities import AbsenceCalendarEntry
 from ...domain.errors import AbsenceForbiddenError
 from ...domain.ports import IAbsenceRepository
 
-# Mismo rol permitido que `require_role("administrador", "socio")` en
+# Mismo rol permitido que `require_role(*ADMIN_SOCIO)` en
 # `infrastructure/routes.py` — este chequeo es defensa en profundidad
 # (el use case no debe confiar solo en el router), así que ambos deben
 # mantenerse en sincronía si el permiso cambia.
-_ALLOWED_ROLES = ("administrador", "socio")
 
 
 class GetAbsenceCalendarUseCase:
@@ -32,7 +33,7 @@ class GetAbsenceCalendarUseCase:
     async def execute(
         self, *, requester_role: str, date_from: date, date_to: date
     ) -> list[AbsenceCalendarEntry]:
-        if requester_role not in _ALLOWED_ROLES:
+        if requester_role not in ADMIN_SOCIO:
             raise AbsenceForbiddenError(
                 "Solo el administrador o un socio pueden consultar el calendario "
                 "general de la plantilla."

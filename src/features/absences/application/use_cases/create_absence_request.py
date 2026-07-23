@@ -29,6 +29,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from src.features.notifications.application.use_cases.notify import NotifyUseCase
+from src.shared.auth.roles import RoleCode
 
 from ...domain.entities import AbsenceRequest
 from ...domain.errors import (
@@ -91,7 +92,7 @@ class CreateAbsenceRequestUseCase:
         # reservar `pending_days`, para no contabilizar el mismo día dos
         # veces (reservado Y usado) cuando nunca hay una revisión manual que
         # traslade uno al otro.
-        is_self_approved = requester_role == "administrador"
+        is_self_approved = requester_role == RoleCode.ADMINISTRADOR
 
         year = start_date.year
         if absence_type.affects_balance:

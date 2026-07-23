@@ -11,6 +11,7 @@ que llama a este caso de uso ya lo bloquea con `require_role` antes de
 llegar aquí.
 """
 
+from src.shared.auth.roles import RoleCode
 from src.shared.utils.timezone import today_in_madrid
 
 from ...domain.entities import AdminDashboardSummary, EmployeeDashboardSummary
@@ -33,7 +34,7 @@ class GetDashboardSummaryUseCase:
         clock_status = await self._repository.get_today_clock_status(user_id, today)
         holidays = await self._repository.list_upcoming_holidays(today, _UPCOMING_HOLIDAYS_LIMIT)
 
-        if role != "administrador":
+        if role != RoleCode.ADMINISTRADOR:
             return EmployeeDashboardSummary(
                 vacation_balance=vacation_balance,
                 today_clock_status=clock_status,

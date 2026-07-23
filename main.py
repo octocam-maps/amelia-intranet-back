@@ -150,11 +150,10 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def read_root():
-        return {
-            "service": "amelia-intranet-back",
-            "version": "0.1.0",
-            "environment": settings.environment,
-        }
+        # INFO-1: público sin autenticar — no exponer `environment`/`version`,
+        # ayudarían a fingerprintear prod/stage. Detalle real en /health,
+        # que sigue siendo público pero no filtra nada sensible tampoco.
+        return {"status": "ok"}
 
     @app.get("/health", include_in_schema=False)
     def health_check():

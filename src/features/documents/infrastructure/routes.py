@@ -11,8 +11,12 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from src.shared.auth.dependencies import require_role
+from src.shared.auth.roles import ADMIN_ONLY, INTERNAL_ROLES
 
 from ..application.errors import DocumentNotFoundError
+from ..application.use_cases.bulk_provision_drive_folders import (
+    BulkProvisionDriveFoldersUseCase,
+)
 from ..application.use_cases.delete_document import DeleteDocumentUseCase
 from ..application.use_cases.download_document import DownloadDocumentUseCase
 from ..application.use_cases.list_documents import ListDocumentsUseCase
@@ -20,14 +24,25 @@ from ..application.use_cases.sync_documents import SyncDocumentsUseCase
 from ..application.use_cases.upload_document import UploadDocumentUseCase
 from ..domain.ports import DriveFileNotFoundError
 from .dependencies import (
+    get_bulk_provision_drive_folders_use_case,
     get_delete_document_use_case,
     get_download_document_use_case,
     get_list_documents_use_case,
     get_sync_documents_use_case,
     get_upload_document_use_case,
 )
-from .mappers import document_to_dto, documents_to_dto, sync_run_to_dto
-from .schemas import DocumentDTO, DocumentListDTO, SyncRunDTO
+from .mappers import (
+    bulk_folder_provision_result_to_dto,
+    document_to_dto,
+    documents_to_dto,
+    sync_run_to_dto,
+)
+from .schemas import (
+    DocumentDTO,
+    DocumentListDTO,
+    DriveFolderProvisionRunDTO,
+    SyncRunDTO,
+)
 
 
 def create_documents_router() -> APIRouter:
@@ -46,7 +61,7 @@ def create_documents_router() -> APIRouter:
         # `socio` [migración 024] = igual que empleado en todo lo relativo a
         # sus propios documentos — el alcance RGPD (solo lo suyo) se resuelve
         # en `ListDocumentsUseCase`, nunca aquí.
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ListDocumentsUseCase = Depends(get_list_documents_use_case),
     ):
         documents = await use_case.execute(
@@ -64,7 +79,7 @@ def create_documents_router() -> APIRouter:
         title: str = Form(...),
         period: Optional[str] = Form(None),
         file: UploadFile = File(...),
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: UploadDocumentUseCase = Depends(get_upload_document_use_case),
     ):
         """Exclusivo del admin — sube el binario a Drive (subcarpeta del
@@ -86,7 +101,7 @@ def create_documents_router() -> APIRouter:
     @router.get("/{document_id}/download")
     async def download_document(
         document_id: str,
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: DownloadDocumentUseCase = Depends(get_download_document_use_case),
     ):
         """Descarga server-side: el binario pasa por el backend, NUNCA se
@@ -126,7 +141,7 @@ def create_documents_router() -> APIRouter:
     @router.delete("/{document_id}", status_code=204)
     async def delete_document(
         document_id: str,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: DeleteDocumentUseCase = Depends(get_delete_document_use_case),
     ):
         """Soft-delete SOLO en Postgres — nunca borra el archivo real en
@@ -135,7 +150,7 @@ def create_documents_router() -> APIRouter:
 
     @router.post("/sync", response_model=SyncRunDTO)
     async def sync_documents(
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: SyncDocumentsUseCase = Depends(get_sync_documents_use_case),
     ):
         """Conciliación Drive -> Postgres (WU-D): RRHH coloca archivos a
@@ -145,5 +160,20 @@ def create_documents_router() -> APIRouter:
         síncrono, sin job programado (decisión de diseño, v1)."""
         sync_run = await use_case.execute()
         return sync_run_to_dto(sync_run)
+
+    @router.post("/provision-folders", response_model=DriveFolderProvisionRunDTO)
+    async def provision_folders(
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
+        use_case: BulkProvisionDriveFoldersUseCase = Depends(
+            get_bulk_provision_drive_folders_use_case
+        ),
+    ):
+        """Backfill de carpetas de Drive (decisión de producto "hook en alta
+        + batch de backfill"): provisiona la carpeta PADRE de cada empleado
+        activo que todavía no la tenga cacheada — retry seguro, idempotente
+        y best-effort por empleado (`BulkProvisionDriveFoldersUseCase`).
+        Exclusivo del admin, mismo criterio que `POST /documents/sync`."""
+        result = await use_case.execute()
+        return bulk_folder_provision_result_to_dto(result)
 
     return router

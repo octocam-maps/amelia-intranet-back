@@ -6,7 +6,7 @@ Mismo patrón de mock de pool que
 `features/time_clock/infrastructure/tests/test_time_clock_repository.py`.
 """
 
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock
 
 import asyncpg
@@ -224,6 +224,43 @@ async def test_reset_quiz_attempt_returns_none_when_progress_was_never_initializ
     progress = await repository.reset_quiz_attempt("user-without-progress", "step-quiz")
 
     assert progress is None
+
+
+@pytest.mark.asyncio
+async def test_create_document_upload_inserts_the_link_row():
+    """Enlace `onboarding_document_uploads` (sdd/docs-firmados-upload-drive,
+    D3) — distingue "este upload satisfizo el paso 3 de ESTE usuario" de
+    "un admin subió un `category=signed` suelto" vía `POST /documents`."""
+    pool = AsyncMock()
+    pool.fetchrow.return_value = {
+        "id": "upload-1",
+        "user_id": "user-1",
+        "onboarding_document_id": "doc-signature",
+        "employee_document_id": "employee-doc-1",
+        "uploaded_at": datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc),
+    }
+    repository = PostgresOnboardingRepository(pool)
+
+    upload = await repository.create_document_upload(
+        user_id="user-1",
+        onboarding_document_id="doc-signature",
+        employee_document_id="employee-doc-1",
+    )
+
+    assert upload.id == "upload-1"
+    assert upload.user_id == "user-1"
+    assert upload.onboarding_document_id == "doc-signature"
+    assert upload.employee_document_id == "employee-doc-1"
+
+    query, user_id, onboarding_document_id, employee_document_id = (
+        pool.fetchrow.await_args.args
+    )
+    assert "INSERT INTO onboarding_document_uploads" in query
+    assert (user_id, onboarding_document_id, employee_document_id) == (
+        "user-1",
+        "doc-signature",
+        "employee-doc-1",
+    )
 
 
 @pytest.mark.asyncio

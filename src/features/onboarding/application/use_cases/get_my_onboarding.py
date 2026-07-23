@@ -5,13 +5,16 @@ filas de progreso (primera visita), las inicializa: el primer paso (por
 `step_order`) nace `available`, el resto `locked`.
 
 Esta primera visita es también el "arranque del flujo del trabajador" (RF
-§6): si el catálogo aplicable a su rol incluye el paso de firma
-(`type='signature'`), se dispara `document_pending_signature` — el
-documento del paso 3 ya queda registrado como pendiente de firma desde el
-minuto uno, aunque el paso todavía esté `locked` (se desbloquea más
-adelante, tras vídeo+cuestionario). El externo-invitado (onboarding parcial,
-sin firma — `docs/permisos-roles.md`) nunca lo dispara: su catálogo
-aplicable no tiene ningún paso `signature`.
+§6): si el catálogo aplicable a su rol incluye el paso de documento firmado
+(`type='signature'` — el discriminador de tipo no cambió,
+sdd/docs-firmados-upload-drive D6, aunque la acción ya no es firmar dentro
+de la plataforma sino subir el PDF ya firmado), se dispara
+`document_pending_signature` — el documento del paso 3 ya queda registrado
+como pendiente de subir desde el minuto uno, aunque el paso todavía esté
+`locked` (se desbloquea más adelante, tras vídeo+cuestionario). El
+externo-invitado (onboarding parcial, sin este paso —
+`docs/permisos-roles.md`) nunca lo dispara: su catálogo aplicable no tiene
+ningún paso `signature`.
 """
 
 from typing import Optional
@@ -69,7 +72,9 @@ class GetMyOnboardingUseCase:
         # Cierre de la carrera de dos "primeras visitas" casi simultáneas
         # (dos pestañas abiertas en el primer login) — mismo criterio de
         # idempotencia que los jobs por-tiempo de `features/notifications`,
-        # expuesto aquí vía `NotifyUseCase.already_notified_recipient`.
+        # expuesto aquí vía `NotifyUseCase.already_notified_recipient`. El
+        # `type` del catálogo cerrado de 12 notificaciones (RF §6) no
+        # cambia — solo el copy, ver sdd/docs-firmados-upload-drive.
         already_notified = await self._notify.already_notified_recipient(
             user_id=user_id,
             type="document_pending_signature",
@@ -82,10 +87,10 @@ class GetMyOnboardingUseCase:
         await self._notify.execute(
             recipient_ids=[user_id],
             type="document_pending_signature",
-            title="Tienes un documento pendiente de firma",
+            title="Tienes un documento pendiente de subir",
             body=(
-                f'Como parte de tu onboarding, tendrás que firmar '
-                f'"{signature_step.title}" en el paso 3.'
+                f'Como parte de tu onboarding, tendrás que subir tu '
+                f'documento firmado "{signature_step.title}" en el paso 3.'
             ),
             data={"step_id": signature_step.id, "url": "/onboarding"},
         )

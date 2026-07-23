@@ -1,22 +1,22 @@
 """
 Adaptador asyncpg del puerto `IOnboardingRepository`. SQL crudo — sin ORM.
 Único lugar del feature que conoce el esquema de `onboarding_steps`,
-`onboarding_progress`, `onboarding_quiz_attempts`, `onboarding_documents`,
-`document_signatures` y `document_acknowledgements` (`002_onboarding.sql`).
+`onboarding_progress`, `onboarding_quiz_attempts`, `onboarding_documents` y
+`document_acknowledgements` (`002_onboarding.sql`).
 """
 
-from datetime import datetime
 from typing import Any, Optional
 
 import asyncpg
 
+from src.shared.auth.roles import ALL_ROLES
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
 from ...domain.entities import (
     DocumentAcknowledgement,
-    DocumentSignature,
     EmployeeOnboardingSnapshot,
     OnboardingDocument,
+    OnboardingDocumentUpload,
     OnboardingProgress,
     OnboardingStep,
     ProfileCompletionData,
@@ -75,17 +75,13 @@ def _row_to_document(row) -> OnboardingDocument:
     )
 
 
-def _row_to_signature(row) -> DocumentSignature:
-    return DocumentSignature(
+def _row_to_document_upload(row) -> OnboardingDocumentUpload:
+    return OnboardingDocumentUpload(
         id=str(row["id"]),
         user_id=str(row["user_id"]),
-        document_id=str(row["document_id"]),
-        document_version=row["document_version"],
-        document_hash=row["document_hash"],
-        signature_hash=row["signature_hash"],
-        signed_at=row["signed_at"],
-        ip_address=str(row["ip_address"]),
-        user_agent=row["user_agent"],
+        onboarding_document_id=str(row["onboarding_document_id"]),
+        employee_document_id=str(row["employee_document_id"]),
+        uploaded_at=row["uploaded_at"],
     )
 
 
@@ -314,36 +310,21 @@ class PostgresOnboardingRepository(IOnboardingRepository):
         )
         return _row_to_document(row) if row else None
 
-    async def create_signature(
-        self,
-        *,
-        user_id: str,
-        document_id: str,
-        document_version: int,
-        document_hash: str,
-        signature_hash: str,
-        signed_at: datetime,
-        ip_address: str,
-        user_agent: Optional[str],
-    ) -> DocumentSignature:
+    async def create_document_upload(
+        self, *, user_id: str, onboarding_document_id: str, employee_document_id: str
+    ) -> OnboardingDocumentUpload:
         row = await self._db.fetchrow(
             """
-            INSERT INTO document_signatures
-                (user_id, document_id, document_version, document_hash, signature_hash,
-                 signed_at, ip_address, user_agent)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO onboarding_document_uploads
+                (user_id, onboarding_document_id, employee_document_id)
+            VALUES ($1, $2, $3)
             RETURNING *
             """,
             user_id,
-            document_id,
-            document_version,
-            document_hash,
-            signature_hash,
-            signed_at,
-            ip_address,
-            user_agent,
+            onboarding_document_id,
+            employee_document_id,
         )
-        return _row_to_signature(row)
+        return _row_to_document_upload(row)
 
     async def create_acknowledgement(
         self, *, user_id: str, document_id: str, ip_address: Optional[str]
@@ -383,9 +364,10 @@ class PostgresOnboardingRepository(IOnboardingRepository):
             LEFT JOIN onboarding_progress op ON op.user_id = u.id
             LEFT JOIN onboarding_steps os ON os.id = op.step_id
             WHERE u.deleted_at IS NULL
-              AND r.code IN ('administrador', 'empleado', 'externo_invitado', 'socio')
+              AND r.code = ANY($1::text[])
             ORDER BY u.full_name, os.step_order
-            """
+            """,
+            [role.value for role in ALL_ROLES],
         )
 
         snapshots_by_user: dict[str, EmployeeOnboardingSnapshot] = {}

@@ -8,19 +8,34 @@ manualmente). Reglas de negocio:
 - No puede solaparse con otro tramo ya registrado ese día para el mismo
   usuario — el backend es la única fuente de verdad, aunque la UI también lo
   valide antes de enviar la petición.
+- LOGIC-2 (pentest ético, severidad ALTA): `work_date` no puede ser futura ni
+  más antigua que `manual_entry_max_past_days` — RRHH decidió conservar el
+  alta manual ("me olvidé de fichar") en vez de restringirla a admin, así que
+  se blinda con una ventana temporal en vez de eliminarla. Además, el `source`
+  persistido es SIEMPRE `TimeClockSource.MANUAL`, nunca lo que pida el
+  llamador — distingue este alta del fichaje en vivo (`ClockInUseCase`,
+  `source="live"`) para que RRHH pueda auditar horas autodeclaradas frente a
+  fichadas en tiempo real (antes ambos escribían el mismo `"web"` histórico).
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
-from ...domain.entities import TimeClockEntry
-from ...domain.errors import InvalidTimeRangeError, TimeClockOverlapError
+from src.shared.utils.timezone import today_in_madrid
+
+from ...domain.entities import TimeClockEntry, TimeClockSource
+from ...domain.errors import (
+    InvalidTimeRangeError,
+    ManualEntryOutOfWindowError,
+    TimeClockOverlapError,
+)
 from ...domain.ports import ITimeClockRepository
 
 
 class CreateTimeClockEntryUseCase:
-    def __init__(self, repository: ITimeClockRepository):
+    def __init__(self, repository: ITimeClockRepository, manual_entry_max_past_days: int):
         self._repository = repository
+        self._manual_entry_max_past_days = manual_entry_max_past_days
 
     async def execute(
         self,
@@ -29,9 +44,9 @@ class CreateTimeClockEntryUseCase:
         work_date: date,
         clock_in: datetime,
         clock_out: Optional[datetime],
-        source: str = "web",
     ) -> TimeClockEntry:
         _validate_range(work_date, clock_in, clock_out)
+        self._validate_window(work_date)
 
         overlapping = await self._repository.find_overlapping_entry(
             user_id, work_date, clock_in, clock_out
@@ -46,8 +61,21 @@ class CreateTimeClockEntryUseCase:
             work_date=work_date,
             clock_in=clock_in,
             clock_out=clock_out,
-            source=source,
+            source=TimeClockSource.MANUAL,
         )
+
+    def _validate_window(self, work_date: date) -> None:
+        today = today_in_madrid()
+        if work_date > today:
+            raise ManualEntryOutOfWindowError(
+                "No puedes registrar un tramo con fecha futura."
+            )
+        oldest_allowed = today - timedelta(days=self._manual_entry_max_past_days)
+        if work_date < oldest_allowed:
+            raise ManualEntryOutOfWindowError(
+                "No puedes registrar un tramo de hace más de "
+                f"{self._manual_entry_max_past_days} días."
+            )
 
 
 def _validate_range(work_date: date, clock_in: datetime, clock_out: Optional[datetime]) -> None:

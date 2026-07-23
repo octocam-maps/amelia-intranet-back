@@ -36,6 +36,22 @@ async def test_clock_in_opens_a_new_entry():
 
 
 @pytest.mark.asyncio
+async def test_clock_in_persists_source_live():
+    """LOGIC-2 (pentest ético): el fichaje en vivo debe distinguirse del alta
+    manual en `source` — antes ambos escribían "web" y RRHH no podía saber
+    qué horas eran autodeclaradas."""
+    from src.features.time_clock.domain.entities import TimeClockSource
+
+    repository = FakeTimeClockRepository()
+    use_case = ClockInUseCase(repository)
+
+    entry = await use_case.execute(user_id="user-1")
+
+    assert entry.source == TimeClockSource.LIVE
+    assert repository.entries[entry.id].source == "live"
+
+
+@pytest.mark.asyncio
 async def test_clock_in_rejects_if_already_clocked_in():
     open_entry = TimeClockEntry(
         id="entry-1",

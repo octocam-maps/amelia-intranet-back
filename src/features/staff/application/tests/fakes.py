@@ -209,6 +209,36 @@ class FakeStaffRepository:
         return updated
 
 
+class FakeSessionRevoker:
+    """Doble en memoria de `ISessionRevoker` (defensa en profundidad de
+    AUTHN-2) — registra las llamadas para poder aseverar que suspender
+    revoca sesiones y que cualquier otra edición NO lo hace."""
+
+    def __init__(self):
+        self.revoked_user_ids: list[str] = []
+
+    async def revoke_all_sessions_for_user(self, user_id: str) -> int:
+        self.revoked_user_ids.append(user_id)
+        return 1
+
+
+class FakeDriveFolderProvisioner:
+    """Doble en memoria de `IDriveFolderProvisioner` (puerto de
+    `staff.domain.ports`, mismo patrón que `ISessionRevoker`/`FakeSessionRevoker`)
+    — registra las llamadas para poder aseverar que el alta dispara el
+    provisioning y que un fallo del proveedor de Drive NO revierte el alta
+    (best-effort, mismo criterio que `FakeEmailSender.fail_for`)."""
+
+    def __init__(self, *, fail_for: Optional[set[str]] = None):
+        self.calls: list[tuple[str, str]] = []
+        self._fail_for = fail_for or set()
+
+    async def provision_folder(self, user_id: str, email: str) -> None:
+        self.calls.append((user_id, email))
+        if email in self._fail_for:
+            raise RuntimeError(f"Simulated Drive failure for {email}")
+
+
 class FakeEmailSender:
     """Mismo patrón que `features/notifications/application/tests/fakes.py`
     — `fail_for` simula un proveedor caído para probar que el alta es

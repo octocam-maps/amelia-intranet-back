@@ -4,7 +4,7 @@ que `auth.application.results`."""
 
 from dataclasses import dataclass
 
-from ..domain.models import Document
+from ..domain.models import Document, SyncRun
 
 
 @dataclass(frozen=True)
@@ -15,3 +15,18 @@ class DocumentDownload:
 
     document: Document
     content: bytes
+
+
+@dataclass(frozen=True)
+class BulkFolderProvisionResult:
+    """Resumen de `BulkProvisionDriveFoldersUseCase` (batch de backfill,
+    `POST /documents/provision-folders`): reusa la misma fila de
+    `drive_sync_runs` que `SyncDocumentsUseCase` (auditoría), pero con
+    conteos propios de "carpeta creada/omitida/fallida" — `SyncRun` en sí no
+    modela ese desglose (`files_synced`/`error_detail` solo), así que este
+    resultado los expone estructurados para la respuesta del endpoint."""
+
+    sync_run: SyncRun
+    created: int
+    skipped: int
+    failed: int

@@ -5,6 +5,7 @@ el año en curso, por cada tipo de ausencia configurado.
 
 from typing import Optional
 
+from src.shared.auth.roles import RoleCode
 from src.shared.utils.timezone import today_in_madrid
 
 from ...domain.entities import AbsenceBalance
@@ -26,7 +27,7 @@ class GetAbsenceBalanceUseCase:
     ) -> list[AbsenceBalance]:
         effective_user_id = requester_id
         if target_user_id is not None and target_user_id != requester_id:
-            if requester_role != "administrador":
+            if requester_role != RoleCode.ADMINISTRADOR:
                 raise AbsenceForbiddenError("No puedes ver el saldo de otro usuario.")
             effective_user_id = target_user_id
 

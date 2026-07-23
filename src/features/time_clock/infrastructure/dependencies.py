@@ -1,5 +1,6 @@
 """Wiring de FastAPI: construye los casos de uso con sus adaptadores concretos."""
 
+from src.shared.config import get_settings
 from src.shared.database import get_database_pool
 
 from ..application.use_cases.add_time_clock_entry_note import AddTimeClockEntryNoteUseCase
@@ -22,7 +23,10 @@ def _get_repository() -> PostgresTimeClockRepository:
 
 
 def get_create_time_clock_entry_use_case() -> CreateTimeClockEntryUseCase:
-    return CreateTimeClockEntryUseCase(_get_repository())
+    settings = get_settings()
+    return CreateTimeClockEntryUseCase(
+        _get_repository(), settings.time_clock_manual_entry_max_past_days
+    )
 
 
 def get_list_time_clock_entries_use_case() -> ListTimeClockEntriesUseCase:

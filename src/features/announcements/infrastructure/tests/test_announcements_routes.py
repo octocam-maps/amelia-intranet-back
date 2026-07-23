@@ -1,9 +1,10 @@
 """
-Test route-level: "Anuncios" solo aparece en la sección "Administración" del
-admin y en el dashboard del empleado (docs/permisos-roles.md) — el
-externo-invitado NO tiene "Inicio" en su navbar (❌) y debe rechazarse en el
-BACKEND. Solo el admin puede crear/editar/borrar. Mismo patrón que
-`features/mailbox/infrastructure/tests/test_mailbox_routes.py`.
+Test route-level: "Anuncios" aparece en la sección "Administración" del
+admin, en el dashboard del empleado/socio y, tras la ampliación de alcance
+del externo-invitado (docs/permisos-roles.md § "Ampliación del rol Externo:
+anuncios + cumpleaños"), en su "Inicio" recortado en la WEB (solo lectura).
+Solo el admin puede crear/editar/borrar — el externo sigue rechazado ahí.
+Mismo patrón que `features/mailbox/infrastructure/tests/test_mailbox_routes.py`.
 """
 
 import os
@@ -31,17 +32,38 @@ def _token_for(role: str) -> str:
     )
 
 
-def test_externo_invitado_cannot_list_announcements():
+def test_externo_invitado_can_list_the_feed_but_not_manage_it():
+    """Ampliación de alcance del externo (docs/permisos-roles.md § "Ampliación
+    del rol Externo: anuncios + cumpleaños") -> lee el mismo feed que
+    empleado/socio (tarjeta de Anuncios de su "Inicio" recortado), sigue sin
+    poder crear/editar/borrar."""
+
+    class FakeListUseCase:
+        async def execute(self, *, requester_role, requester_entity_id, limit=None):
+            return []
+
+    app.dependency_overrides[announcements_dependencies.get_list_announcements_use_case] = (
+        lambda: FakeListUseCase()
+    )
     try:
         with TestClient(app) as client:
-            response = client.get(
-                "/announcements",
-                headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
+            headers = {"Authorization": f"Bearer {_token_for('externo_invitado')}"}
+            list_response = client.get("/announcements", headers=headers)
+            create_response = client.post(
+                "/announcements", json={"title": "t", "body": "b"}, headers=headers
             )
+            update_response = client.patch(
+                "/announcements/ann-1", json={"title": "t"}, headers=headers
+            )
+            delete_response = client.delete("/announcements/ann-1", headers=headers)
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 403
+    assert list_response.status_code == 200
+    assert list_response.json() == {"announcements": []}
+    assert create_response.status_code == 403
+    assert update_response.status_code == 403
+    assert delete_response.status_code == 403
 
 
 def test_empleado_can_list_the_feed():

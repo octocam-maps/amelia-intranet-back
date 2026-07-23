@@ -134,6 +134,7 @@ class FakeTimeClockRepository:
                 work_date=e.work_date,
                 clock_in=e.clock_in,
                 clock_out=e.clock_out,
+                source=e.source,
             )
             for e in self.entries.values()
             if date_from <= e.work_date <= date_to
@@ -151,6 +152,7 @@ class FakeTimeClockRepository:
                 work_date=e.work_date,
                 clock_in=e.clock_in,
                 clock_out=e.clock_out,
+                source=e.source,
             )
             for e in self.entries.values()
             if e.user_id == user_id and date_from <= e.work_date <= date_to

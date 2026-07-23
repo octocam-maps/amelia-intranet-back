@@ -95,13 +95,13 @@ class CompleteProfileUseCase:
     async def _notify_admins_of_completion(
         self, *, user_id: str, profile: ProfileCompletionData, completed: OnboardingProgress
     ) -> None:
-        """Reúne la nota del cuestionario y la confirmación de firma leyendo
-        el propio progreso ya persistido de los pasos 2 y 3 — ambos guardan
-        su resultado en `onboarding_progress.data` al completarse
-        (`SubmitQuizUseCase` -> `{"score": ...}`; `SignDocumentUseCase` ->
-        `{"document_id": ..., "document_version": ...}`), así que no hace
-        falta una consulta nueva a otra tabla para armar el correo de RF
-        §2.7."""
+        """Reúne la nota del cuestionario y la confirmación de subida del
+        documento firmado leyendo el propio progreso ya persistido de los
+        pasos 2 y 3 — ambos guardan su resultado en
+        `onboarding_progress.data` al completarse (`SubmitQuizUseCase` ->
+        `{"score": ...}`; `UploadSignedOnboardingDocumentUseCase` ->
+        `{"employee_document_id": ...}`), así que no hace falta una
+        consulta nueva a otra tabla para armar el correo de RF §2.7."""
         all_steps = await self._repository.list_active_steps()
         progress_by_step_id = {
             p.step_id: p for p in await self._repository.list_progress_for_user(user_id)

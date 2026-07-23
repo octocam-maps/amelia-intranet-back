@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from src.shared.auth.dependencies import require_role
+from src.shared.auth.roles import ADMIN_ONLY
 
 from ..application.use_cases.create_staff_member import CreateStaffMemberUseCase
 from ..application.use_cases.list_staff import ListStaffUseCase
@@ -42,7 +43,7 @@ def create_staff_router() -> APIRouter:
         # sobre la plantilla real (39) sin abrir la puerta a un page_size
         # arbitrariamente grande.
         page_size: int = Query(20, ge=1, le=500),
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: ListStaffUseCase = Depends(get_list_staff_use_case),
     ):
         members, total = await use_case.execute(
@@ -53,7 +54,7 @@ def create_staff_router() -> APIRouter:
     @router.post("", response_model=StaffMemberDTO, status_code=201)
     async def create_staff_member(
         dto: CreateStaffMemberDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: CreateStaffMemberUseCase = Depends(get_create_staff_member_use_case),
     ):
         member = await use_case.execute(
@@ -73,7 +74,7 @@ def create_staff_router() -> APIRouter:
     async def update_staff_member(
         user_id: str,
         dto: UpdateStaffMemberDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: UpdateStaffMemberUseCase = Depends(get_update_staff_member_use_case),
     ):
         # `model_fields_set` distingue "el cliente no mandó

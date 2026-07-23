@@ -80,9 +80,13 @@ async def test_uploading_a_payslip_notifies_payslip_available():
     assert notify.calls[0]["recipient_ids"] == ["user-1"]
 
 
-@pytest.mark.parametrize("category", ["contract", "general", "other"])
+@pytest.mark.parametrize("category", ["contract", "general", "other", "signed"])
 @pytest.mark.asyncio
 async def test_uploading_a_non_payslip_notifies_document_uploaded(category):
+    """`signed` (sdd/docs-firmados-upload-drive): el documento firmado que
+    sube el propio empleado en el paso 3 cae en la misma rama que
+    contract/general/other — `notify_document_created` solo distingue
+    `payslip` como caso especial (T0.3, confirmado en el propio código)."""
     notify = _RecordingNotify()
     use_case = _use_case(notify=notify)
 
@@ -93,7 +97,7 @@ async def test_uploading_a_non_payslip_notifies_document_uploaded(category):
         title="Documento",
         period=None,
         filename="doc.pdf",
-        content=b"contenido",
+        content=b"%PDF-1.4 contenido",
         mime_type="application/pdf",
     )
 
@@ -114,7 +118,7 @@ async def test_notifies_the_document_owner_not_whoever_uploaded_it():
         title="Documento",
         period=None,
         filename="doc.pdf",
-        content=b"contenido",
+        content=b"%PDF-1.4 contenido",
         mime_type="application/pdf",
     )
 
@@ -133,7 +137,7 @@ async def test_upload_without_a_notify_dependency_still_works():
         title="Documento",
         period=None,
         filename="doc.pdf",
-        content=b"contenido",
+        content=b"%PDF-1.4 contenido",
         mime_type="application/pdf",
     )
 

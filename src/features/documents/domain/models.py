@@ -11,12 +11,15 @@ from datetime import datetime
 from typing import Optional
 
 # Valores permitidos de `employee_documents.category` (CHECK en
-# `004_documents.sql`). El proyecto no usa `Enum` de Python en el dominio
+# `004_documents.sql`, ampliado por `028_employee_documents_signed_category.sql`
+# con `signed`). El proyecto no usa `Enum` de Python en el dominio
 # (ver `absences.AbsenceType.code`, `staff`, etc.) — el mismo criterio aquí:
 # strings validados contra esta lista donde haga falta (WU-C1,
 # `UploadDocumentUseCase`) + el CHECK de la base de datos como cinturón de
-# seguridad final.
-DOCUMENT_CATEGORIES = frozenset({"payslip", "contract", "general", "other"})
+# seguridad final. `signed` (sdd/docs-firmados-upload-drive): documento
+# firmado fuera de la plataforma que el propio empleado sube en el paso 3
+# del onboarding — self-upload, no subida del admin.
+DOCUMENT_CATEGORIES = frozenset({"payslip", "contract", "general", "other", "signed"})
 
 # Nombre EXACTO (con acento) de la subcarpeta de Drive por categoría, dentro
 # de la carpeta del empleado (`<email>/<subcarpeta>/...`) — decisión del
@@ -31,6 +34,7 @@ CATEGORY_FOLDER_NAMES: dict[str, str] = {
     "contract": "Contratos",
     "general": "General",
     "other": "Otros",
+    "signed": "Firmados",
 }
 
 

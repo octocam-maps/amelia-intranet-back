@@ -7,6 +7,7 @@ primer login con Google, igual que cualquier alta existente
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
+from src.shared.auth.roles import RoleCode
 from src.shared.email.domain.ports import IEmailSender
 from src.shared.logger import get_logger
 
@@ -16,7 +17,7 @@ from ...domain.errors import (
     InvalidRoleCodeError,
     StaffEmailAlreadyExistsError,
 )
-from ...domain.ports import IStaffRepository
+from ...domain.ports import IDriveFolderProvisioner, IStaffRepository
 
 logger = get_logger("staff.create_staff_member")
 
@@ -28,11 +29,15 @@ class CreateStaffMemberUseCase:
         email_sender: IEmailSender,
         invitation_expires_days: int,
         frontend_url: str,
+        drive_folder_provisioner: Optional[IDriveFolderProvisioner] = None,
     ):
         self._repository = repository
         self._email_sender = email_sender
         self._invitation_expires_days = invitation_expires_days
         self._frontend_url = frontend_url
+        # Opcional para no romper los tests existentes que no lo pasan —
+        # mismo criterio que `UpdateStaffMemberUseCase.session_revoker`.
+        self._drive_folder_provisioner = drive_folder_provisioner
 
     async def execute(
         self,
@@ -73,12 +78,31 @@ class CreateStaffMemberUseCase:
             department_id=department_id,
             entity_id=entity_id,
             role_id=role_id,
-            is_external=role_code == "externo_invitado",
+            is_external=role_code == RoleCode.EXTERNO_INVITADO,
             hire_date=hire_date,
             vacation_days_override=vacation_days_override,
             invited_by=invited_by,
             expires_at=expires_at,
         )
+
+        # Best-effort OBLIGATORIO (decisión de producto "hook en alta +
+        # batch de backfill"): un fallo de Drive (timeout, credenciales,
+        # error de API) NUNCA debe revertir ni bloquear el alta — la persona
+        # ya existe en `users`/`invitations`, su carpeta se resuelve luego
+        # (batch `POST /documents/provision-folders` o el primer upload
+        # manual, `UploadDocumentUseCase.get_or_create_employee_folder`).
+        if self._drive_folder_provisioner is not None:
+            try:
+                await self._drive_folder_provisioner.provision_folder(
+                    member.id, member.email
+                )
+            except Exception as e:
+                logger.error(
+                    "Drive folder provisioning failed",
+                    user_id=member.id,
+                    email=member.email,
+                    error=str(e),
+                )
 
         # Best-effort: un fallo al enviar el aviso NO revierte el alta — la
         # persona ya existe en `users`/`invitations`, RRHH puede reenviarlo

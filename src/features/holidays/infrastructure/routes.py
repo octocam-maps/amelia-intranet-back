@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.shared.auth.dependencies import require_role
+from src.shared.auth.roles import ADMIN_ONLY, INTERNAL_ROLES
 
 from ..application.use_cases.create_holiday import CreateHolidayUseCase
 from ..application.use_cases.delete_holiday import DeleteHolidayUseCase
@@ -46,7 +47,7 @@ def create_holidays_router() -> APIRouter:
         entity: Optional[str] = Query(None, description="Filtra por código de entidad (hub/lab/ops)"),
         # `socio` [migración 024] = igual que empleado -> consulta el
         # calendario laboral, sigue sin poder marcar/editar festivos.
-        current_user: dict = Depends(require_role("administrador", "empleado", "socio")),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ListHolidaysUseCase = Depends(get_list_holidays_use_case),
     ):
         holidays = await use_case.execute(year=year, entity_code=entity)
@@ -55,7 +56,7 @@ def create_holidays_router() -> APIRouter:
     @router.post("", response_model=HolidayDTO, status_code=201)
     async def create_holiday(
         dto: CreateHolidayDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: CreateHolidayUseCase = Depends(get_create_holiday_use_case),
     ):
         holiday = await use_case.execute(
@@ -68,7 +69,7 @@ def create_holidays_router() -> APIRouter:
         year: Optional[int] = Query(
             None, description="Año a importar; por defecto el año en curso."
         ),
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: ImportOfficialHolidaysUseCase = Depends(
             get_import_official_holidays_use_case
         ),
@@ -90,7 +91,7 @@ def create_holidays_router() -> APIRouter:
     async def update_holiday(
         holiday_id: str,
         dto: UpdateHolidayDTO,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: UpdateHolidayUseCase = Depends(get_update_holiday_use_case),
     ):
         # `model_fields_set` distingue "el cliente no mandó `entity`" (no
@@ -105,7 +106,7 @@ def create_holidays_router() -> APIRouter:
     @router.delete("/{holiday_id}", status_code=204)
     async def delete_holiday(
         holiday_id: str,
-        current_user: dict = Depends(require_role("administrador")),
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: DeleteHolidayUseCase = Depends(get_delete_holiday_use_case),
     ):
         await use_case.execute(holiday_id)

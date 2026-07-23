@@ -10,6 +10,8 @@ ninguno de los dos, la vista aumentada de TODA la plantilla.
 from datetime import date
 from typing import NamedTuple, Optional
 
+from src.shared.auth.roles import RoleCode
+
 from ...domain.entities import TimeClockEntry
 from ...domain.errors import TimeClockForbiddenError
 from ...domain.ports import ITimeClockRepository
@@ -36,7 +38,7 @@ class ListTimeClockEntriesUseCase:
         limit: Optional[int] = None,
         offset: int = 0,
     ) -> TimeClockEntryPage:
-        is_admin = requester_role == "administrador"
+        is_admin = requester_role == RoleCode.ADMINISTRADOR
 
         # `target_user_ids` (multi-selector) gana si llega junto con el
         # `target_user_id` singular que sigue vivo por compatibilidad (CSV

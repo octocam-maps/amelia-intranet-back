@@ -126,3 +126,26 @@ def test_period_days_out_of_range_is_rejected_with_422():
         )
 
     assert response.status_code == 422
+
+
+def test_non_uuid_entity_id_is_rejected_with_422_not_500():
+    """INFO-2: `entity_id` no-UUID debe validarse en el borde (Pydantic/query
+    param) y devolver 422, no reventar con un 500 genérico al construir
+    `$N::uuid` en el repositorio."""
+    with TestClient(app) as client:
+        response = client.get(
+            "/dashboard/admin/metrics?entity_id=abc",
+            headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+        )
+
+    assert response.status_code == 422
+
+
+def test_non_uuid_department_id_is_rejected_with_422_not_500():
+    with TestClient(app) as client:
+        response = client.get(
+            "/dashboard/admin/metrics?department_id=not-a-uuid",
+            headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+        )
+
+    assert response.status_code == 422
