@@ -47,3 +47,43 @@ def test_pdf_is_a_valid_document_with_no_entries():
     )
 
     assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_pdf_with_subject_name_is_a_valid_document():
+    """RF-A1: `subject_name` no debe reventar la generación — no se parsea
+    el texto interno (mismo criterio que el resto del fichero), se
+    comprueba a nivel de flowables (ver test siguiente)."""
+    pdf_bytes = build_absence_calendar_export_pdf(
+        [_entry()],
+        date_from=date(2026, 7, 1),
+        date_to=date(2026, 7, 31),
+        subject_name="Ana García",
+    )
+
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_header_flowables_without_subject_name_unchanged():
+    """RF-A1: `subject_name=None` (export global) DEBE mantener las mismas
+    flowables que antes — ni una línea de más."""
+    from src.features.absences.infrastructure.calendar_pdf_export import (
+        _build_header_flowables,
+    )
+
+    flowables = _build_header_flowables(date(2026, 7, 1), date(2026, 7, 31))
+    texts = [getattr(f, "text", None) for f in flowables if hasattr(f, "text")]
+
+    assert not any(text and text.startswith("Empleado:") for text in texts)
+
+
+def test_header_flowables_with_subject_name_adds_employee_line():
+    from src.features.absences.infrastructure.calendar_pdf_export import (
+        _build_header_flowables,
+    )
+
+    flowables = _build_header_flowables(
+        date(2026, 7, 1), date(2026, 7, 31), subject_name="Ana García"
+    )
+    texts = [getattr(f, "text", None) for f in flowables if hasattr(f, "text")]
+
+    assert any(text == "Empleado: Ana García" for text in texts)

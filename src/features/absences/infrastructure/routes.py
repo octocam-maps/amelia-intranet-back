@@ -2,6 +2,8 @@
 calendario general de la plantilla (todos exclusivos del admin, salvo lo
 propio del empleado)."""
 
+import re
+import unicodedata
 from datetime import date, timedelta
 from typing import Optional
 
@@ -21,11 +23,13 @@ from ..application.use_cases.list_absence_types import ListAbsenceTypesUseCase
 from ..application.use_cases.list_all_absence_types import ListAllAbsenceTypesUseCase
 from ..application.use_cases.review_absence_request import ReviewAbsenceRequestUseCase
 from ..application.use_cases.update_absence_type import UpdateAbsenceTypeUseCase
+from ..domain.ports import IAbsenceRepository
 from .calendar_pdf_export import build_absence_calendar_export_pdf
 from .calendar_xlsx_export import build_absence_calendar_export_workbook
 from .dependencies import (
     get_absence_balance_use_case,
     get_absence_calendar_use_case,
+    get_absence_repository,
     get_create_absence_request_use_case,
     get_create_absence_type_use_case,
     get_list_absence_requests_use_case,
@@ -76,6 +80,57 @@ def _resolve_calendar_range(
     )
     last_day = next_month_first_day - timedelta(days=1)
     return date_from or first_day, date_to or last_day
+
+
+def _slugify_name(name: str) -> str:
+    """RF-A1: minúsculas, sin tildes, espacios (y cualquier otro carácter
+    no alfanumérico) -> guion, sin guiones repetidos ni en los extremos."""
+    normalized = unicodedata.normalize("NFKD", name)
+    ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "-", ascii_only.lower()).strip("-")
+
+
+def _is_full_calendar_month(date_from: date, date_to: date) -> bool:
+    """`True` si [date_from, date_to] es EXACTAMENTE un mes natural (día 1
+    al último día del mismo mes) — mismo cálculo de "último día del mes"
+    que `_resolve_calendar_range`."""
+    is_first_of_month = date_from.day == 1
+    is_same_year_and_month = (
+        date_from.year == date_to.year and date_from.month == date_to.month
+    )
+    if not is_first_of_month or not is_same_year_and_month:
+        return False
+    next_month_first_day = (
+        date_from.replace(year=date_from.year + 1, month=1)
+        if date_from.month == 12
+        else date_from.replace(month=date_from.month + 1)
+    )
+    last_day_of_month = next_month_first_day - timedelta(days=1)
+    return date_to == last_day_of_month
+
+
+def _calendar_export_filename(
+    *,
+    date_from: date,
+    date_to: date,
+    extension: str,
+    user_id: str | None,
+    subject_name: str | None,
+) -> str:
+    """RF-A1: sin `user_id` -> sin cambios (comportamiento del export
+    global). Con `user_id` -> incluye el empleado (slug del nombre real, o
+    el propio `user_id` si `find_user_full_name` no encontró a nadie) y el
+    periodo (`YYYY-MM` si es un mes natural exacto, si no `{from}_{to}`)."""
+    if user_id is None:
+        range_label = f"{date_from.isoformat()}_{date_to.isoformat()}"
+        return f"calendario-ausencias-{range_label}.{extension}"
+    name_slug = _slugify_name(subject_name) if subject_name else user_id
+    period = (
+        date_from.strftime("%Y-%m")
+        if _is_full_calendar_month(date_from, date_to)
+        else f"{date_from.isoformat()}_{date_to.isoformat()}"
+    )
+    return f"calendario-ausencias-{name_slug}-{period}.{extension}"
 
 
 def create_absences_router() -> APIRouter:
@@ -263,31 +318,64 @@ def create_absences_router() -> APIRouter:
     ):
         """Calendario general de RRHH: TODOS los empleados, acotado por
         rango de fechas. RBAC real vía `require_role`, no solo un ítem
-        oculto del navbar (docs/permisos-roles.md § reglas)."""
+        oculto del navbar (docs/permisos-roles.md § reglas). Sin cambio de
+        comportamiento por RF-A1: sigue exclusivo de Admin/Socio, sin
+        `user_id` — solo cambia la firma del use case (gana `requester_id`),
+        no la de esta ruta."""
         resolved_from, resolved_to = _resolve_calendar_range(date_from, date_to)
         entries = await use_case.execute(
-            requester_role=current_user["role"], date_from=resolved_from, date_to=resolved_to
+            requester_id=current_user["sub"],
+            requester_role=current_user["role"],
+            date_from=resolved_from,
+            date_to=resolved_to,
         )
         return calendar_entries_to_dto(entries)
 
+    # RF-A1: los 2 exports pasan de ser exclusivos de Admin/Socio a
+    # aceptar también al Empleado sobre SUS PROPIAS ausencias — el
+    # scoping fino (¿puede este `user_id` pedir el de otro?) vive en
+    # `GetAbsenceCalendarUseCase.execute()`, este `require_role` solo
+    # rechaza al `externo_invitado`.
     @router.get("/calendar/export.xlsx")
     async def export_calendar_xlsx(
         date_from: Optional[date] = Query(None),
         date_to: Optional[date] = Query(None),
-        current_user: dict = Depends(require_role(*ADMIN_SOCIO)),
+        user_id: str | None = Query(
+            None, description="Solo el admin/socio pueden exportar el de otro usuario"
+        ),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: GetAbsenceCalendarUseCase = Depends(get_absence_calendar_use_case),
+        repository: IAbsenceRepository = Depends(get_absence_repository),
     ):
         """Informe XLSX con logo de marca del calendario general — mismo
         patrón que `time-clock/entries/export.xlsx` (logo, cabecera navy,
         panel congelado)."""
         resolved_from, resolved_to = _resolve_calendar_range(date_from, date_to)
         entries = await use_case.execute(
-            requester_role=current_user["role"], date_from=resolved_from, date_to=resolved_to
+            requester_id=current_user["sub"],
+            requester_role=current_user["role"],
+            date_from=resolved_from,
+            date_to=resolved_to,
+            user_id=user_id,
+        )
+        # RF-A1: metadato de presentación (nombre real), resuelto aquí y no
+        # en el use case — ver `find_user_full_name` en `domain/ports.py`.
+        subject_name = (
+            await repository.find_user_full_name(user_id) if user_id else None
         )
         workbook_bytes = build_absence_calendar_export_workbook(
-            entries, date_from=resolved_from, date_to=resolved_to
+            entries,
+            date_from=resolved_from,
+            date_to=resolved_to,
+            subject_name=subject_name,
         )
-        filename = f"calendario-ausencias-{resolved_from.isoformat()}_{resolved_to.isoformat()}.xlsx"
+        filename = _calendar_export_filename(
+            date_from=resolved_from,
+            date_to=resolved_to,
+            extension="xlsx",
+            user_id=user_id,
+            subject_name=subject_name,
+        )
         return StreamingResponse(
             iter([workbook_bytes]),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -298,19 +386,39 @@ def create_absences_router() -> APIRouter:
     async def export_calendar_pdf(
         date_from: Optional[date] = Query(None),
         date_to: Optional[date] = Query(None),
-        current_user: dict = Depends(require_role(*ADMIN_SOCIO)),
+        user_id: str | None = Query(
+            None, description="Solo el admin/socio pueden exportar el de otro usuario"
+        ),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: GetAbsenceCalendarUseCase = Depends(get_absence_calendar_use_case),
+        repository: IAbsenceRepository = Depends(get_absence_repository),
     ):
         """Informe PDF con logo de marca del calendario general —
         `reportlab` (ver `calendar_pdf_export.py`)."""
         resolved_from, resolved_to = _resolve_calendar_range(date_from, date_to)
         entries = await use_case.execute(
-            requester_role=current_user["role"], date_from=resolved_from, date_to=resolved_to
+            requester_id=current_user["sub"],
+            requester_role=current_user["role"],
+            date_from=resolved_from,
+            date_to=resolved_to,
+            user_id=user_id,
+        )
+        subject_name = (
+            await repository.find_user_full_name(user_id) if user_id else None
         )
         pdf_bytes = build_absence_calendar_export_pdf(
-            entries, date_from=resolved_from, date_to=resolved_to
+            entries,
+            date_from=resolved_from,
+            date_to=resolved_to,
+            subject_name=subject_name,
         )
-        filename = f"calendario-ausencias-{resolved_from.isoformat()}_{resolved_to.isoformat()}.pdf"
+        filename = _calendar_export_filename(
+            date_from=resolved_from,
+            date_to=resolved_to,
+            extension="pdf",
+            user_id=user_id,
+            subject_name=subject_name,
+        )
         return StreamingResponse(
             iter([pdf_bytes]),
             media_type="application/pdf",

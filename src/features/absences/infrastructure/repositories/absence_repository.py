@@ -475,8 +475,16 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         )
         return _row_to_request(row) if row else None
 
+    async def find_user_full_name(self, user_id: str) -> str | None:
+        # Mismo patrón que `notifications.find_email` — descarta usuarios
+        # borrados lógicamente (`deleted_at`), igual que el resto del
+        # feature al resolver identidad de un `user_id`.
+        return await self._db.fetchval(
+            "SELECT full_name FROM users WHERE id = $1 AND deleted_at IS NULL", user_id
+        )
+
     async def list_calendar_entries(
-        self, *, date_from: date, date_to: date
+        self, *, date_from: date, date_to: date, user_id: str | None = None
     ) -> list[AbsenceCalendarEntry]:
         # "Calendario general de la plantilla" (LOTE 4): JOIN con `users` +
         # `absence_types` en la misma query — la pantalla y los exports
@@ -485,8 +493,12 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         # una solicitud `rejected`/`cancelled` no describe una ausencia real
         # (mismo criterio que `list_overlapping_requests`). Solape estándar
         # de rangos contra [date_from, date_to].
-        rows = await self._db.fetch(
-            """
+        #
+        # `user_id` (RF-A1, scoping RGPD): `None` mantiene la query original
+        # (2 params) byte a byte — el export global no debe cambiar de
+        # comportamiento. Con valor, añade el filtro por usuario como tercer
+        # parámetro, nunca interpolado en el string.
+        query = """
             SELECT
                 ar.id AS request_id,
                 ar.user_id,
@@ -504,11 +516,14 @@ class PostgresAbsenceRepository(IAbsenceRepository):
             WHERE ar.status IN ('pending', 'approved')
               AND ar.start_date <= $2
               AND ar.end_date >= $1
-            ORDER BY u.full_name ASC, ar.start_date ASC
-            """,
-            date_from,
-            date_to,
-        )
+        """
+        params: list = [date_from, date_to]
+        if user_id is not None:
+            query += " AND ar.user_id = $3"
+            params.append(user_id)
+        query += " ORDER BY u.full_name ASC, ar.start_date ASC"
+
+        rows = await self._db.fetch(query, *params)
         return [_row_to_calendar_entry(row) for row in rows]
 
     async def list_holiday_dates(self, date_from: date, date_to: date) -> list[date]:
