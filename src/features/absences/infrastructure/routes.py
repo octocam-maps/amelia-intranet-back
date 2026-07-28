@@ -119,12 +119,18 @@ def _calendar_export_filename(
 ) -> str:
     """RF-A1: sin `user_id` -> sin cambios (comportamiento del export
     global). Con `user_id` -> incluye el empleado (slug del nombre real, o
-    el propio `user_id` si `find_user_full_name` no encontró a nadie) y el
-    periodo (`YYYY-MM` si es un mes natural exacto, si no `{from}_{to}`)."""
+    del propio `user_id` si `find_user_full_name` no encontró a nadie) y el
+    periodo (`YYYY-MM` si es un mes natural exacto, si no `{from}_{to}`).
+
+    SEC-2 (auditoría QA, severidad MEDIA): el fallback a `user_id` cruda
+    (sin `subject_name`) NUNCA debe ir sin pasar por `_slugify_name` — ese
+    valor termina directo en la cabecera `Content-Disposition`, y un
+    `user_id` con comillas/punto y coma la rompe e inyecta contenido en la
+    misma cabecera HTTP."""
     if user_id is None:
         range_label = f"{date_from.isoformat()}_{date_to.isoformat()}"
         return f"calendario-ausencias-{range_label}.{extension}"
-    name_slug = _slugify_name(subject_name) if subject_name else user_id
+    name_slug = _slugify_name(subject_name) if subject_name else _slugify_name(user_id)
     period = (
         date_from.strftime("%Y-%m")
         if _is_full_calendar_month(date_from, date_to)

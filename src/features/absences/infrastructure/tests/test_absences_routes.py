@@ -616,6 +616,62 @@ def test_export_xlsx_with_user_id_but_no_full_name_falls_back_to_user_id():
     )
 
 
+def test_calendar_export_filename_sanitizes_raw_user_id_fallback():
+    """SEC-2 (auditoría QA, severidad MEDIA): sin `subject_name` (usuario
+    borrado/inexistente), el slug caía al `user_id` CRUDO, sin pasar por
+    `_slugify_name` — ese valor va directo al header `Content-Disposition`.
+    Un `user_id` con comillas/punto y coma rompe el parámetro `filename` e
+    inyecta contenido en la misma cabecera HTTP. Solo Admin/Socio pueden
+    mandar un `user_id` arbitrario, pero sigue siendo entrada sin sanear en
+    una cabecera. El fallback debe sanearse igual que el nombre real."""
+    from src.features.absences.infrastructure.routes import _calendar_export_filename
+
+    filename = _calendar_export_filename(
+        date_from=date(2026, 7, 1),
+        date_to=date(2026, 7, 31),
+        extension="xlsx",
+        user_id='legit"; evil="x',
+        subject_name=None,
+    )
+
+    assert '"' not in filename
+    assert ";" not in filename
+    assert filename == "calendario-ausencias-legit-evil-x-2026-07.xlsx"
+
+
+def test_export_xlsx_with_unsafe_user_id_fallback_does_not_break_header():
+    """Mismo caso que arriba, pero a nivel de cabecera HTTP real: el
+    `Content-Disposition` de la respuesta no debe contener un segundo
+    `filename=` inyectado ni comillas sin escapar."""
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: _FakeAbsenceCalendarUseCase()
+    )
+    app.dependency_overrides[absences_dependencies.get_absence_repository] = lambda: (
+        _FakeRepositoryWithFullName(None)
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/export.xlsx",
+                params={
+                    "date_from": "2026-07-01",
+                    "date_to": "2026-07-31",
+                    "user_id": 'legit"; evil="x',
+                },
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    content_disposition = response.headers["content-disposition"]
+    assert content_disposition.count('filename="') == 1
+    assert (
+        'filename="calendario-ausencias-legit-evil-x-2026-07.xlsx"'
+        in content_disposition
+    )
+
+
 def test_export_pdf_with_user_id_uses_employee_slug_and_month_period():
     app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
         lambda: _FakeAbsenceCalendarUseCase()
