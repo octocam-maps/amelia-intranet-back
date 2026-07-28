@@ -6,6 +6,9 @@ from src.shared.database import get_database_pool
 from ..application.use_cases.add_time_clock_entry_note import AddTimeClockEntryNoteUseCase
 from ..application.use_cases.clock_in import ClockInUseCase
 from ..application.use_cases.clock_out import ClockOutUseCase
+from ..application.use_cases.create_time_clock_entries_batch import (
+    CreateTimeClockEntriesBatchUseCase,
+)
 from ..application.use_cases.create_time_clock_entry import CreateTimeClockEntryUseCase
 from ..application.use_cases.delete_time_clock_entry import DeleteTimeClockEntryUseCase
 from ..application.use_cases.end_break import EndBreakUseCase
@@ -26,6 +29,19 @@ def get_create_time_clock_entry_use_case() -> CreateTimeClockEntryUseCase:
     settings = get_settings()
     return CreateTimeClockEntryUseCase(
         _get_repository(), settings.time_clock_manual_entry_max_past_days
+    )
+
+
+def get_create_time_clock_entries_batch_use_case() -> (
+    CreateTimeClockEntriesBatchUseCase
+):
+    settings = get_settings()
+    repository = _get_repository()
+    unit_use_case = CreateTimeClockEntryUseCase(
+        repository, settings.time_clock_manual_entry_max_past_days
+    )
+    return CreateTimeClockEntriesBatchUseCase(
+        repository, unit_use_case, settings.time_clock_manual_entry_max_past_days
     )
 
 

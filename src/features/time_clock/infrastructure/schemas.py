@@ -1,6 +1,6 @@
 """DTOs de request/response (Pydantic) del feature `time_clock`."""
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Optional
 
 from pydantic import BaseModel, field_validator
@@ -51,6 +51,34 @@ class TimeClockEntryDTO(BaseModel):
     clock_out: Optional[datetime]
     source: str
     worked_minutes: Optional[int]
+
+
+class CreateTimeClockEntriesBatchDTO(BaseModel):
+    """Alta en lote (RF-A3): `clock_in_time`/`clock_out_time` son hora de
+    PARED Europe/Madrid, SIN offset — a diferencia de `CreateTimeClockEntryDTO`
+    (`TZ-1`, offset obligatorio), el lote aplica UN MISMO horario a varios
+    días y exigir offset por día obligaría al cliente a convertir N veces en
+    vez de una. El backend ancla la hora a Madrid en el use case, igual que
+    ya hace `today_in_madrid()` en el resto del feature."""
+
+    date_from: date
+    date_to: date
+    clock_in_time: time
+    clock_out_time: time | None = None
+
+
+class OmittedBatchDayDTO(BaseModel):
+    work_date: date
+    reason: str
+
+
+class TimeClockEntriesBatchDTO(BaseModel):
+    """Respuesta del alta en lote — SIEMPRE 200 (nunca 201: el lote puede no
+    crear nada y seguir siendo un resultado válido, p.ej. una ausencia
+    aprobada que cubre todo el rango)."""
+
+    created: list[TimeClockEntryDTO]
+    omitted: list[OmittedBatchDayDTO]
 
 
 class TimeClockEntryListDTO(BaseModel):
