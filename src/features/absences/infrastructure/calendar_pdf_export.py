@@ -54,7 +54,12 @@ def _status_label(status: str) -> str:
     return _STATUS_LABELS.get(status, status.capitalize())
 
 
-def _build_header_flowables(date_from: date, date_to: date) -> list:
+def _build_header_flowables(
+    date_from: date, date_to: date, subject_name: str | None = None
+) -> list:
+    """`subject_name` (RF-A1, export individual de un Empleado): `None`
+    mantiene exactamente las mismas flowables que el export global; con
+    valor, añade un párrafo extra "Empleado: {nombre}" bajo el rango."""
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "AmeliaCalendarTitle",
@@ -68,6 +73,13 @@ def _build_header_flowables(date_from: date, date_to: date) -> list:
         parent=styles["Normal"],
         fontSize=9,
         textColor=_MUTED_TEXT,
+        spaceAfter=10 if not subject_name else 2,
+    )
+    subject_style = ParagraphStyle(
+        "AmeliaCalendarSubject",
+        parent=styles["Normal"],
+        fontSize=9,
+        textColor=_BRAND_NAVY,
         spaceAfter=10,
     )
 
@@ -87,6 +99,8 @@ def _build_header_flowables(date_from: date, date_to: date) -> list:
             subtitle_style,
         )
     )
+    if subject_name:
+        flowables.append(Paragraph(f"Empleado: {subject_name}", subject_style))
     return flowables
 
 
@@ -132,12 +146,20 @@ def _build_table(entries: list[AbsenceCalendarEntry]) -> Table:
 
 
 def build_absence_calendar_export_pdf(
-    entries: list[AbsenceCalendarEntry], *, date_from: date, date_to: date
+    entries: list[AbsenceCalendarEntry],
+    *,
+    date_from: date,
+    date_to: date,
+    subject_name: str | None = None,
 ) -> bytes:
     """Genera el PDF completo en memoria (nunca toca disco salvo para leer
     el PNG estático del logo). Mismo alcance que la pantalla y el XLSX
     (`calendar_xlsx_export.py`): TODA la plantilla, `pending`/`approved`,
-    dentro del rango `[date_from, date_to]`."""
+    dentro del rango `[date_from, date_to]`.
+
+    `subject_name` (RF-A1, export individual de un Empleado): `None`
+    mantiene el output del export global sin cambios; con valor, añade una
+    línea "Empleado: {nombre}" bajo el rango."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -149,7 +171,7 @@ def build_absence_calendar_export_pdf(
         title=TITLE,
     )
 
-    elements = _build_header_flowables(date_from, date_to)
+    elements = _build_header_flowables(date_from, date_to, subject_name)
     elements.append(_build_table(entries))
     doc.build(elements)
     return buffer.getvalue()

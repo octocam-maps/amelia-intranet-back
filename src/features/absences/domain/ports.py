@@ -181,6 +181,15 @@ class IAbsenceRepository(Protocol):
         laborables, simplemente no excluye nada todavía."""
         ...
 
+    async def find_user_full_name(self, user_id: str) -> str | None:
+        """RF-A1: nombre real del empleado para la cabecera/nombre de
+        fichero del export individual. Mismo patrón que
+        `notifications.find_email` — metadato de presentación, consultado
+        directamente en la RUTA (no en el use case): si el usuario no tiene
+        ninguna ausencia en el periodo, `entries` viene vacío y no habría
+        de dónde sacar el nombre."""
+        ...
+
     async def list_calendar_entries(
         self, *, date_from: date, date_to: date, user_id: str | None = None
     ) -> list[AbsenceCalendarEntry]:

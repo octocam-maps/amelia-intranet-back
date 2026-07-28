@@ -492,3 +492,149 @@ def test_socio_cannot_open_pending_tray():
         app.dependency_overrides.clear()
 
     assert response.status_code == 403
+
+
+# --- RF-A1 (U2) — nombre de fichero y cabecera con empleado y periodo. ---
+
+
+def test_slugify_name_strips_accents_lowercases_and_hyphenates():
+    from src.features.absences.infrastructure.routes import _slugify_name
+
+    assert _slugify_name("Ana García") == "ana-garcia"
+    assert _slugify_name("José Ángel Núñez") == "jose-angel-nunez"
+    assert _slugify_name("  Luis   Pérez  ") == "luis-perez"
+
+
+class _FakeRepositoryWithFullName:
+    def __init__(self, full_name: str | None):
+        self._full_name = full_name
+
+    async def find_user_full_name(self, user_id: str) -> str | None:
+        return self._full_name
+
+
+def test_export_xlsx_without_user_id_keeps_default_filename():
+    """Sin `user_id`: nombre de fichero SIN CAMBIOS (comportamiento
+    actual)."""
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: _FakeAbsenceCalendarUseCase()
+    )
+    app.dependency_overrides[absences_dependencies.get_absence_repository] = lambda: (
+        _FakeRepositoryWithFullName("Ana García")
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/export.xlsx?date_from=2026-07-01&date_to=2026-07-31",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert (
+        'filename="calendario-ausencias-2026-07-01_2026-07-31.xlsx"'
+        in response.headers["content-disposition"]
+    )
+
+
+def test_export_xlsx_with_user_id_uses_employee_slug_and_month_period():
+    """Con `user_id` y rango = mes natural exacto: nombre con slug del
+    nombre + periodo `YYYY-MM`."""
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: _FakeAbsenceCalendarUseCase()
+    )
+    app.dependency_overrides[absences_dependencies.get_absence_repository] = lambda: (
+        _FakeRepositoryWithFullName("Ana García")
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/export.xlsx?date_from=2026-07-01&date_to=2026-07-31"
+                "&user_id=user-1",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert (
+        'filename="calendario-ausencias-ana-garcia-2026-07.xlsx"'
+        in response.headers["content-disposition"]
+    )
+
+
+def test_export_xlsx_with_user_id_and_non_month_range_uses_from_to_period():
+    """Con `user_id` pero rango que NO es un mes natural exacto: periodo
+    `{from}_{to}`, igual que el export global."""
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: _FakeAbsenceCalendarUseCase()
+    )
+    app.dependency_overrides[absences_dependencies.get_absence_repository] = lambda: (
+        _FakeRepositoryWithFullName("Ana García")
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/export.xlsx?date_from=2026-07-10&date_to=2026-07-20"
+                "&user_id=user-1",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert (
+        'filename="calendario-ausencias-ana-garcia-2026-07-10_2026-07-20.xlsx"'
+        in response.headers["content-disposition"]
+    )
+
+
+def test_export_xlsx_with_user_id_but_no_full_name_falls_back_to_user_id():
+    """Si `find_user_full_name` no encuentra al usuario (borrado o
+    inexistente), el slug cae al `user_id` crudo en vez de reventar."""
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: _FakeAbsenceCalendarUseCase()
+    )
+    app.dependency_overrides[absences_dependencies.get_absence_repository] = lambda: (
+        _FakeRepositoryWithFullName(None)
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/export.xlsx?date_from=2026-07-01&date_to=2026-07-31"
+                "&user_id=deleted-user",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert (
+        'filename="calendario-ausencias-deleted-user-2026-07.xlsx"'
+        in response.headers["content-disposition"]
+    )
+
+
+def test_export_pdf_with_user_id_uses_employee_slug_and_month_period():
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: _FakeAbsenceCalendarUseCase()
+    )
+    app.dependency_overrides[absences_dependencies.get_absence_repository] = lambda: (
+        _FakeRepositoryWithFullName("Ana García")
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/export.pdf?date_from=2026-07-01&date_to=2026-07-31"
+                "&user_id=user-1",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert (
+        'filename="calendario-ausencias-ana-garcia-2026-07.pdf"'
+        in response.headers["content-disposition"]
+    )

@@ -252,6 +252,9 @@ class FakeAbsenceRepository:
             and (user_id is None or r.user_id == user_id)
         ]
 
+    async def find_user_full_name(self, user_id: str) -> str | None:
+        return None
+
     async def list_overlapping_requests(
         self, user_id: str, *, start_date: date, end_date: date
     ) -> list[AbsenceRequest]:

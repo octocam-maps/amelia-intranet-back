@@ -33,6 +33,9 @@ _COLUMN_WIDTHS = [26, 22, 14, 14, 10, 14]
 _LOGO_ROW = 1
 _TITLE_ROW = 2
 _SUBTITLE_ROW = 3
+_SUBJECT_ROW = 4  # RF-A1: fila ya libre entre el subtítulo y la cabecera —
+# escribir aquí NO desplaza cabecera/datos, así el export global
+# (`subject_name=None`) mantiene el layout byte a byte.
 _HEADER_ROW = 5
 _DATA_START_ROW = 6
 
@@ -76,6 +79,24 @@ def _write_title(ws: Worksheet, date_from: date, date_to: date) -> None:
     subtitle_cell.font = Font(name="Calibri", size=10, italic=True, color=_SUBTITLE_TEXT_COLOR)
 
 
+def _write_subject(ws: Worksheet, subject_name: str | None) -> None:
+    """RF-A1: export individual — línea extra bajo el rango con el nombre
+    del empleado. `None` (export global) no escribe nada."""
+    if not subject_name:
+        return
+    last_column = len(_COLUMN_TITLES)
+    ws.merge_cells(
+        start_row=_SUBJECT_ROW,
+        start_column=1,
+        end_row=_SUBJECT_ROW,
+        end_column=last_column,
+    )
+    subject_cell = ws.cell(
+        row=_SUBJECT_ROW, column=1, value=f"Empleado: {subject_name}"
+    )
+    subject_cell.font = Font(name="Calibri", size=10, bold=True, color=_BRAND_NAVY)
+
+
 def _write_header(ws: Worksheet) -> None:
     fill = PatternFill(start_color=_BRAND_NAVY, end_color=_BRAND_NAVY, fill_type="solid")
     for col_index, title in enumerate(_COLUMN_TITLES, start=1):
@@ -111,18 +132,27 @@ def _apply_column_widths(ws: Worksheet) -> None:
 
 
 def build_absence_calendar_export_workbook(
-    entries: list[AbsenceCalendarEntry], *, date_from: date, date_to: date
+    entries: list[AbsenceCalendarEntry],
+    *,
+    date_from: date,
+    date_to: date,
+    subject_name: str | None = None,
 ) -> bytes:
     """Genera el `.xlsx` completo en memoria (nunca toca disco salvo para
     leer el PNG estático del logo). Mismo alcance que la pantalla y el PDF
     (`calendar_pdf_export.py`): TODA la plantilla, `pending`/`approved`,
-    dentro del rango `[date_from, date_to]`."""
+    dentro del rango `[date_from, date_to]`.
+
+    `subject_name` (RF-A1, export individual de un Empleado): `None`
+    mantiene el output del export global sin cambios; con valor, añade una
+    línea "Empleado: {nombre}" bajo el rango, sin desplazar cabecera/datos."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Calendario"
 
     _insert_logo(ws)
     _write_title(ws, date_from, date_to)
+    _write_subject(ws, subject_name)
     _write_header(ws)
     _write_rows(ws, entries)
     _apply_column_widths(ws)

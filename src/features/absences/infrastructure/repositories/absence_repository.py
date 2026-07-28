@@ -475,6 +475,14 @@ class PostgresAbsenceRepository(IAbsenceRepository):
         )
         return _row_to_request(row) if row else None
 
+    async def find_user_full_name(self, user_id: str) -> str | None:
+        # Mismo patrón que `notifications.find_email` — descarta usuarios
+        # borrados lógicamente (`deleted_at`), igual que el resto del
+        # feature al resolver identidad de un `user_id`.
+        return await self._db.fetchval(
+            "SELECT full_name FROM users WHERE id = $1 AND deleted_at IS NULL", user_id
+        )
+
     async def list_calendar_entries(
         self, *, date_from: date, date_to: date, user_id: str | None = None
     ) -> list[AbsenceCalendarEntry]:
