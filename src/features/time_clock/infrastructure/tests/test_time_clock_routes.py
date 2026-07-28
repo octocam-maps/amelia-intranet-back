@@ -435,3 +435,214 @@ def test_socio_can_read_current_clock_status_but_not_add_a_note():
 
     assert status_response.status_code == 200
     assert note_response.status_code == 403
+
+
+# --- RF-A3: alta de fichaje en lote (POST /time-clock/entries/batch) ---
+
+
+def _batch_payload(**overrides) -> dict:
+    payload = {
+        "date_from": "2026-07-13",
+        "date_to": "2026-07-19",
+        "clock_in_time": "08:00",
+        "clock_out_time": "17:00",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_externo_invitado_cannot_batch_create_time_clock_entries():
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/time-clock/entries/batch",
+                json=_batch_payload(),
+                headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_batch_create_returns_200_with_created_and_omitted_breakdown():
+    """Nunca 201: el lote puede no crear nada y seguir siendo válido (EC4)."""
+    from datetime import UTC, date, datetime
+
+    from src.features.time_clock.application.results import (
+        OmittedBatchDay,
+        TimeClockEntriesBatchResult,
+    )
+    from src.features.time_clock.domain.entities import TimeClockEntry
+
+    class FakeBatchUseCase:
+        async def execute(self, **kwargs):
+            self.received_kwargs = kwargs
+            return TimeClockEntriesBatchResult(
+                created=[
+                    TimeClockEntry(
+                        id="entry-1",
+                        user_id=kwargs["user_id"],
+                        work_date=date(2026, 7, 13),
+                        clock_in=datetime(2026, 7, 13, 6, 0, tzinfo=UTC),
+                        clock_out=datetime(2026, 7, 13, 15, 0, tzinfo=UTC),
+                        source="manual",
+                        created_at=datetime(2026, 7, 13, 6, 0, tzinfo=UTC),
+                        updated_at=datetime(2026, 7, 13, 6, 0, tzinfo=UTC),
+                    )
+                ],
+                omitted=[
+                    OmittedBatchDay(work_date=date(2026, 7, 19), reason="fin_de_semana")
+                ],
+            )
+
+    use_case = FakeBatchUseCase()
+    app.dependency_overrides[
+        time_clock_dependencies.get_create_time_clock_entries_batch_use_case
+    ] = lambda: use_case
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/time-clock/entries/batch",
+                json=_batch_payload(),
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["created"]) == 1
+    assert body["created"][0]["source"] == "manual"
+    assert body["omitted"] == [{"work_date": "2026-07-19", "reason": "fin_de_semana"}]
+
+
+def test_batch_create_always_scopes_to_the_current_user_and_their_entity():
+    """Nadie ficha por otro: siempre `current_user["sub"]`, igual que
+    `POST /entries` — el payload no acepta `user_id`."""
+    from src.features.time_clock.application.results import TimeClockEntriesBatchResult
+
+    class FakeBatchUseCase:
+        async def execute(self, **kwargs):
+            self.received_kwargs = kwargs
+            return TimeClockEntriesBatchResult(created=[], omitted=[])
+
+    use_case = FakeBatchUseCase()
+    app.dependency_overrides[
+        time_clock_dependencies.get_create_time_clock_entries_batch_use_case
+    ] = lambda: use_case
+    try:
+        with TestClient(app) as client:
+            jwt_service = get_jwt_service()
+            token = jwt_service.create_access_token(
+                {
+                    "sub": "user-1",
+                    "email": "user@ameliahub.com",
+                    "role": "empleado",
+                    "entity_id": "entity-hub",
+                    "is_external": False,
+                }
+            )
+            response = client.post(
+                "/time-clock/entries/batch",
+                json=_batch_payload(),
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert use_case.received_kwargs["user_id"] == "user-1"
+    assert use_case.received_kwargs["entity_id"] == "entity-hub"
+    assert use_case.received_kwargs["date_from"].isoformat() == "2026-07-13"
+    assert use_case.received_kwargs["date_to"].isoformat() == "2026-07-19"
+    assert use_case.received_kwargs["clock_in_time"].isoformat() == "08:00:00"
+    assert use_case.received_kwargs["clock_out_time"].isoformat() == "17:00:00"
+
+
+def test_batch_create_allows_omitting_clock_out_time():
+    from src.features.time_clock.application.results import TimeClockEntriesBatchResult
+
+    class FakeBatchUseCase:
+        async def execute(self, **kwargs):
+            self.received_kwargs = kwargs
+            return TimeClockEntriesBatchResult(created=[], omitted=[])
+
+    use_case = FakeBatchUseCase()
+    app.dependency_overrides[
+        time_clock_dependencies.get_create_time_clock_entries_batch_use_case
+    ] = lambda: use_case
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/time-clock/entries/batch",
+                json={
+                    "date_from": "2026-07-13",
+                    "date_to": "2026-07-13",
+                    "clock_in_time": "08:00",
+                },
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert use_case.received_kwargs["clock_out_time"] is None
+
+
+def test_batch_create_rejects_future_workday_with_422_uniform_body():
+    """422 (no 400 — este backend nunca mapea a 400, ver
+    `shared/errors/handler.py`), con el mismo cuerpo uniforme
+    `{"detail": {"code", "message"}}` que el resto del backend."""
+    from src.features.time_clock.domain.errors import TimeClockBatchFutureDateError
+
+    class FakeBatchUseCase:
+        async def execute(self, **kwargs):
+            raise TimeClockBatchFutureDateError(
+                "El lote incluye un día futuro sin ninguna exclusión de "
+                "calendario que lo cubra."
+            )
+
+    app.dependency_overrides[
+        time_clock_dependencies.get_create_time_clock_entries_batch_use_case
+    ] = lambda: FakeBatchUseCase()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/time-clock/entries/batch",
+                json=_batch_payload(),
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["detail"]["code"] == "TimeClockBatchFutureDateError"
+    assert "futuro" in body["detail"]["message"]
+
+
+def test_batch_create_rejects_range_over_seven_days_with_422():
+    from src.features.time_clock.domain.errors import TimeClockBatchRangeTooLongError
+
+    class FakeBatchUseCase:
+        async def execute(self, **kwargs):
+            raise TimeClockBatchRangeTooLongError(
+                "El lote no puede abarcar más de 7 días."
+            )
+
+    app.dependency_overrides[
+        time_clock_dependencies.get_create_time_clock_entries_batch_use_case
+    ] = lambda: FakeBatchUseCase()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/time-clock/entries/batch",
+                json=_batch_payload(date_to="2026-07-21"),
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "TimeClockBatchRangeTooLongError"

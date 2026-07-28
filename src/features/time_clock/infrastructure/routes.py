@@ -15,6 +15,9 @@ from src.shared.utils.timezone import today_in_madrid
 from ..application.use_cases.add_time_clock_entry_note import AddTimeClockEntryNoteUseCase
 from ..application.use_cases.clock_in import ClockInUseCase
 from ..application.use_cases.clock_out import ClockOutUseCase
+from ..application.use_cases.create_time_clock_entries_batch import (
+    CreateTimeClockEntriesBatchUseCase,
+)
 from ..application.use_cases.create_time_clock_entry import CreateTimeClockEntryUseCase
 from ..application.use_cases.delete_time_clock_entry import DeleteTimeClockEntryUseCase
 from ..application.use_cases.end_break import EndBreakUseCase
@@ -28,6 +31,7 @@ from .dependencies import (
     get_add_time_clock_entry_note_use_case,
     get_clock_in_use_case,
     get_clock_out_use_case,
+    get_create_time_clock_entries_batch_use_case,
     get_create_time_clock_entry_use_case,
     get_delete_time_clock_entry_use_case,
     get_end_break_use_case,
@@ -38,11 +42,20 @@ from .dependencies import (
     get_start_break_use_case,
     get_update_time_clock_entry_use_case,
 )
-from .mappers import entries_to_dto, entry_to_dto, live_status_to_dto, note_to_dto, notes_to_dto
+from .mappers import (
+    batch_result_to_dto,
+    entries_to_dto,
+    entry_to_dto,
+    live_status_to_dto,
+    note_to_dto,
+    notes_to_dto,
+)
 from .schemas import (
     AddTimeClockEntryNoteDTO,
+    CreateTimeClockEntriesBatchDTO,
     CreateTimeClockEntryDTO,
     TimeClockCurrentStatusDTO,
+    TimeClockEntriesBatchDTO,
     TimeClockEntryDTO,
     TimeClockEntryListDTO,
     TimeClockEntryNoteDTO,
@@ -101,6 +114,36 @@ def create_time_clock_router() -> APIRouter:
             clock_out=dto.clock_out,
         )
         return entry_to_dto(entry)
+
+    @router.post("/entries/batch", response_model=TimeClockEntriesBatchDTO)
+    async def create_entries_batch(
+        dto: CreateTimeClockEntriesBatchDTO,
+        # `socio` [migración 024] = igual que empleado -> ficha su propio
+        # horario como cualquier trabajador.
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
+        use_case: CreateTimeClockEntriesBatchUseCase = Depends(
+            get_create_time_clock_entries_batch_use_case
+        ),
+    ):
+        """Alta de fichaje en lote sobre un rango de hasta 7 días (RF-A3) —
+        siempre para el propio usuario autenticado, igual que `POST /entries`
+        (nadie ficha por otro). Respuesta SIEMPRE 200, nunca 201: el lote
+        puede no crear nada (p.ej. una ausencia aprobada que cubre todo el
+        rango) y seguir siendo un resultado válido — ver `created`/`omitted`.
+
+        Un día laborable futuro sin ninguna exclusión de calendario que lo
+        cubra rechaza la petición COMPLETA (422, LOGIC-2 — pentest ético,
+        severidad ALTA): el error de dominio propaga sin desglose, nunca se
+        llega a construir un `created`/`omitted` parcial."""
+        result = await use_case.execute(
+            user_id=current_user["sub"],
+            entity_id=current_user.get("entity_id"),
+            date_from=dto.date_from,
+            date_to=dto.date_to,
+            clock_in_time=dto.clock_in_time,
+            clock_out_time=dto.clock_out_time,
+        )
+        return batch_result_to_dto(result)
 
     @router.get("/entries", response_model=TimeClockEntryListDTO)
     async def list_entries(
