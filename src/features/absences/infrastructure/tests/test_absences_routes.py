@@ -257,11 +257,61 @@ def test_socio_can_view_general_calendar():
     assert body["entries"][0]["user_full_name"] == "Ana García"
 
 
-def test_employee_cannot_export_general_calendar_xlsx():
+def test_externo_invitado_cannot_export_general_calendar_xlsx():
     try:
         with TestClient(app) as client:
             response = client.get(
                 "/absences/calendar/export.xlsx",
+                headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_employee_can_export_own_calendar_xlsx():
+    """RF-A1: el Empleado ya puede exportar SU PROPIO calendario (antes era
+    exclusivo de Admin/Socio)."""
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: _FakeAbsenceCalendarUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/export.xlsx?date_from=2026-07-01&date_to=2026-07-31",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+
+
+def test_employee_cannot_export_other_users_calendar_xlsx():
+    """RGPD (RF-A1): un Empleado pidiendo el `user_id` de OTRO recibe 403 —
+    se usa el `GetAbsenceCalendarUseCase` REAL (con un repositorio fake) en
+    vez de `_FakeAbsenceCalendarUseCase`, para ejercer el scoping fino de
+    verdad end-to-end, no solo el gate de rol del router."""
+    from src.features.absences.application.use_cases.get_absence_calendar import (
+        GetAbsenceCalendarUseCase,
+    )
+
+    class _FakeRepoNeverReached:
+        async def list_calendar_entries(self, *, date_from, date_to, user_id=None):
+            raise AssertionError(
+                "no debería llegar al repositorio: el 403 se lanza antes"
+            )
+
+    real_use_case = GetAbsenceCalendarUseCase(_FakeRepoNeverReached())
+
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: real_use_case
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/export.xlsx?date_from=2026-07-01&date_to=2026-07-31&user_id=other-user",
                 headers={"Authorization": f"Bearer {_token_for('empleado')}"},
             )
     finally:
@@ -307,11 +357,55 @@ def test_socio_can_export_general_calendar_xlsx():
     assert response.status_code == 200
 
 
-def test_employee_cannot_export_general_calendar_pdf():
+def test_externo_invitado_cannot_export_general_calendar_pdf():
     try:
         with TestClient(app) as client:
             response = client.get(
                 "/absences/calendar/export.pdf",
+                headers={"Authorization": f"Bearer {_token_for('externo_invitado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
+def test_employee_can_export_own_calendar_pdf():
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: _FakeAbsenceCalendarUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/export.pdf?date_from=2026-07-01&date_to=2026-07-31",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+
+
+def test_employee_cannot_export_other_users_calendar_pdf():
+    from src.features.absences.application.use_cases.get_absence_calendar import (
+        GetAbsenceCalendarUseCase,
+    )
+
+    class _FakeRepoNeverReached:
+        async def list_calendar_entries(self, *, date_from, date_to, user_id=None):
+            raise AssertionError(
+                "no debería llegar al repositorio: el 403 se lanza antes"
+            )
+
+    real_use_case = GetAbsenceCalendarUseCase(_FakeRepoNeverReached())
+
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: real_use_case
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/export.pdf?date_from=2026-07-01&date_to=2026-07-31&user_id=other-user",
                 headers={"Authorization": f"Bearer {_token_for('empleado')}"},
             )
     finally:

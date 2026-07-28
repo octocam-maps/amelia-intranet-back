@@ -182,7 +182,7 @@ class IAbsenceRepository(Protocol):
         ...
 
     async def list_calendar_entries(
-        self, *, date_from: date, date_to: date
+        self, *, date_from: date, date_to: date, user_id: str | None = None
     ) -> list[AbsenceCalendarEntry]:
         """"Calendario general de la plantilla" (LOTE 4) — TODOS los
         empleados, `pending`/`approved` únicamente (una solicitud `rejected`
@@ -190,7 +190,12 @@ class IAbsenceRepository(Protocol):
         [`start_date`, `end_date`] solapa con [`date_from`, `date_to`]. Ya
         viene con `user_full_name`/`absence_type_name`/`absence_type_color`
         resueltos (JOIN) — lo consume tanto la pantalla como los exports
-        (XLSX/PDF), que necesitan exactamente la misma forma."""
+        (XLSX/PDF), que necesitan exactamente la misma forma.
+
+        `user_id` opcional (RF-A1): `None` -> sin filtrar (global, mismo
+        comportamiento de siempre); con valor -> acota a las ausencias de
+        ESE usuario únicamente (export individual de un Empleado sobre lo
+        suyo)."""
         ...
 
     async def list_overlapping_requests(

@@ -263,18 +263,32 @@ def create_absences_router() -> APIRouter:
     ):
         """Calendario general de RRHH: TODOS los empleados, acotado por
         rango de fechas. RBAC real vía `require_role`, no solo un ítem
-        oculto del navbar (docs/permisos-roles.md § reglas)."""
+        oculto del navbar (docs/permisos-roles.md § reglas). Sin cambio de
+        comportamiento por RF-A1: sigue exclusivo de Admin/Socio, sin
+        `user_id` — solo cambia la firma del use case (gana `requester_id`),
+        no la de esta ruta."""
         resolved_from, resolved_to = _resolve_calendar_range(date_from, date_to)
         entries = await use_case.execute(
-            requester_role=current_user["role"], date_from=resolved_from, date_to=resolved_to
+            requester_id=current_user["sub"],
+            requester_role=current_user["role"],
+            date_from=resolved_from,
+            date_to=resolved_to,
         )
         return calendar_entries_to_dto(entries)
 
+    # RF-A1: los 2 exports pasan de ser exclusivos de Admin/Socio a
+    # aceptar también al Empleado sobre SUS PROPIAS ausencias — el
+    # scoping fino (¿puede este `user_id` pedir el de otro?) vive en
+    # `GetAbsenceCalendarUseCase.execute()`, este `require_role` solo
+    # rechaza al `externo_invitado`.
     @router.get("/calendar/export.xlsx")
     async def export_calendar_xlsx(
         date_from: Optional[date] = Query(None),
         date_to: Optional[date] = Query(None),
-        current_user: dict = Depends(require_role(*ADMIN_SOCIO)),
+        user_id: str | None = Query(
+            None, description="Solo el admin/socio pueden exportar el de otro usuario"
+        ),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: GetAbsenceCalendarUseCase = Depends(get_absence_calendar_use_case),
     ):
         """Informe XLSX con logo de marca del calendario general — mismo
@@ -282,7 +296,11 @@ def create_absences_router() -> APIRouter:
         panel congelado)."""
         resolved_from, resolved_to = _resolve_calendar_range(date_from, date_to)
         entries = await use_case.execute(
-            requester_role=current_user["role"], date_from=resolved_from, date_to=resolved_to
+            requester_id=current_user["sub"],
+            requester_role=current_user["role"],
+            date_from=resolved_from,
+            date_to=resolved_to,
+            user_id=user_id,
         )
         workbook_bytes = build_absence_calendar_export_workbook(
             entries, date_from=resolved_from, date_to=resolved_to
@@ -298,14 +316,21 @@ def create_absences_router() -> APIRouter:
     async def export_calendar_pdf(
         date_from: Optional[date] = Query(None),
         date_to: Optional[date] = Query(None),
-        current_user: dict = Depends(require_role(*ADMIN_SOCIO)),
+        user_id: str | None = Query(
+            None, description="Solo el admin/socio pueden exportar el de otro usuario"
+        ),
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: GetAbsenceCalendarUseCase = Depends(get_absence_calendar_use_case),
     ):
         """Informe PDF con logo de marca del calendario general —
         `reportlab` (ver `calendar_pdf_export.py`)."""
         resolved_from, resolved_to = _resolve_calendar_range(date_from, date_to)
         entries = await use_case.execute(
-            requester_role=current_user["role"], date_from=resolved_from, date_to=resolved_to
+            requester_id=current_user["sub"],
+            requester_role=current_user["role"],
+            date_from=resolved_from,
+            date_to=resolved_to,
+            user_id=user_id,
         )
         pdf_bytes = build_absence_calendar_export_pdf(
             entries, date_from=resolved_from, date_to=resolved_to
