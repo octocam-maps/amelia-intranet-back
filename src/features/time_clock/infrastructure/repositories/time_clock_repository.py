@@ -323,6 +323,60 @@ class PostgresTimeClockRepository(ITimeClockRepository):
         rows = await self._db.fetch(_EXPORT_SELECT_FOR_USER, user_id, date_from, date_to)
         return [_row_to_export_row(row) for row in rows]
 
+    # --- Alta de fichaje en lote por rango de días (RF-A3) ---
+
+    async def list_holiday_dates_for_entity(
+        self, date_from: date, date_to: date, entity_id: str | None
+    ) -> list[date]:
+        # `entity_id IS NULL` cubre los festivos "para todas las
+        # entidades"; el `OR entity_id = $3` añade los propios de la
+        # entidad del usuario. A diferencia de `absences.list_holiday_
+        # dates` (que NO escopa por entidad, gap preexistente fuera de
+        # alcance), este puerto sí lo hace porque la spec de RF-A3 lo
+        # exige explícitamente.
+        rows = await self._db.fetch(
+            """
+            SELECT day FROM holidays
+            WHERE day BETWEEN $1 AND $2
+              AND (entity_id IS NULL OR entity_id = $3)
+            """,
+            date_from,
+            date_to,
+            entity_id,
+        )
+        return [row["day"] for row in rows]
+
+    async def list_approved_absence_ranges(
+        self, user_id: str, date_from: date, date_to: date
+    ) -> list[tuple[date, date]]:
+        rows = await self._db.fetch(
+            """
+            SELECT start_date, end_date FROM absence_requests
+            WHERE user_id = $1
+              AND status = 'approved'
+              AND start_date <= $3
+              AND end_date >= $2
+            """,
+            user_id,
+            date_from,
+            date_to,
+        )
+        return [(row["start_date"], row["end_date"]) for row in rows]
+
+    async def list_existing_entry_dates(
+        self, user_id: str, date_from: date, date_to: date
+    ) -> list[date]:
+        rows = await self._db.fetch(
+            """
+            SELECT DISTINCT work_date FROM time_clock_entries
+            WHERE user_id = $1 AND work_date BETWEEN $2 AND $3
+            """,
+            user_id,
+            date_from,
+            date_to,
+        )
+        return [row["work_date"] for row in rows]
+
     async def find_overlapping_entry(
         self,
         user_id: str,

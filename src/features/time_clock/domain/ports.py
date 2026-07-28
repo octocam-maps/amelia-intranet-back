@@ -133,6 +133,37 @@ class ITimeClockRepository(Protocol):
         tiempo de sus pausas — el tramo/pausa abierto cuenta hasta AHORA."""
         ...
 
+    # --- Alta de fichaje en lote por rango de días (RF-A3) ---
+
+    async def list_holiday_dates_for_entity(
+        self, date_from: date, date_to: date, entity_id: str | None
+    ) -> list[date]:
+        """Festivos vigentes en el rango, ESCOPADOS por entidad —
+        `entity_id=NULL` en la fila de `holidays` significa "aplica a
+        todas las entidades", así que siempre se incluye junto con los
+        festivos de la entidad concreta del usuario. A diferencia de
+        `absences.list_holiday_dates` (que NO escopa por entidad hoy — gap
+        preexistente, fuera de alcance de este feature), este puerto SÍ lo
+        hace, porque la spec de RF-A3 lo exige explícitamente por tabla de
+        casos."""
+        ...
+
+    async def list_approved_absence_ranges(
+        self, user_id: str, date_from: date, date_to: date
+    ) -> list[tuple[date, date]]:
+        """Rangos `[start_date, end_date]` de solicitudes `approved` del
+        propio usuario que solapan con `[date_from, date_to]` — se
+        expanden a fechas individuales en el use case, no aquí."""
+        ...
+
+    async def list_existing_entry_dates(
+        self, user_id: str, date_from: date, date_to: date
+    ) -> list[date]:
+        """`work_date` distintos con al menos un tramo ya registrado del
+        usuario en el rango — el alta en lote los omite como
+        `ya_registrado` sin traer los tramos completos."""
+        ...
+
     # --- Incidencias/comentarios sobre un tramo (B-2b) ---
 
     async def add_note(self, *, entry_id: str, author_id: str, body: str) -> TimeClockEntryNote:

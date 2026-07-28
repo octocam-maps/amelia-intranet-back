@@ -23,6 +23,24 @@ class TimeClockSource(str, Enum):  # noqa: UP042 — mismo mixin deliberado que 
     LIVE = "live"
 
 
+class TimeClockBatchOmissionReason(str, Enum):  # noqa: UP042 — mismo mixin que `TimeClockSource`
+    """Motivo por el que un día del rango del alta en lote (RF-A3) no
+    genera un tramo, sin que eso tumbe el resto del lote. Orden de
+    evaluación estricto, primer match gana — ver
+    `CreateTimeClockEntriesBatchUseCase` para el razonamiento completo
+    (LOGIC-2, pentest ético, severidad ALTA): `fin_de_semana` -> `festivo`
+    (escopado por entidad) -> `ausencia` (aprobada, propia) ->
+    `ya_registrado` -> `fuera_de_ventana`. Un día "futuro" sin ninguna de
+    estas exclusiones NO tiene motivo de omisión: tumba el lote entero en
+    vez de aparecer aquí."""
+
+    FIN_DE_SEMANA = "fin_de_semana"
+    FESTIVO = "festivo"
+    AUSENCIA = "ausencia"
+    YA_REGISTRADO = "ya_registrado"
+    FUERA_DE_VENTANA = "fuera_de_ventana"
+
+
 @dataclass(frozen=True)
 class TimeClockEntry:
     """Un tramo de fichaje (entrada/salida elegidas manualmente por el usuario).
