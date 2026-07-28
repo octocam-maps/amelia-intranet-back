@@ -10,6 +10,8 @@ fichó" son proyecciones de tablas distintas sin relación entre sí
 
 from datetime import date
 
+from src.shared.utils.timezone import today_in_madrid
+
 from ...domain.ports import INotificationRepository
 from .notify import NotifyUseCase
 
@@ -23,7 +25,15 @@ class RunClockInReminderJobUseCase:
         # A diferencia de `clock_out` (que revisa AYER), este job evalúa el
         # día EN CURSO (RF-A4.6) — el recordatorio es "todavía no fichaste
         # HOY", no una jornada ya cerrada.
-        target_date = work_date or date.today()
+        #
+        # LOGIC-1 (auditoría QA, severidad MEDIA): `today_in_madrid()`, NUNCA
+        # `date.today()` — el proceso corre con `TZ=UTC` (ver
+        # `src/shared/utils/timezone.py`, el ÚNICO punto que decide "qué día
+        # es hoy"). Entre las 22:00 y las 24:00 UTC, Madrid ya está en el día
+        # siguiente: con `date.today()` el `weekday()` salía mal en el
+        # límite del fin de semana y el mensaje citaba una fecha que para
+        # España ya había cerrado.
+        target_date = work_date or today_in_madrid()
 
         # L-V únicamente (RF-A4): sábado/domingo no generan recordatorio,
         # sin tocar el repositorio — un fin de semana nunca tiene plantilla
