@@ -15,6 +15,7 @@ HTML/Chromium como weasyprint, que no estaba disponible en el entorno).
 import io
 from datetime import date
 from pathlib import Path
+from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -100,7 +101,17 @@ def _build_header_flowables(
         )
     )
     if subject_name:
-        flowables.append(Paragraph(f"Empleado: {subject_name}", subject_style))
+        # SEC-1 (auditoría QA, severidad ALTA): `subject_name` viene de
+        # `users.full_name` — no está bajo control (Google OIDC lo rellena,
+        # un admin lo puede editar a mano). `Paragraph` interpreta un
+        # subconjunto real de XML/mini-HTML, así que una etiqueta real sin
+        # escapar puede reventar la generación (`<b>` sin cerrar) o
+        # interpretarse como formato (`<b>`/`<font ...>` bien formados) en
+        # vez de aparecer literal. Se escapa ANTES de interpolar para que
+        # el nombre se vea siempre tal cual, nunca como markup.
+        flowables.append(
+            Paragraph(f"Empleado: {_xml_escape(subject_name)}", subject_style)
+        )
     return flowables
 
 

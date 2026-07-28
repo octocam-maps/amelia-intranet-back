@@ -87,3 +87,45 @@ def test_header_flowables_with_subject_name_adds_employee_line():
     texts = [getattr(f, "text", None) for f in flowables if hasattr(f, "text")]
 
     assert any(text == "Empleado: Ana García" for text in texts)
+
+
+def test_pdf_with_a_real_markup_tag_in_subject_name_does_not_crash():
+    """SEC-1 (auditoría QA, severidad ALTA): `subject_name` viene de
+    `users.full_name` — Google OIDC lo rellena y cualquier admin puede
+    editarlo a mano al gestionar la plantilla, no está bajo control.
+    `Paragraph(f"Empleado: {subject_name}", ...)` interpola ese valor sin
+    escapar y `reportlab` interpreta un subconjunto real de XML/mini-HTML
+    dentro de `Paragraph` — una etiqueta real como `<b>` revienta la
+    generación con un `ValueError` (500 genérico, no controlado), rompiendo
+    para siempre el export PDF individual de esa persona. Un `<` suelto NO
+    basta para reproducirlo — reportlab solo revienta cuando la etiqueta
+    de verdad intenta parsear (aquí, un `<b>` SIN cerrar: el cierre
+    implícito de `</para>` no encaja con él)."""
+    pdf_bytes = build_absence_calendar_export_pdf(
+        [_entry()],
+        date_from=date(2026, 7, 1),
+        date_to=date(2026, 7, 31),
+        subject_name="Ana <b>x Garcia",
+    )
+
+    assert pdf_bytes.startswith(b"%PDF")
+
+
+def test_header_flowables_escape_special_chars_and_render_them_literal():
+    """El nombre debe aparecer LITERAL en el documento — ni una etiqueta
+    real, ni entidades sin escapar, ni un `ValueError` a mitad de camino."""
+    from src.features.absences.infrastructure.calendar_pdf_export import (
+        _build_header_flowables,
+    )
+
+    malicious_name = 'Ana <b>x</b> & <font color="red">Garcia</font> & Cía'
+    flowables = _build_header_flowables(
+        date(2026, 7, 1), date(2026, 7, 31), subject_name=malicious_name
+    )
+    texts = [getattr(f, "text", None) for f in flowables if hasattr(f, "text")]
+
+    assert any(
+        text == "Empleado: Ana &lt;b&gt;x&lt;/b&gt; &amp; "
+        '&lt;font color="red"&gt;Garcia&lt;/font&gt; &amp; Cía'
+        for text in texts
+    )
