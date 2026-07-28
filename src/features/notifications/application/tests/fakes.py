@@ -25,6 +25,7 @@ class FakeNotificationRepository:
         self.birthday_users: list[tuple[str, str]] = []
         self.anniversary_users: list[tuple[str, int]] = []
         self.user_ids_with_open_entry: list[str] = []
+        self.user_ids_pending_clock_in: list[str] = []
 
     async def create(
         self, *, user_id: str, type: str, title: str, body: Optional[str], data: dict[str, Any]
@@ -96,6 +97,9 @@ class FakeNotificationRepository:
 
     async def list_user_ids_with_open_entry(self, work_date) -> list[str]:
         return list(self.user_ids_with_open_entry)
+
+    async def list_user_ids_pending_clock_in(self, work_date) -> list[str]:
+        return list(self.user_ids_pending_clock_in)
 
     async def exists_recipient_notification_with_data(
         self, *, user_id: str, type: str, data_key: str, data_value: str

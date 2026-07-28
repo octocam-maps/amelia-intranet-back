@@ -8,6 +8,9 @@ from ..application.use_cases.list_notifications import ListNotificationsUseCase
 from ..application.use_cases.mark_all_notifications_read import MarkAllNotificationsReadUseCase
 from ..application.use_cases.mark_notification_read import MarkNotificationReadUseCase
 from ..application.use_cases.notify import NotifyUseCase
+from ..application.use_cases.run_clock_in_reminder_job import (
+    RunClockInReminderJobUseCase,
+)
 from ..application.use_cases.run_clock_out_notification_job import (
     RunClockOutNotificationJobUseCase,
 )
@@ -50,5 +53,12 @@ def get_run_daily_notification_job_use_case() -> RunDailyNotificationJobUseCase:
 def get_run_clock_out_notification_job_use_case() -> RunClockOutNotificationJobUseCase:
     repository = _get_repository()
     return RunClockOutNotificationJobUseCase(
+        repository, NotifyUseCase(repository, get_email_sender())
+    )
+
+
+def get_run_clock_in_reminder_job_use_case() -> RunClockInReminderJobUseCase:
+    repository = _get_repository()
+    return RunClockInReminderJobUseCase(
         repository, NotifyUseCase(repository, get_email_sender())
     )

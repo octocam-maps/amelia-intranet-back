@@ -82,6 +82,14 @@ class INotificationRepository(Protocol):
         entrada y no salida."""
         ...
 
+    async def list_user_ids_pending_clock_in(self, work_date: date) -> list[str]:
+        """Plantilla activa, salvo `externo_invitado`, que TODAVÍA no fichó
+        entrada en `work_date`: ausencia de filas en `time_clock_entries` ese
+        día, sin ausencia aprobada que lo cubra, y sin festivo vigente para
+        su entidad (`entity_id IS NULL` = todas). Un solo `NOT EXISTS` por
+        tabla — sin JOIN a fichaje, la ausencia de filas ES la señal."""
+        ...
+
     # --- Idempotencia de los jobs por-tiempo ---
     #
     # Reejecutar el mismo cron el mismo día (o a demanda vía `POST
