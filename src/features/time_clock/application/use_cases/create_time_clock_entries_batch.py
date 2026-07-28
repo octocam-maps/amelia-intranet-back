@@ -148,19 +148,38 @@ class CreateTimeClockEntriesBatchUseCase:
                 candidates.append(current)
             current += timedelta(days=1)
 
+        # RACE-1 (auditoría QA, severidad ALTA): el bucle de escritura NO
+        # tenía transacción envolvente — cada día llamaba a
+        # `CreateTimeClockEntryUseCase.execute()` con su propia conexión en
+        # autocommit. Si un día a mitad de lote fallaba (p. ej.
+        # `TimeClockOverlapError` por el constraint EXCLUDE bajo
+        # concurrencia real: doble clic en "Guardar", o dos pestañas
+        # enviando lotes solapados), la excepción subía y el cliente recibía
+        # el error "como si nada se hubiera creado", pero los días previos
+        # ya habían quedado persistidos. `repository.transaction()` agrupa
+        # TODAS las escrituras del lote en una única transacción: un fallo
+        # a mitad revierte también los días ya creados en esta pasada. Se
+        # omite abrir la transacción si no hay candidatos (lote 100% omitido
+        # por calendario) para no pedir una conexión del pool sin necesidad.
         created = []
-        for work_date in candidates:
-            entry = await self._create_unit_use_case.execute(
-                user_id=user_id,
-                work_date=work_date,
-                clock_in=datetime.combine(work_date, clock_in_time, tzinfo=MADRID_TZ),
-                clock_out=(
-                    datetime.combine(work_date, clock_out_time, tzinfo=MADRID_TZ)
-                    if clock_out_time is not None
-                    else None
-                ),
-            )
-            created.append(entry)
+        if candidates:
+            async with self._repository.transaction():
+                for work_date in candidates:
+                    entry = await self._create_unit_use_case.execute(
+                        user_id=user_id,
+                        work_date=work_date,
+                        clock_in=datetime.combine(
+                            work_date, clock_in_time, tzinfo=MADRID_TZ
+                        ),
+                        clock_out=(
+                            datetime.combine(
+                                work_date, clock_out_time, tzinfo=MADRID_TZ
+                            )
+                            if clock_out_time is not None
+                            else None
+                        ),
+                    )
+                    created.append(entry)
 
         omitted = [
             OmittedBatchDay(work_date=day, reason=reason.value)

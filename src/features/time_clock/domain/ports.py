@@ -4,6 +4,7 @@ Puertos (Protocols) del feature `time_clock`. `domain` no importa nada de
 en `infrastructure` y se inyecta aquí por duck typing estructural.
 """
 
+from contextlib import AbstractAsyncContextManager
 from datetime import date, datetime
 from typing import Optional, Protocol
 
@@ -11,6 +12,25 @@ from .entities import TimeClockBreak, TimeClockEntry, TimeClockEntryNote, TimeCl
 
 
 class ITimeClockRepository(Protocol):
+    def transaction(self) -> AbstractAsyncContextManager[None]:
+        """RACE-1 (auditoría QA, severidad ALTA): async context manager que
+        agrupa en una única transacción atómica las escrituras hechas
+        DENTRO del bloque (`async with repository.transaction(): ...`).
+
+        Lo usa el bucle de escritura de `CreateTimeClockEntriesBatchUseCase`
+        para que un fallo a mitad del lote (p. ej. `TimeClockOverlapError`
+        por el constraint `EXCLUDE` bajo concurrencia real) revierta TODOS
+        los tramos ya creados en esa misma pasada, no solo los pendientes.
+
+        Alcance deliberadamente acotado: solo `create_entry` y
+        `find_overlapping_entry` — los dos métodos que el bucle de
+        escritura del lote invoca vía `CreateTimeClockEntryUseCase` — honran
+        este contexto en el adaptador Postgres. Ampliarlo a todos los
+        métodos del puerto sería invasión sin necesidad hoy; si otro flujo
+        empieza a escribir dentro de un `async with transaction()`, hay que
+        revisar si también necesita sumarse."""
+        ...
+
     async def create_entry(
         self,
         *,

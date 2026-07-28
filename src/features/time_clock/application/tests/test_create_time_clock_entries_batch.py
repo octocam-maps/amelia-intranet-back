@@ -26,6 +26,7 @@ from src.features.time_clock.domain.errors import (
     TimeClockBatchDateRangeInvertedError,
     TimeClockBatchFutureDateError,
     TimeClockBatchRangeTooLongError,
+    TimeClockOverlapError,
 )
 
 from .fakes import FakeTimeClockRepository
@@ -323,6 +324,53 @@ async def test_batch_omits_a_day_that_already_has_an_entry(monkeypatch):
     assert result.created == []
     assert len(result.omitted) == 1
     assert result.omitted[0].reason == "ya_registrado"
+
+
+class _FailingOnNthCreateRepository(FakeTimeClockRepository):
+    """Simula el `TimeClockOverlapError` que produce el constraint `EXCLUDE`
+    de la migración 012 bajo concurrencia real (doble clic en "Guardar", o
+    dos pestañas enviando lotes solapados) — el N-ésimo `create_entry` del
+    bucle de escritura falla, los anteriores ya se habían ejecutado."""
+
+    def __init__(self, *args, fail_on_call: int, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._fail_on_call = fail_on_call
+        self._create_calls = 0
+
+    async def create_entry(self, **kwargs):
+        self._create_calls += 1
+        if self._create_calls == self._fail_on_call:
+            raise TimeClockOverlapError("Fallo simulado del N-ésimo día del lote.")
+        return await super().create_entry(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_race1_a_failure_mid_batch_write_leaves_zero_entries_persisted(
+    monkeypatch,
+):
+    """RACE-1 (auditoría QA, severidad ALTA): el bucle de escritura del lote
+    NO tenía transacción envolvente — cada día llamaba a
+    `CreateTimeClockEntryUseCase.execute()` con su propia conexión en
+    autocommit. Si el 3.º de 5 días fallaba, el cliente recibía un 422 "como
+    si nada se hubiera creado", pero los 2 días anteriores ya habían quedado
+    persistidos. El lote entero debe ser atómico: cero tramos si CUALQUIER
+    día del bucle de escritura falla."""
+    today = _d(17)  # viernes
+    _freeze_today(monkeypatch, today)
+    repository = _FailingOnNthCreateRepository(fail_on_call=3)
+    use_case = _build_use_case(repository)
+
+    with pytest.raises(TimeClockOverlapError):
+        await use_case.execute(
+            user_id=_USER_ID,
+            entity_id=_ENTITY_HUB,
+            date_from=_d(13),  # lunes
+            date_to=_d(17),  # viernes, 5 días laborables candidatos
+            clock_in_time=time(8, 0),
+            clock_out_time=time(17, 0),
+        )
+
+    assert len(repository.entries) == 0
 
 
 @pytest.mark.asyncio

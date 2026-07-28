@@ -3,6 +3,7 @@ Adaptador asyncpg del puerto `ITimeClockRepository`. SQL crudo — sin ORM.
 Único lugar del feature que conoce el esquema de `time_clock_entries`.
 """
 
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -171,6 +172,29 @@ def _row_to_note(row) -> TimeClockEntryNote:
 class PostgresTimeClockRepository(ITimeClockRepository):
     def __init__(self, db_pool: DatabasePool):
         self._db = db_pool
+        # RACE-1: conexión activa mientras se está dentro de un `async with
+        # self.transaction()` — `None` en el camino normal (autocommit por
+        # llamada, vía `self._db`). Ver `transaction()` y `_writer` más abajo.
+        self._connection: asyncpg.Connection | None = None
+
+    @asynccontextmanager
+    async def transaction(self):
+        async with self._db.acquire() as connection:
+            async with connection.transaction():
+                previous_connection = self._connection
+                self._connection = connection
+                try:
+                    yield
+                finally:
+                    self._connection = previous_connection
+
+    @property
+    def _writer(self) -> "DatabasePool | asyncpg.Connection":
+        """Ejecutor efectivo para `create_entry`/`find_overlapping_entry`:
+        la conexión de la transacción activa si `transaction()` está en
+        curso, o el pool (una conexión nueva por llamada) en el camino
+        normal. Ambos exponen `fetchrow(query, *args)` con la misma firma."""
+        return self._connection if self._connection is not None else self._db
 
     async def create_entry(
         self,
@@ -187,7 +211,7 @@ class PostgresTimeClockRepository(ITimeClockRepository):
         # dos tramos concurrentes del mismo usuario/día se solapan, Postgres
         # rechaza el segundo INSERT con ExclusionViolationError.
         try:
-            row = await self._db.fetchrow(
+            row = await self._writer.fetchrow(
                 """
                 INSERT INTO time_clock_entries (user_id, work_date, clock_in, clock_out, source)
                 VALUES ($1, $2, $3, $4, $5)
@@ -388,7 +412,11 @@ class PostgresTimeClockRepository(ITimeClockRepository):
     ) -> Optional[TimeClockEntry]:
         # Un tramo abierto (`clock_out` NULL) se trata como si terminara "ahora"
         # a efectos de solape: se compara contra COALESCE(clock_out, 'infinity').
-        row = await self._db.fetchrow(
+        # RACE-1: usa `self._writer` (no `self._db` directo) para que, dentro
+        # de un lote transaccional, la comprobación de solape vea las
+        # escrituras de los días previos del MISMO lote (misma conexión,
+        # misma transacción todavía sin commit).
+        row = await self._writer.fetchrow(
             f"""
             {_ENTRY_SELECT}
             WHERE user_id = $1

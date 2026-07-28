@@ -2,6 +2,7 @@
 uso sin Postgres, igual que `features/auth/application/tests/fakes.py`."""
 
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -47,6 +48,20 @@ class FakeTimeClockRepository:
         self.approved_absence_ranges: dict[str, list[tuple[date, date]]] = (
             approved_absence_ranges or {}
         )
+
+    # RACE-1: simula la atomicidad del `async with connection.transaction()`
+    # real — toma una foto de `entries`/`breaks` al entrar y la restaura si
+    # el bloque lanza, igual que un ROLLBACK real revertiría todo el lote.
+    @asynccontextmanager
+    async def transaction(self):
+        entries_snapshot = dict(self.entries)
+        breaks_snapshot = dict(self.breaks)
+        try:
+            yield
+        except Exception:
+            self.entries = entries_snapshot
+            self.breaks = breaks_snapshot
+            raise
 
     async def create_entry(self, *, user_id, work_date, clock_in, clock_out, source) -> TimeClockEntry:
         entry_id = str(uuid.uuid4())
