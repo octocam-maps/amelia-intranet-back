@@ -48,6 +48,7 @@ def _staff_member(**overrides) -> StaffMember:
         full_name="Ana García",
         email="ana.garcia@ameliahub.com",
         avatar_url=None,
+        contract_type=None,
         job_title=None,
         department_id=None,
         department_name=None,

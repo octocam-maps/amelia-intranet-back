@@ -61,6 +61,7 @@ def create_staff_router() -> APIRouter:
             full_name=dto.full_name,
             email=dto.email,
             job_title=dto.job_title,
+            contract_type=dto.contract_type,
             department=dto.department,
             entity_code=dto.entity,
             role_code=dto.role,
@@ -84,6 +85,7 @@ def create_staff_router() -> APIRouter:
         # `holidays.update_holiday`).
         kwargs = {
             "job_title": dto.job_title,
+            "contract_type": dto.contract_type,
             "department": dto.department,
             "entity_code": dto.entity,
             "role_code": dto.role,

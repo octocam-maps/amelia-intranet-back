@@ -96,6 +96,7 @@ def test_admin_can_patch_a_staff_members_role_to_socio_and_back():
                 full_name="David Ferre",
                 email="david@octocam-maps.com",
                 avatar_url=None,
+                contract_type=None,
                 job_title="Socio",
                 department_id=None,
                 department_name=None,

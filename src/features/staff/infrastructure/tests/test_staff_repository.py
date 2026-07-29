@@ -23,7 +23,7 @@ def _row(**overrides) -> dict:
         "full_name": "Sandra Ramírez",
         "email": "sandra@ameliahub.com",
         "avatar_url": None,
-        "job_title": "Project Manager",
+        "contract_type": None, "job_title": "Project Manager",
         "status": "invited",
         "hire_date": None,
         "created_at": datetime.now(timezone.utc),

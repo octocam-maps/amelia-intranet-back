@@ -38,6 +38,7 @@ class UpdateStaffMemberUseCase:
         user_id: str,
         *,
         job_title: Optional[str] = None,
+        contract_type: Optional[str] = None,
         department: Optional[str] = None,
         entity_code: Optional[str] = None,
         role_code: Optional[str] = None,
@@ -98,6 +99,7 @@ class UpdateStaffMemberUseCase:
         updated = await self._repository.update_staff_member(
             user_id,
             job_title=job_title,
+            contract_type=contract_type,
             department_id=department_id,
             entity_id=entity_id,
             role_id=role_id,

@@ -21,7 +21,15 @@ def _current_year() -> int:
 
 _DEFAULT_INVITED_BY = "admin-1"
 
-_ENTITIES = {"hub": "entity-hub", "lab": "entity-lab", "ops": "entity-ops"}
+# Las CUATRO sociedades. `hincator` se añadió el 2026-07-29 (migración 036):
+# sin ella aquí, cualquier test que dé de alta a una de las 19 personas de esa
+# sociedad recibe un InvalidEntityCodeError que no refleja la realidad.
+_ENTITIES = {
+    "hub": "entity-hub",
+    "lab": "entity-lab",
+    "ops": "entity-ops",
+    "hincator": "entity-hincator",
+}
 _ROLES = {
     "administrador": "role-administrador",
     "empleado": "role-empleado",
@@ -100,6 +108,7 @@ class FakeStaffRepository:
         full_name,
         email,
         job_title,
+        contract_type=None,
         department_id,
         entity_id,
         role_id,
@@ -123,6 +132,7 @@ class FakeStaffRepository:
             email=email,
             avatar_url=None,
             job_title=job_title,
+            contract_type=contract_type,
             department_id=department_id,
             department_name=None,
             entity_id=entity_id,
@@ -153,6 +163,7 @@ class FakeStaffRepository:
         user_id,
         *,
         job_title,
+        contract_type=None,
         department_id,
         entity_id,
         role_id,
@@ -196,6 +207,7 @@ class FakeStaffRepository:
         updated = replace(
             existing,
             job_title=job_title if job_title is not None else existing.job_title,
+            contract_type=contract_type if contract_type is not None else existing.contract_type,
             department_id=department_id if department_id is not None else existing.department_id,
             entity_id=entity_id if entity_id is not None else existing.entity_id,
             entity_code=entity_code,

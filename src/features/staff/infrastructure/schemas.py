@@ -14,7 +14,15 @@ from pydantic import BaseModel, EmailStr, Field
 # además puede desincronizarse de la tabla real (ver el mismo bug que tenía
 # `announcements/infrastructure/schemas.py` antes de este cambio). Agregar un
 # rol nuevo ahora es solo una fila en `roles` — no requiere tocar este DTO.
-EntityCode = Literal["hub", "lab", "ops"]
+# Las cuatro sociedades del grupo. `hincator` se añadió el 2026-07-29
+# (migración 036) y NO es opcional tenerla aquí: sin ella este endpoint
+# devuelve 422 para 19 de los 36 trabajadores de la plantilla.
+# Espejo del CHECK de `entities.code`; si cambia allí, cambia aquí.
+EntityCode = Literal["hub", "lab", "ops", "hincator"]
+
+# Espejo del CHECK `ck_users_contract_type` (migración 037). Los tres valores de
+# la hoja de plantilla —Full-Time, Part-Time, Intern— normalizados a snake_case.
+ContractType = Literal["full_time", "part_time", "intern"]
 
 
 class StaffMemberDTO(BaseModel):
@@ -23,6 +31,8 @@ class StaffMemberDTO(BaseModel):
     email: str
     avatar_url: Optional[str]
     job_title: Optional[str]
+    # `None` = desconocido, NO jornada completa. Quien lo pinte debe distinguirlo.
+    contract_type: Optional[ContractType]
     department_id: Optional[str]
     department_name: Optional[str]
     entity_id: Optional[str]
@@ -54,6 +64,7 @@ class CreateStaffMemberDTO(BaseModel):
     full_name: str = Field(..., min_length=1)
     email: EmailStr
     job_title: Optional[str] = None
+    contract_type: Optional[ContractType] = None
     department: Optional[str] = None
     entity: EntityCode
     role: str = Field(..., min_length=1)
@@ -66,6 +77,7 @@ class CreateStaffMemberDTO(BaseModel):
 
 class UpdateStaffMemberDTO(BaseModel):
     job_title: Optional[str] = None
+    contract_type: Optional[ContractType] = None
     department: Optional[str] = None
     entity: Optional[EntityCode] = None
     role: Optional[str] = Field(None, min_length=1)

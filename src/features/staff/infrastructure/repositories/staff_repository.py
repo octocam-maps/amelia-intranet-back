@@ -27,7 +27,8 @@ from ...domain.ports import IStaffRepository
 
 _STAFF_SELECT = """
     SELECT
-        u.id, u.full_name, u.email, u.avatar_url, u.job_title, u.status, u.hire_date, u.created_at,
+        u.id, u.full_name, u.email, u.avatar_url, u.job_title, u.contract_type,
+        u.status, u.hire_date, u.created_at,
         u.vacation_days_override,
         u.department_id, d.name AS department_name,
         u.entity_id, e.code AS entity_code,
@@ -69,6 +70,7 @@ def _row_to_member(row) -> StaffMember:
         email=row["email"],
         avatar_url=row["avatar_url"],
         job_title=row["job_title"],
+        contract_type=row["contract_type"],
         department_id=str(row["department_id"]) if row["department_id"] else None,
         department_name=row["department_name"],
         entity_id=str(row["entity_id"]) if row["entity_id"] else None,
@@ -168,6 +170,7 @@ class PostgresStaffRepository(IStaffRepository):
         full_name: str,
         email: str,
         job_title: Optional[str],
+        contract_type: Optional[str] = None,
         department_id: Optional[str],
         entity_id: str,
         role_id: str,
@@ -182,16 +185,17 @@ class PostgresStaffRepository(IStaffRepository):
                 user_id = await connection.fetchval(
                     """
                     INSERT INTO users (
-                        full_name, email, job_title, department_id,
+                        full_name, email, job_title, contract_type, department_id,
                         entity_id, role_id, is_external, hire_date,
                         vacation_days_override, status
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'invited')
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'invited')
                     RETURNING id
                     """,
                     full_name,
                     email,
                     job_title,
+                    contract_type,
                     department_id,
                     entity_id,
                     role_id,
@@ -236,6 +240,7 @@ class PostgresStaffRepository(IStaffRepository):
         user_id: str,
         *,
         job_title: Optional[str],
+        contract_type: Optional[str] = None,
         department_id: Optional[str],
         entity_id: Optional[str],
         role_id: Optional[str],

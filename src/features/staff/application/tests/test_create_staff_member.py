@@ -262,3 +262,56 @@ async def test_unknown_role_code_is_rejected():
             vacation_days_override=None,
             invited_by=_INVITED_BY,
         )
+
+
+@pytest.mark.asyncio
+async def test_contract_type_se_guarda_tal_cual():
+    """El tipo de contrato viaja del alta a la fila.
+
+    La hoja de plantilla trae Full-Time / Part-Time / Intern para las 36
+    personas y hasta la migración `037` el esquema tiraba el dato. Se guarda
+    normalizado a snake_case, como el resto de enums del esquema.
+    """
+    repository = FakeStaffRepository()
+    use_case = _build_use_case(repository)
+
+    member = await use_case.execute(
+        full_name="Miquel Sala",
+        email="miquel.sala@ameliahub.com",
+        job_title="Fullstack Engineer",
+        department="Producto",
+        entity_code="hincator",
+        role_code="empleado",
+        hire_date=None,
+        vacation_days_override=None,
+        contract_type="intern",
+        invited_by=_INVITED_BY,
+    )
+
+    assert member.contract_type == "intern"
+
+
+@pytest.mark.asyncio
+async def test_contract_type_ausente_queda_a_none_no_a_jornada_completa():
+    """`None` significa "no lo sabemos", no "jornada completa".
+
+    Poner `full_time` por defecto sería inventarse el dato de todos los
+    usuarios que ya existen.
+    """
+    repository = FakeStaffRepository()
+    use_case = _build_use_case(repository)
+
+    member = await use_case.execute(
+        full_name="Derek Ortiz",
+        email="derek.ortiz@ameliahub.com",
+        job_title="Manufacturing Technician",
+        department="Producto",
+        entity_code="hincator",
+        role_code="empleado",
+        hire_date=None,
+        vacation_days_override=None,
+        contract_type=None,
+        invited_by=_INVITED_BY,
+    )
+
+    assert member.contract_type is None
