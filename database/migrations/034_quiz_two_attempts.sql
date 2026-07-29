@@ -25,6 +25,15 @@ ALTER TABLE onboarding_quiz_attempts
 ALTER TABLE onboarding_quiz_attempts
     DROP CONSTRAINT IF EXISTS uq_quiz_attempt_single;
 
+-- El `DROP ... IF EXISTS` de la restricción NUEVA no es redundante: sin él, un
+-- segundo pase de esta migración aborta con `relation
+-- "uq_quiz_attempt_per_number" already exists`. Este proyecto no tiene runner de
+-- migraciones ni tabla de control (`database/migrations/` se aplica a mano con
+-- psql), así que reejecutar una migración no es un accidente improbable: es lo
+-- que va a pasar. El `CHECK` de más abajo ya venía protegido; esta no, y era una
+-- asimetría sin motivo.
+ALTER TABLE onboarding_quiz_attempts
+    DROP CONSTRAINT IF EXISTS uq_quiz_attempt_per_number;
 ALTER TABLE onboarding_quiz_attempts
     ADD CONSTRAINT uq_quiz_attempt_per_number UNIQUE (user_id, step_id, attempt_number);
 
