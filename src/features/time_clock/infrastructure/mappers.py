@@ -1,9 +1,11 @@
-from ..application.results import LiveClockStatusResult
+from ..application.results import LiveClockStatusResult, TimeClockEntriesBatchResult
 from ..application.use_cases.list_time_clock_entries import TimeClockEntryPage
 from ..domain.entities import TimeClockEntry, TimeClockEntryNote
 from .schemas import (
+    OmittedBatchDayDTO,
     OpenTimeClockEntryDTO,
     TimeClockCurrentStatusDTO,
+    TimeClockEntriesBatchDTO,
     TimeClockEntryDTO,
     TimeClockEntryListDTO,
     TimeClockEntryNoteDTO,
@@ -30,6 +32,18 @@ def entries_to_dto(page: TimeClockEntryPage, *, limit: int, offset: int) -> Time
         total=page.total,
         limit=limit,
         offset=offset,
+    )
+
+
+def batch_result_to_dto(
+    result: TimeClockEntriesBatchResult,
+) -> TimeClockEntriesBatchDTO:
+    return TimeClockEntriesBatchDTO(
+        created=[entry_to_dto(entry) for entry in result.created],
+        omitted=[
+            OmittedBatchDayDTO(work_date=omitted.work_date, reason=omitted.reason)
+            for omitted in result.omitted
+        ],
     )
 
 

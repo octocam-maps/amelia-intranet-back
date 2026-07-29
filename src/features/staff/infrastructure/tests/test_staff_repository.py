@@ -23,7 +23,7 @@ def _row(**overrides) -> dict:
         "full_name": "Sandra Ramírez",
         "email": "sandra@ameliahub.com",
         "avatar_url": None,
-        "job_title": "Project Manager",
+        "contract_type": None, "job_title": "Project Manager",
         "status": "invited",
         "hire_date": None,
         "created_at": datetime.now(timezone.utc),
@@ -349,3 +349,85 @@ async def test_update_staff_member_setting_a_new_override_recomputes_balance():
     connection.execute.assert_awaited_once()
     balance_args = connection.execute.call_args[0][1:]
     assert balance_args == ("user-1", 15.0)
+
+
+@pytest.mark.asyncio
+async def test_update_staff_member_persists_contract_type():
+    """El `contract_type` del PATCH llega al SQL.
+
+    Bug real detectado en revisión: el parámetro estaba en la firma del método y
+    se paseaba por tres capas —ruta, caso de uso, repositorio— pero **no estaba
+    en el `UPDATE ... SET`**. El backend respondía 200 como si hubiera guardado y
+    la columna no se tocaba. No saltó porque `test_update_staff_member.py` no
+    cubría el campo, a diferencia del alta, que sí lo prueba.
+    """
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "hire_date": None,
+        "vacation_days_override": None,
+    }
+    pool = _FakePool(connection)
+    pool.fetchrow.return_value = _row()
+    repository = PostgresStaffRepository(pool)
+
+    await repository.update_staff_member(
+        "user-1",
+        job_title=None,
+        contract_type="part_time",
+        department_id=None,
+        entity_id=None,
+        role_id=None,
+        is_external=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=False,
+        status=None,
+        clear_contract_type=False,
+    )
+
+    sql = connection.fetchrow.call_args[0][0]
+    parametros = connection.fetchrow.call_args[0][1:]
+
+    assert "contract_type" in sql, "el UPDATE no toca la columna contract_type"
+    assert "part_time" in parametros
+
+
+@pytest.mark.asyncio
+async def test_update_staff_member_can_clear_contract_type():
+    """`clear_contract_type` vacía la columna, `COALESCE` sola no podría.
+
+    El formulario tiene que permitir dejar el tipo de contrato sin especificar:
+    con solo `COALESCE($n, contract_type)`, mandar `null` significaría "no
+    tocar", así que un valor puesto por error sería irreversible desde la UI.
+    Mismo patrón que `clear_vacation_days_override`.
+    """
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "hire_date": None,
+        "vacation_days_override": None,
+    }
+    pool = _FakePool(connection)
+    pool.fetchrow.return_value = _row()
+    repository = PostgresStaffRepository(pool)
+
+    await repository.update_staff_member(
+        "user-1",
+        job_title=None,
+        contract_type=None,
+        department_id=None,
+        entity_id=None,
+        role_id=None,
+        is_external=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=False,
+        status=None,
+        clear_contract_type=True,
+    )
+
+    sql = connection.fetchrow.call_args[0][0]
+    parametros = connection.fetchrow.call_args[0][1:]
+
+    # El flag viaja como parámetro y el SQL lo usa en un CASE, como el override.
+    assert True in parametros
+    assert "CASE" in sql

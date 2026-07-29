@@ -24,6 +24,9 @@ from ..application.use_cases.get_unread_count import GetUnreadCountUseCase
 from ..application.use_cases.list_notifications import ListNotificationsUseCase
 from ..application.use_cases.mark_all_notifications_read import MarkAllNotificationsReadUseCase
 from ..application.use_cases.mark_notification_read import MarkNotificationReadUseCase
+from ..application.use_cases.run_clock_in_reminder_job import (
+    RunClockInReminderJobUseCase,
+)
 from ..application.use_cases.run_clock_out_notification_job import (
     RunClockOutNotificationJobUseCase,
 )
@@ -32,6 +35,7 @@ from .dependencies import (
     get_list_notifications_use_case,
     get_mark_all_notifications_read_use_case,
     get_mark_notification_read_use_case,
+    get_run_clock_in_reminder_job_use_case,
     get_run_clock_out_notification_job_use_case,
     get_run_daily_notification_job_use_case,
     get_unread_count_use_case,
@@ -91,13 +95,16 @@ def create_notifications_router() -> APIRouter:
     @limiter.limit("5/minute")
     async def run_job(
         request: Request,
-        job: str = Query(..., pattern="^(daily|clock_out)$"),
+        job: str = Query(..., pattern="^(daily|clock_out|clock_in_reminder)$"),
         current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         daily_use_case: RunDailyNotificationJobUseCase = Depends(
             get_run_daily_notification_job_use_case
         ),
         clock_out_use_case: RunClockOutNotificationJobUseCase = Depends(
             get_run_clock_out_notification_job_use_case
+        ),
+        clock_in_reminder_use_case: RunClockInReminderJobUseCase = Depends(
+            get_run_clock_in_reminder_job_use_case
         ),
     ):
         """Ejecución a demanda de la detección por-tiempo — pensado para un
@@ -112,6 +119,8 @@ def create_notifications_router() -> APIRouter:
             result = await daily_use_case.execute()
         elif job == "clock_out":
             result = await clock_out_use_case.execute()
+        elif job == "clock_in_reminder":
+            result = await clock_in_reminder_use_case.execute()
         else:
             raise ValidationError(f"job desconocido: {job}")
         return RunNotificationJobResponseDTO(job=job, result=result)

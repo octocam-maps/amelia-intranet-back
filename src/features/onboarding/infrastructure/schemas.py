@@ -6,6 +6,24 @@ from typing import Annotated, Any, Optional
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 
+class OnboardingStepDocumentDTO(BaseModel):
+    """Documento vigente asociado al paso (manual a leer, plantilla a firmar).
+
+    `url` es `onboarding_documents.storage_ref`, la ÚNICA fuente de verdad de
+    dónde vive el fichero. Se expone aquí para que el cliente no tenga que
+    hardcodear la ruta ni duplicarla en el `config` del paso: si RRHH publica
+    otra versión del manual, cambia una fila y la UI la sigue.
+
+    `content_hash` NO se expone: es el registro de integridad interno
+    (RNF2.2), no algo que el cliente necesite ni deba mostrar."""
+
+    id: str
+    kind: str
+    title: str
+    version: int
+    url: Optional[str]
+
+
 class OnboardingStepDTO(BaseModel):
     id: str
     step_order: int
@@ -20,6 +38,10 @@ class OnboardingStepDTO(BaseModel):
     data: dict[str, Any]
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
+    # Solo en los pasos que tienen documento (`manual`, `signature`); `None`
+    # en vídeo, cuestionario y perfil. También `None` si RRHH todavía no ha
+    # configurado el documento de ese tipo.
+    document: Optional[OnboardingStepDocumentDTO] = None
 
 
 class OnboardingMeDTO(BaseModel):
@@ -51,6 +73,18 @@ class QuizResultDTO(BaseModel):
     score: float
     passed: bool
     submitted_at: datetime
+    # Preguntas falladas, por ID y en el orden del cuestionario. IDS, NUNCA la
+    # respuesta correcta: el cliente ya tiene los enunciados (el `GET
+    # /onboarding/me` manda `questions` con `correct` enmascarado), así que con
+    # el id puede señalar qué falló sin que el backend filtre la solución.
+    # Importa especialmente porque hay un segundo intento: revelar la correcta
+    # tras el primero lo convertiría en un trámite. Vacía si se aprobó.
+    incorrect_question_ids: list[str] = []
+    # Para que la UI diga "te queda 1 intento" en vez de dejarlo a la
+    # adivinanza. `attempts_left` ya descuenta el envío actual y vale 0 si se
+    # aprobó (el paso queda `completed` y no admite más envíos).
+    attempts_used: int = 1
+    attempts_left: int = 0
 
 
 class UploadSignedDocumentDTO(BaseModel):

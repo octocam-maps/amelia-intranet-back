@@ -2,6 +2,7 @@
 uso sin Postgres, igual que `features/auth/application/tests/fakes.py`."""
 
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -25,6 +26,8 @@ class FakeTimeClockRepository:
         full_names: Optional[dict[str, str]] = None,
         dni_by_user: Optional[dict[str, str]] = None,
         phone_by_user: Optional[dict[str, str]] = None,
+        holidays: Optional[list[tuple[date, str | None]]] = None,
+        approved_absence_ranges: Optional[dict[str, list[tuple[date, date]]]] = None,
     ):
         self.entries = {e.id: e for e in (entries or [])}
         self.breaks: dict[str, TimeClockBreak] = {b.id: b for b in (breaks or [])}
@@ -36,6 +39,29 @@ class FakeTimeClockRepository:
         self.full_names: dict[str, str] = full_names or {}
         self.dni_by_user: dict[str, str] = dni_by_user or {}
         self.phone_by_user: dict[str, str] = phone_by_user or {}
+        # RF-A3 (alta en lote): festivos como (day, entity_id) — entity_id
+        # `None` significa "aplica a todas las entidades", igual que la fila
+        # real de `holidays`. El fake no tiene esa tabla detrás.
+        self.holidays: list[tuple[date, str | None]] = holidays or []
+        # RF-A3: rangos [start_date, end_date] de solicitudes YA aprobadas,
+        # por usuario — el fake no tiene una tabla `absence_requests` real.
+        self.approved_absence_ranges: dict[str, list[tuple[date, date]]] = (
+            approved_absence_ranges or {}
+        )
+
+    # RACE-1: simula la atomicidad del `async with connection.transaction()`
+    # real — toma una foto de `entries`/`breaks` al entrar y la restaura si
+    # el bloque lanza, igual que un ROLLBACK real revertiría todo el lote.
+    @asynccontextmanager
+    async def transaction(self):
+        entries_snapshot = dict(self.entries)
+        breaks_snapshot = dict(self.breaks)
+        try:
+            yield
+        except Exception:
+            self.entries = entries_snapshot
+            self.breaks = breaks_snapshot
+            raise
 
     async def create_entry(self, *, user_id, work_date, clock_in, clock_out, source) -> TimeClockEntry:
         entry_id = str(uuid.uuid4())
@@ -157,6 +183,35 @@ class FakeTimeClockRepository:
             for e in self.entries.values()
             if e.user_id == user_id and date_from <= e.work_date <= date_to
         ]
+
+    # --- RF-A3 (alta en lote por rango de días) ---
+
+    async def list_holiday_dates_for_entity(
+        self, date_from: date, date_to: date, entity_id: str | None
+    ) -> list[date]:
+        return [
+            day
+            for day, holiday_entity_id in self.holidays
+            if date_from <= day <= date_to
+            and (holiday_entity_id is None or holiday_entity_id == entity_id)
+        ]
+
+    async def list_approved_absence_ranges(
+        self, user_id: str, date_from: date, date_to: date
+    ) -> list[tuple[date, date]]:
+        ranges = self.approved_absence_ranges.get(user_id, [])
+        return [(start, end) for start, end in ranges if start <= date_to and end >= date_from]
+
+    async def list_existing_entry_dates(
+        self, user_id: str, date_from: date, date_to: date
+    ) -> list[date]:
+        return sorted(
+            {
+                e.work_date
+                for e in self.entries.values()
+                if e.user_id == user_id and date_from <= e.work_date <= date_to
+            }
+        )
 
     async def find_overlapping_entry(
         self, user_id, work_date, clock_in, clock_out, *, exclude_entry_id=None

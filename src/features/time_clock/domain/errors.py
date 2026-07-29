@@ -37,6 +37,29 @@ class TimeClockNoteBodyRequiredError(ValidationError):
     """La incidencia/comentario no puede estar vacía (B-2b)."""
 
 
+# --- Alta de fichaje en lote por rango de días (RF-A3) ---
+
+
+class TimeClockBatchDateRangeInvertedError(ValidationError):
+    """`date_from` es posterior a `date_to` en el alta en lote — rechazo
+    estructural, previo a clasificar ningún día."""
+
+
+class TimeClockBatchRangeTooLongError(ValidationError):
+    """El rango del lote supera el tope de días permitido por alta —
+    rechazo estructural, previo a clasificar ningún día."""
+
+
+class TimeClockBatchFutureDateError(ValidationError):
+    """LOGIC-2 (pentest ético, severidad ALTA): al menos un día laborable
+    del lote, tras aplicar las exclusiones de calendario (fin de semana,
+    festivo, ausencia aprobada), sigue cayendo en el futuro (Europe/Madrid).
+    Rechaza TODO el lote sin escribir ningún tramo — omitir en silencio ese
+    día daría una falsa sensación de "lote aplicado" ocultando un intento
+    de violar la ventana temporal del alta manual (mismo fix que protege
+    `CreateTimeClockEntryUseCase._validate_window`, aquí a nivel de lote)."""
+
+
 # --- Fichaje en vivo (modelo "ambos" — botón play/pausa/salida del dashboard) ---
 
 

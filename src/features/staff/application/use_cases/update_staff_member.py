@@ -2,7 +2,7 @@
 entidad, rol, override de vacaciones/año y estado (activo/suspendido).
 Actualización parcial: solo se tocan los campos que llegan informados."""
 
-from typing import Optional
+from typing import Any, Optional
 
 from src.shared.auth.roles import RoleCode
 
@@ -38,6 +38,9 @@ class UpdateStaffMemberUseCase:
         user_id: str,
         *,
         job_title: Optional[str] = None,
+        # `_NOT_SET` distingue "no vino informado" de `None` explícito
+        # (= vaciar). Ver el bloque de resolución más abajo.
+        contract_type: Any = _NOT_SET,
         department: Optional[str] = None,
         entity_code: Optional[str] = None,
         role_code: Optional[str] = None,
@@ -95,9 +98,25 @@ class UpdateStaffMemberUseCase:
             clear_vacation_days_override = False
             effective_override = vacation_days_override
 
+        # Mismo esquema de tres estados para el tipo de contrato: `_NOT_SET` no
+        # lo toca, `None` explícito lo vacía (vuelve a "sin especificar"), y un
+        # valor lo fija. Sin el vaciado, un tipo puesto por error sería
+        # irreversible desde el formulario.
+        if contract_type is _NOT_SET:
+            clear_contract_type = False
+            effective_contract_type: Optional[str] = None
+        elif contract_type is None:
+            clear_contract_type = True
+            effective_contract_type = None
+        else:
+            clear_contract_type = False
+            effective_contract_type = contract_type
+
         updated = await self._repository.update_staff_member(
             user_id,
             job_title=job_title,
+            contract_type=effective_contract_type,
+            clear_contract_type=clear_contract_type,
             department_id=department_id,
             entity_id=entity_id,
             role_id=role_id,

@@ -51,9 +51,30 @@ QUIZ_STEP = OnboardingStep(
     is_active=True,
 )
 
+MANUAL_STEP = OnboardingStep(
+    id="step-manual",
+    step_order=3,
+    type="manual",
+    # Título actualizado por `033_onboarding_steps_reorder_v11.sql` — el paso
+    # pasa a ser la lectura de TODOS los manuales de referencia, no solo el
+    # del empleado (el seed 020 decía "Manual del empleado", histórico).
+    title="Manuales",
+    config={},
+    is_active=True,
+)
+
+PROFILE_STEP = OnboardingStep(
+    id="step-profile",
+    step_order=4,
+    type="profile",
+    title="Completa tu perfil",
+    config={},
+    is_active=True,
+)
+
 SIGNATURE_STEP = OnboardingStep(
     id="step-signature",
-    step_order=3,
+    step_order=5,
     type="signature",
     # Título actualizado por `029_onboarding_document_uploads.sql`
     # (sdd/docs-firmados-upload-drive) — el sembrado original en
@@ -65,25 +86,11 @@ SIGNATURE_STEP = OnboardingStep(
     is_active=True,
 )
 
-MANUAL_STEP = OnboardingStep(
-    id="step-manual",
-    step_order=4,
-    type="manual",
-    title="Manual del empleado",
-    config={},
-    is_active=True,
-)
-
-PROFILE_STEP = OnboardingStep(
-    id="step-profile",
-    step_order=5,
-    type="profile",
-    title="Completa tu perfil",
-    config={},
-    is_active=True,
-)
-
-ALL_STEPS = [VIDEO_STEP, QUIZ_STEP, SIGNATURE_STEP, MANUAL_STEP, PROFILE_STEP]
+# Orden vigente tras `033_onboarding_steps_reorder_v11.sql` (v1.1 RRHH): la
+# documentación firmada es EL ÚLTIMO paso y los manuales suben al 3, para que
+# nadie llegue a las plantillas sin haber leído antes la documentación de
+# referencia. La lista está en el orden real de `step_order`.
+ALL_STEPS = [VIDEO_STEP, QUIZ_STEP, MANUAL_STEP, PROFILE_STEP, SIGNATURE_STEP]
 
 SIGNATURE_DOCUMENT = OnboardingDocument(
     id="doc-signature",
@@ -95,12 +102,17 @@ SIGNATURE_DOCUMENT = OnboardingDocument(
     is_active=True,
 )
 
+# Material REAL desde `035_onboarding_manual_hincator.sql` — antes era el
+# placeholder ("Manual del empleado", `cafebabe…`, sin `storage_ref`). El
+# fichero se sirve como asset estático del front (`public/manuales/`), igual
+# que el vídeo del paso 1: el límite de 10 MB de `POST /documents` protege las
+# subidas de los TRABAJADORES, no el material corporativo que publicamos.
 MANUAL_DOCUMENT = OnboardingDocument(
     id="doc-manual",
     kind="manual",
-    title="Manual del empleado",
+    title="Manual de usuario Hincator® 2026",
     version=1,
-    content_hash="cafebabe" * 8,
-    storage_ref=None,
+    content_hash="b72ce8011190e141b650e3b87a2bd6e15c9e903958035852a545f80473d90731",
+    storage_ref="/manuales/manual-usuario-hincator-2026-ES.pdf",
     is_active=True,
 )

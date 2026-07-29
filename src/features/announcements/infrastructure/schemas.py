@@ -6,7 +6,11 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 Audience = Literal["all", "entity", "role"]
-EntityCode = Literal["hub", "lab", "ops"]
+# Las cuatro sociedades del grupo. `hincator` se añadió el 2026-07-29
+# (migración 036) y NO es opcional tenerla aquí: sin ella este endpoint
+# devuelve 422 para 19 de los 36 trabajadores de la plantilla.
+# Espejo del CHECK de `entities.code`; si cambia allí, cambia aquí.
+EntityCode = Literal["hub", "lab", "ops", "hincator"]
 # `role` NO es un `Literal` fijo (mismo criterio que `staff/infrastructure/
 # schemas.py`): la fuente única de qué roles existen es la tabla `roles`
 # (`GET /roles`, feature `roles`). `CreateAnnouncementUseCase`/

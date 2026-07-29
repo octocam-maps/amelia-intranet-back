@@ -8,8 +8,10 @@ shape (`open_entry` + acumulado semanal) para `GET /time-clock/current` y las
 devuelven el estado recalculado tras el cambio."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
+
+from ..domain.entities import TimeClockEntry
 
 
 @dataclass(frozen=True)
@@ -27,3 +29,22 @@ class LiveClockStatusResult:
     open_entry: Optional[OpenEntryStatus]
     week_worked_minutes: int
     expected_weekly_minutes: int
+
+
+@dataclass(frozen=True)
+class OmittedBatchDay:
+    """Un día del rango del alta en lote (RF-A3) que no generó tramo, con
+    su motivo (`TimeClockBatchOmissionReason`, serializado como `str`)."""
+
+    work_date: date
+    reason: str
+
+
+@dataclass(frozen=True)
+class TimeClockEntriesBatchResult:
+    """Resultado del alta en lote — respuesta 200 SIEMPRE (nunca 201: el
+    lote puede no crear nada y seguir siendo un resultado válido, ver
+    EC4 de `CreateTimeClockEntriesBatchUseCase`)."""
+
+    created: list[TimeClockEntry]
+    omitted: list[OmittedBatchDay]

@@ -14,6 +14,11 @@ class StaffMember:
     email: str
     avatar_url: Optional[str]
     job_title: Optional[str]
+    # `full_time` | `part_time` | `intern` (migración 037). `None` = dato
+    # DESCONOCIDO, no jornada completa: la hoja de plantilla lo trae para las 36
+    # personas pero los usuarios anteriores a la migración no lo tienen, y
+    # rellenarlo por defecto sería inventárselo.
+    contract_type: Optional[str]
     department_id: Optional[str]
     department_name: Optional[str]
     entity_id: Optional[str]

@@ -4,6 +4,7 @@ Puertos (Protocols) del feature `time_clock`. `domain` no importa nada de
 en `infrastructure` y se inyecta aquí por duck typing estructural.
 """
 
+from contextlib import AbstractAsyncContextManager
 from datetime import date, datetime
 from typing import Optional, Protocol
 
@@ -11,6 +12,25 @@ from .entities import TimeClockBreak, TimeClockEntry, TimeClockEntryNote, TimeCl
 
 
 class ITimeClockRepository(Protocol):
+    def transaction(self) -> AbstractAsyncContextManager[None]:
+        """RACE-1 (auditoría QA, severidad ALTA): async context manager que
+        agrupa en una única transacción atómica las escrituras hechas
+        DENTRO del bloque (`async with repository.transaction(): ...`).
+
+        Lo usa el bucle de escritura de `CreateTimeClockEntriesBatchUseCase`
+        para que un fallo a mitad del lote (p. ej. `TimeClockOverlapError`
+        por el constraint `EXCLUDE` bajo concurrencia real) revierta TODOS
+        los tramos ya creados en esa misma pasada, no solo los pendientes.
+
+        Alcance deliberadamente acotado: solo `create_entry` y
+        `find_overlapping_entry` — los dos métodos que el bucle de
+        escritura del lote invoca vía `CreateTimeClockEntryUseCase` — honran
+        este contexto en el adaptador Postgres. Ampliarlo a todos los
+        métodos del puerto sería invasión sin necesidad hoy; si otro flujo
+        empieza a escribir dentro de un `async with transaction()`, hay que
+        revisar si también necesita sumarse."""
+        ...
+
     async def create_entry(
         self,
         *,
@@ -131,6 +151,37 @@ class ITimeClockRepository(Protocol):
         """Segundos trabajados en el rango (normalmente lunes-domingo de la
         semana en curso), sumando todos los tramos del usuario y restando el
         tiempo de sus pausas — el tramo/pausa abierto cuenta hasta AHORA."""
+        ...
+
+    # --- Alta de fichaje en lote por rango de días (RF-A3) ---
+
+    async def list_holiday_dates_for_entity(
+        self, date_from: date, date_to: date, entity_id: str | None
+    ) -> list[date]:
+        """Festivos vigentes en el rango, ESCOPADOS por entidad —
+        `entity_id=NULL` en la fila de `holidays` significa "aplica a
+        todas las entidades", así que siempre se incluye junto con los
+        festivos de la entidad concreta del usuario. A diferencia de
+        `absences.list_holiday_dates` (que NO escopa por entidad hoy — gap
+        preexistente, fuera de alcance de este feature), este puerto SÍ lo
+        hace, porque la spec de RF-A3 lo exige explícitamente por tabla de
+        casos."""
+        ...
+
+    async def list_approved_absence_ranges(
+        self, user_id: str, date_from: date, date_to: date
+    ) -> list[tuple[date, date]]:
+        """Rangos `[start_date, end_date]` de solicitudes `approved` del
+        propio usuario que solapan con `[date_from, date_to]` — se
+        expanden a fechas individuales en el use case, no aquí."""
+        ...
+
+    async def list_existing_entry_dates(
+        self, user_id: str, date_from: date, date_to: date
+    ) -> list[date]:
+        """`work_date` distintos con al menos un tramo ya registrado del
+        usuario en el rango — el alta en lote los omite como
+        `ya_registrado` sin traer los tramos completos."""
         ...
 
     # --- Incidencias/comentarios sobre un tramo (B-2b) ---

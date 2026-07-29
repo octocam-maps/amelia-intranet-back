@@ -172,6 +172,44 @@ def test_admin_can_run_the_daily_notification_job():
     }
 
 
+def test_admin_can_run_the_clock_in_reminder_job():
+    class FakeDailyJobUseCase:
+        async def execute(self):
+            raise AssertionError("no debía llamarse — job=clock_in_reminder")
+
+    class FakeClockOutJobUseCase:
+        async def execute(self):
+            raise AssertionError("no debía llamarse — job=clock_in_reminder")
+
+    class FakeClockInReminderJobUseCase:
+        async def execute(self, *, work_date=None):
+            return {"work_date": "2026-07-09", "users_notified": 3}
+
+    app.dependency_overrides[
+        notification_dependencies.get_run_daily_notification_job_use_case
+    ] = lambda: FakeDailyJobUseCase()
+    app.dependency_overrides[
+        notification_dependencies.get_run_clock_out_notification_job_use_case
+    ] = lambda: FakeClockOutJobUseCase()
+    app.dependency_overrides[
+        notification_dependencies.get_run_clock_in_reminder_job_use_case
+    ] = lambda: FakeClockInReminderJobUseCase()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/notifications/jobs/run?job=clock_in_reminder",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "job": "clock_in_reminder",
+        "result": {"work_date": "2026-07-09", "users_notified": 3},
+    }
+
+
 def test_jobs_run_rejects_an_unknown_job_value():
     try:
         with TestClient(app) as client:

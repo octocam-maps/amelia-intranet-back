@@ -61,6 +61,7 @@ def create_staff_router() -> APIRouter:
             full_name=dto.full_name,
             email=dto.email,
             job_title=dto.job_title,
+            contract_type=dto.contract_type,
             department=dto.department,
             entity_code=dto.entity,
             role_code=dto.role,
@@ -91,6 +92,10 @@ def create_staff_router() -> APIRouter:
         }
         if "vacation_days_override" in dto.model_fields_set:
             kwargs["vacation_days_override"] = dto.vacation_days_override
+        # Mismo criterio para el tipo de contrato: ausente = no tocar,
+        # `contract_type: null` explícito = dejarlo sin especificar.
+        if "contract_type" in dto.model_fields_set:
+            kwargs["contract_type"] = dto.contract_type
         member = await use_case.execute(user_id, **kwargs)
         return member_to_dto(member)
 

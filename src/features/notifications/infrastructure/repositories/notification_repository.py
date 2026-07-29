@@ -213,6 +213,34 @@ class PostgresNotificationRepository(INotificationRepository):
         )
         return [str(row["user_id"]) for row in rows]
 
+    async def list_user_ids_pending_clock_in(self, work_date: date) -> list[str]:
+        rows = await self._db.fetch(
+            """
+            SELECT u.id FROM users u
+            JOIN roles r ON r.id = u.role_id
+            WHERE r.code != 'externo_invitado'
+              AND u.status = 'active'
+              AND u.deleted_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM time_clock_entries e
+                  WHERE e.user_id = u.id AND e.work_date = $1
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM absence_requests a
+                  WHERE a.user_id = u.id
+                    AND a.status = 'approved'
+                    AND $1 BETWEEN a.start_date AND a.end_date
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM holidays h
+                  WHERE h.day = $1
+                    AND (h.entity_id IS NULL OR h.entity_id = u.entity_id)
+              )
+            """,
+            work_date,
+        )
+        return [str(row["id"]) for row in rows]
+
     async def exists_recipient_notification_with_data(
         self, *, user_id: str, type: str, data_key: str, data_value: str
     ) -> bool:

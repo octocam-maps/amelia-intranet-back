@@ -60,6 +60,7 @@ def _row_to_quiz_attempt(row) -> QuizAttempt:
         score=float(row["score"]),
         passed=row["passed"],
         submitted_at=row["submitted_at"],
+        attempt_number=row["attempt_number"],
     )
 
 
@@ -232,15 +233,31 @@ class PostgresOnboardingRepository(IOnboardingRepository):
     async def find_quiz_attempt(
         self, user_id: str, step_id: str
     ) -> Optional[QuizAttempt]:
+        # El MÁS RECIENTE: desde que se admiten dos intentos
+        # (`034_quiz_two_attempts.sql`) esta consulta puede encontrar varias
+        # filas, y sin el ORDER BY devolvería una cualquiera.
         row = await self._db.fetchrow(
             """
             SELECT * FROM onboarding_quiz_attempts
             WHERE user_id = $1 AND step_id = $2
+            ORDER BY attempt_number DESC
+            LIMIT 1
             """,
             user_id,
             step_id,
         )
         return _row_to_quiz_attempt(row) if row else None
+
+    async def count_quiz_attempts(self, user_id: str, step_id: str) -> int:
+        row = await self._db.fetchrow(
+            """
+            SELECT count(*) AS total FROM onboarding_quiz_attempts
+            WHERE user_id = $1 AND step_id = $2
+            """,
+            user_id,
+            step_id,
+        )
+        return row["total"] if row else 0
 
     async def create_quiz_attempt(
         self,
@@ -250,13 +267,14 @@ class PostgresOnboardingRepository(IOnboardingRepository):
         answers: dict[str, Any],
         score: float,
         passed: bool,
+        attempt_number: int,
     ) -> QuizAttempt:
         try:
             row = await self._db.fetchrow(
                 """
                 INSERT INTO onboarding_quiz_attempts
-                    (user_id, step_id, answers, score, passed)
-                VALUES ($1, $2, $3, $4, $5)
+                    (user_id, step_id, answers, score, passed, attempt_number)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING *
                 """,
                 user_id,
@@ -264,14 +282,19 @@ class PostgresOnboardingRepository(IOnboardingRepository):
                 answers,
                 score,
                 passed,
+                attempt_number,
             )
         except asyncpg.exceptions.UniqueViolationError as e:
-            # `uq_quiz_attempt_single` es la fuente de verdad real bajo
-            # concurrencia (doble clic, dos pestañas) — el chequeo previo del
-            # use case (`find_quiz_attempt`) es solo una salida rápida para
-            # el caso NO concurrente.
+            # `uq_quiz_attempt_per_number` es la fuente de verdad real bajo
+            # concurrencia (doble clic, dos pestañas): dos peticiones que
+            # calculen el mismo `attempt_number` colisionan aquí y solo una
+            # gana, así que no se puede rebasar `MAX_QUIZ_ATTEMPTS` por
+            # carrera. El chequeo previo del use case
+            # (`ensure_quiz_attempts_left`) es solo la salida rápida del caso
+            # NO concurrente.
             raise QuizAlreadyAttemptedError(
-                "Ya has respondido este cuestionario — solo se admite un intento."
+                "Otro envío de este cuestionario se registró antes que el tuyo — "
+                "recarga la página para ver tu resultado."
             ) from e
         return _row_to_quiz_attempt(row)
 
@@ -436,6 +459,16 @@ class PostgresOnboardingRepository(IOnboardingRepository):
             "SELECT 1 FROM departments WHERE id = $1", department_id
         )
         return row is not None
+
+    async def find_user_full_name(self, user_id: str) -> Optional[str]:
+        # `deleted_at IS NULL` por coherencia con el resto de lecturas de
+        # `users` en este repositorio: un usuario borrado no tiene nombre que
+        # publicar en la bandeja de RRHH.
+        row = await self._db.fetchrow(
+            "SELECT full_name FROM users WHERE id = $1 AND deleted_at IS NULL",
+            user_id,
+        )
+        return row["full_name"] if row else None
 
     async def save_profile_completion(
         self, user_id: str, profile: ProfileCompletionData

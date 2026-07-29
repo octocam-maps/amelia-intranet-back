@@ -84,3 +84,38 @@ def test_workbook_with_no_entries_only_has_header():
     wb = load_workbook(io.BytesIO(workbook_bytes))
     ws = wb.active
     assert ws["A6"].value is None
+
+
+def test_workbook_without_subject_name_is_byte_identical_to_export_global():
+    """RF-A1: `subject_name=None` (export global) DEBE mantener el output
+    actual byte a byte — este es el punto donde es fácil romper algo que ya
+    funcionaba."""
+    kwargs = dict(date_from=date(2026, 7, 1), date_to=date(2026, 7, 31))
+
+    without_kwarg = build_absence_calendar_export_workbook([_entry()], **kwargs)
+    with_explicit_none = build_absence_calendar_export_workbook(
+        [_entry()], subject_name=None, **kwargs
+    )
+
+    assert without_kwarg == with_explicit_none
+
+    wb = load_workbook(io.BytesIO(without_kwarg))
+    ws = wb.active
+    assert ws["A4"].value is None
+
+
+def test_workbook_with_subject_name_writes_employee_line():
+    workbook_bytes = build_absence_calendar_export_workbook(
+        [_entry()],
+        date_from=date(2026, 7, 1),
+        date_to=date(2026, 7, 31),
+        subject_name="Ana García",
+    )
+
+    wb = load_workbook(io.BytesIO(workbook_bytes))
+    ws = wb.active
+    assert ws["A4"].value == "Empleado: Ana García"
+    # El resto del layout no se desplaza: cabecera y datos siguen en las
+    # mismas filas que el export global.
+    assert ws["A5"].value == "Empleado"
+    assert ws["A6"].value == "Ana García"

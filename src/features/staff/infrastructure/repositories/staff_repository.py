@@ -27,7 +27,8 @@ from ...domain.ports import IStaffRepository
 
 _STAFF_SELECT = """
     SELECT
-        u.id, u.full_name, u.email, u.avatar_url, u.job_title, u.status, u.hire_date, u.created_at,
+        u.id, u.full_name, u.email, u.avatar_url, u.job_title, u.contract_type,
+        u.status, u.hire_date, u.created_at,
         u.vacation_days_override,
         u.department_id, d.name AS department_name,
         u.entity_id, e.code AS entity_code,
@@ -69,6 +70,7 @@ def _row_to_member(row) -> StaffMember:
         email=row["email"],
         avatar_url=row["avatar_url"],
         job_title=row["job_title"],
+        contract_type=row["contract_type"],
         department_id=str(row["department_id"]) if row["department_id"] else None,
         department_name=row["department_name"],
         entity_id=str(row["entity_id"]) if row["entity_id"] else None,
@@ -168,6 +170,7 @@ class PostgresStaffRepository(IStaffRepository):
         full_name: str,
         email: str,
         job_title: Optional[str],
+        contract_type: Optional[str] = None,
         department_id: Optional[str],
         entity_id: str,
         role_id: str,
@@ -182,16 +185,17 @@ class PostgresStaffRepository(IStaffRepository):
                 user_id = await connection.fetchval(
                     """
                     INSERT INTO users (
-                        full_name, email, job_title, department_id,
+                        full_name, email, job_title, contract_type, department_id,
                         entity_id, role_id, is_external, hire_date,
                         vacation_days_override, status
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'invited')
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'invited')
                     RETURNING id
                     """,
                     full_name,
                     email,
                     job_title,
+                    contract_type,
                     department_id,
                     entity_id,
                     role_id,
@@ -243,17 +247,29 @@ class PostgresStaffRepository(IStaffRepository):
         vacation_days_override: Optional[float],
         clear_vacation_days_override: bool,
         status: Optional[str],
+        contract_type: Optional[str] = None,
+        clear_contract_type: bool = False,
     ) -> Optional[StaffMember]:
         async with self._db.acquire() as connection:
             async with connection.transaction():
                 # COALESCE: cada parámetro en NULL deja la columna como
                 # estaba — semántica PATCH (actualización parcial).
-                # `vacation_days_override` es la excepción: necesita
-                # distinguir "no tocar" de "vaciar" con un solo `None`, así
-                # que se resuelve con el `CASE WHEN $8` (mismo patrón que
-                # `holidays.update_holiday`/`clear_entity`). `RETURNING
-                # hire_date, vacation_days_override` deja recalcular el saldo
-                # sin una segunda ida y vuelta a `users`.
+                #
+                # DOS excepciones, y por el mismo motivo: necesitan distinguir
+                # "no tocar" de "vaciar", y un solo `None` no puede expresar las
+                # dos cosas. Se resuelven con un flag booleano y un `CASE WHEN`
+                # (mismo patrón que `holidays.update_holiday`/`clear_entity`):
+                #   · `vacation_days_override` ($8/$9)
+                #   · `contract_type` ($10/$11)
+                #
+                # `contract_type` llegó tarde a esta query y ES IMPORTANTE
+                # recordar por qué: estuvo en la firma del método sin estar en el
+                # `SET`, así que el PATCH respondía 200 y no guardaba nada. Si
+                # añades otro campo, comprueba que aparece en los TRES sitios —
+                # firma, `SET` y lista de parámetros— y escribe el test antes.
+                #
+                # `RETURNING hire_date, vacation_days_override` deja recalcular
+                # el saldo sin una segunda ida y vuelta a `users`.
                 row = await connection.fetchrow(
                     """
                     UPDATE users
@@ -266,6 +282,10 @@ class PostgresStaffRepository(IStaffRepository):
                         vacation_days_override = CASE
                             WHEN $8 THEN NULL
                             ELSE COALESCE($9, vacation_days_override)
+                        END,
+                        contract_type = CASE
+                            WHEN $10 THEN NULL
+                            ELSE COALESCE($11, contract_type)
                         END,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = $1 AND deleted_at IS NULL
@@ -280,6 +300,8 @@ class PostgresStaffRepository(IStaffRepository):
                     status,
                     clear_vacation_days_override,
                     vacation_days_override,
+                    clear_contract_type,
+                    contract_type,
                 )
                 if row is None:
                     return None

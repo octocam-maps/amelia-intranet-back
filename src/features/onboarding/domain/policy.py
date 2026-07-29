@@ -23,6 +23,7 @@ from .errors import (
     IncompleteProfileDataError,
     InvalidStepConfigError,
     InvalidVideoProgressError,
+    QuizAlreadyAttemptedError,
     StepLockedError,
     StepNotAvailableForRoleError,
     StepNotOperableError,
@@ -41,6 +42,21 @@ _EXTERNAL_GUEST_ALLOWED_TYPES = frozenset({"video", "manual"})
 # progreso frecuentes (cada pocos segundos de un vídeo corto) y dejamos
 # margen para picos de red, sin permitir terminar el vídeo en un único salto.
 MAX_VIDEO_PROGRESS_JUMP_PCT = 30
+
+# Intentos máximos del cuestionario del onboarding. Decisión de producto del
+# team-lead (2026-07-29): pasa de UNO a DOS.
+#
+# Rectifica una regla que estaba escrita como "no negociable" ("el cuestionario
+# del paso 2 es de un único intento"). Motivo del cambio: con un solo intento,
+# quien falla queda atascado y depende de que un admin le reinicie el intento a
+# mano para poder continuar el onboarding.
+#
+# ESTE es el único sitio donde vive el techo. La BD no lo replica en un CHECK a
+# propósito (ver `034_quiz_two_attempts.sql`): lo que sí garantiza la BD, y solo
+# ella puede, es que no existan dos intentos con el mismo `attempt_number`
+# (`uq_quiz_attempt_per_number`) — el blindaje contra la carrera de doble clic
+# que antes daba `UNIQUE(user_id, step_id)`.
+MAX_QUIZ_ATTEMPTS = 2
 
 # Margen (en puntos de `progress_pct`) que se admite POR ENCIMA de lo que el
 # tiempo real transcurrido justificaría, para absorber picos de red/buffer
@@ -74,6 +90,71 @@ def ensure_step_allowed_for_role(step: OnboardingStep, role: str) -> None:
         raise StepNotAvailableForRoleError(
             "Tu invitación no incluye este paso del onboarding."
         )
+
+
+def ensure_quiz_attempts_left(attempts_used: int) -> None:
+    """Rechaza el envío si ya se gastaron los `MAX_QUIZ_ATTEMPTS` intentos.
+
+    Es la salida rápida y con mensaje claro del caso NO concurrente; la
+    garantía real bajo concurrencia sigue siendo la UNIQUE de la BD sobre
+    `(user_id, step_id, attempt_number)`, porque dos peticiones simultáneas
+    pueden pasar las dos por este chequeo con el mismo `attempts_used`."""
+    if attempts_used >= MAX_QUIZ_ATTEMPTS:
+        raise QuizAlreadyAttemptedError(
+            f"Ya has agotado los {MAX_QUIZ_ATTEMPTS} intentos de este cuestionario."
+        )
+
+
+def incorrect_question_ids(
+    config: dict[str, Any], answers: dict[str, Any]
+) -> list[str]:
+    """Ids de las preguntas falladas, EN EL ORDEN del cuestionario.
+
+    Devuelve ids, nunca las respuestas correctas: el cliente ya tiene los
+    enunciados (`GET /onboarding/me` manda `questions` con `correct`
+    enmascarado, ver `infrastructure/mappers.py::_masked_config`), así que con
+    el id puede señalar qué falló sin que el backend filtre la solución. Eso
+    importa más ahora que hay un segundo intento — revelar la respuesta
+    correcta tras el primero lo convertiría en un trámite.
+
+    Una pregunta sin contestar cuenta como fallada, igual que en `_score`.
+    """
+    return [
+        question["id"]
+        for question in config.get("questions", [])
+        if answers.get(question["id"]) != question.get("correct")
+    ]
+
+
+def is_onboarding_complete(
+    applicable_steps: list[OnboardingStep],
+    progress: list[OnboardingProgress],
+) -> bool:
+    """¿Ha terminado este usuario TODO su onboarding? Verdad calculada sobre
+    el estado real, NO inferida de "completó el paso X".
+
+    Esta función existe porque el código anterior daba el onboarding por
+    terminado dentro de `CompleteProfileUseCase`, asumiendo que el perfil era
+    el último paso (`step_order=5` en el seed 020). Esa suposición se rompió
+    con la reordenación de v1.1 (`033_onboarding_steps_reorder_v11.sql`), que
+    movió el perfil al 4 y la documentación firmada al 5: RRHH habría
+    recibido "onboarding completado" con la documentación todavía sin subir.
+    Acoplar el aviso al ESTADO (todos los pasos aplicables completados) y no
+    a un paso concreto lo hace inmune a la siguiente reordenación.
+
+    `applicable_steps` DEBE venir ya filtrado por rol
+    (`steps_applicable_to_role`): el externo-invitado termina con vídeo +
+    manual, y compararlo contra los 5 pasos completos lo dejaría
+    eternamente "sin terminar".
+
+    Un catálogo aplicable vacío no es "completo" — es un catálogo mal
+    cargado, y disparar el aviso de finalización ahí sería un falso positivo.
+    """
+    if not applicable_steps:
+        return False
+
+    completed_step_ids = {p.step_id for p in progress if p.status == "completed"}
+    return all(step.id in completed_step_ids for step in applicable_steps)
 
 
 def ensure_step_operable(progress: Optional[OnboardingProgress]) -> OnboardingProgress:

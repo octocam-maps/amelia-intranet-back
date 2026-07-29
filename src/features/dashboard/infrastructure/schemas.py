@@ -21,6 +21,9 @@ class TodayClockStatusDTO(BaseModel):
 class UpcomingHolidayDTO(BaseModel):
     day: date
     name: str
+    # Ámbito real del festivo (migración 018). `None` para los dados de alta a
+    # mano sin ámbito — el cliente debe tratar ese caso, NO rellenarlo.
+    scope: Optional[str] = None
 
 
 class PendingAbsenceRequestDTO(BaseModel):

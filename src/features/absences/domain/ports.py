@@ -181,8 +181,17 @@ class IAbsenceRepository(Protocol):
         laborables, simplemente no excluye nada todavía."""
         ...
 
+    async def find_user_full_name(self, user_id: str) -> str | None:
+        """RF-A1: nombre real del empleado para la cabecera/nombre de
+        fichero del export individual. Mismo patrón que
+        `notifications.find_email` — metadato de presentación, consultado
+        directamente en la RUTA (no en el use case): si el usuario no tiene
+        ninguna ausencia en el periodo, `entries` viene vacío y no habría
+        de dónde sacar el nombre."""
+        ...
+
     async def list_calendar_entries(
-        self, *, date_from: date, date_to: date
+        self, *, date_from: date, date_to: date, user_id: str | None = None
     ) -> list[AbsenceCalendarEntry]:
         """"Calendario general de la plantilla" (LOTE 4) — TODOS los
         empleados, `pending`/`approved` únicamente (una solicitud `rejected`
@@ -190,7 +199,12 @@ class IAbsenceRepository(Protocol):
         [`start_date`, `end_date`] solapa con [`date_from`, `date_to`]. Ya
         viene con `user_full_name`/`absence_type_name`/`absence_type_color`
         resueltos (JOIN) — lo consume tanto la pantalla como los exports
-        (XLSX/PDF), que necesitan exactamente la misma forma."""
+        (XLSX/PDF), que necesitan exactamente la misma forma.
+
+        `user_id` opcional (RF-A1): `None` -> sin filtrar (global, mismo
+        comportamiento de siempre); con valor -> acota a las ausencias de
+        ESE usuario únicamente (export individual de un Empleado sobre lo
+        suyo)."""
         ...
 
     async def list_overlapping_requests(

@@ -1,30 +1,43 @@
 """
-Caso de uso: enviar el cuestionario del paso 2. Corrección SIEMPRE en el
-servidor contra `step.config.questions[].correct` — el cliente nunca recibe
-la respuesta correcta (ver `GetMyOnboardingUseCase`/mappers, que la
-enmascaran en el `GET /onboarding/me`).
+Caso de uso: enviar el cuestionario del onboarding. Corrección SIEMPRE en el
+servidor contra `step.config.questions[].correct` — el cliente nunca recibe la
+respuesta correcta (ver `GetMyOnboardingUseCase`/mappers, que la enmascaran en
+el `GET /onboarding/me`).
 
-Intento único: `create_quiz_attempt` traduce la violación de
-`UNIQUE(user_id, step_id)` a `QuizAlreadyAttemptedError` — esa es la
-garantía real bajo concurrencia (doble clic, dos pestañas). El chequeo
-`find_quiz_attempt` de aquí es solo una salida rápida para el caso NO
-concurrente, con un mensaje más claro antes de intentar el INSERT.
+**Dos intentos** (`policy.MAX_QUIZ_ATTEMPTS`, decisión del team-lead del
+2026-07-29; antes era uno solo). El chequeo de aquí
+(`ensure_quiz_attempts_left`) es la salida rápida con mensaje claro del caso NO
+concurrente: dos peticiones simultáneas pueden pasarlo las dos con el mismo
+`attempts_used`. La garantía real bajo concurrencia es la UNIQUE de la BD sobre
+`(user_id, step_id, attempt_number)`, que hace que solo una de las dos pueda
+insertar el intento N — `create_quiz_attempt` traduce esa violación a
+`QuizAlreadyAttemptedError`.
 
-Si el intento no alcanza el umbral, el paso NO se completa — y como el
-intento ya está consumido, el usuario queda bloqueado en este paso hasta que
-el administrador lo reinicie (fuera de alcance de este borrador: no hay
-endpoint de reseteo todavía, ver reporte de la feature).
+Al fallar un intento se devuelven las preguntas erradas, pero como IDS, no como
+soluciones: con dos intentos, revelar la respuesta correcta tras el primero
+convertiría el segundo en un trámite. El cliente ya tiene los enunciados, así
+que con el id puede marcar el fallo.
+
+Si se agotan los intentos sin alcanzar el umbral, el paso NO se completa y el
+trabajador queda bloqueado aquí hasta que un administrador le reinicie el
+cuestionario (`ResetQuizAttemptUseCase`, que borra los intentos y reabre el
+paso).
 """
 
 from typing import Any
 
-from ...domain.entities import QuizAttempt
+from ...domain.entities import QuizSubmissionResult
 from ...domain.errors import (
     OnboardingStepNotFoundError,
-    QuizAlreadyAttemptedError,
     WrongStepTypeError,
 )
-from ...domain.policy import ensure_step_allowed_for_role, ensure_step_operable
+from ...domain.policy import (
+    MAX_QUIZ_ATTEMPTS,
+    ensure_quiz_attempts_left,
+    ensure_step_allowed_for_role,
+    ensure_step_operable,
+    incorrect_question_ids,
+)
 from ...domain.ports import IOnboardingRepository
 
 
@@ -34,7 +47,7 @@ class SubmitQuizUseCase:
 
     async def execute(
         self, *, user_id: str, role: str, step_id: str, answers: dict[str, Any]
-    ) -> QuizAttempt:
+    ) -> QuizSubmissionResult:
         step = await self._repository.find_step_by_id(step_id)
         if step is None:
             raise OnboardingStepNotFoundError("El paso de onboarding no existe.")
@@ -46,11 +59,8 @@ class SubmitQuizUseCase:
         current = await self._repository.find_progress(user_id, step_id)
         ensure_step_operable(current)
 
-        existing_attempt = await self._repository.find_quiz_attempt(user_id, step_id)
-        if existing_attempt is not None:
-            raise QuizAlreadyAttemptedError(
-                "Ya has respondido este cuestionario — solo se admite un intento."
-            )
+        attempts_used = await self._repository.count_quiz_attempts(user_id, step_id)
+        ensure_quiz_attempts_left(attempts_used)
 
         score, passed = self._score(step.config, answers)
 
@@ -60,6 +70,7 @@ class SubmitQuizUseCase:
             answers=answers,
             score=score,
             passed=passed,
+            attempt_number=attempts_used + 1,
         )
 
         if passed:
@@ -69,7 +80,19 @@ class SubmitQuizUseCase:
             if completed is not None:
                 await self._repository.unlock_next_step(user_id, step.step_order)
 
-        return attempt
+        # Se devuelven SIEMPRE, también al aprobar: con un umbral del 70% se
+        # puede aprobar fallando una, y saber cuál es información útil sin
+        # ninguna contrapartida (son ids, no soluciones, y el paso ya está
+        # cerrado). Si el acierto fue pleno, la lista sale vacía sola.
+        return QuizSubmissionResult(
+            attempt=attempt,
+            incorrect_question_ids=incorrect_question_ids(step.config, answers),
+            attempts_used=attempt.attempt_number,
+            # Aprobar consume el paso: aunque quedara un intento por número, ya
+            # no se puede reintentar (el paso pasa a `completed` y
+            # `ensure_step_operable` rechaza cualquier envío posterior).
+            attempts_left=0 if passed else max(0, MAX_QUIZ_ATTEMPTS - attempt.attempt_number),
+        )
 
     @staticmethod
     def _score(config: dict[str, Any], answers: dict[str, Any]) -> tuple[float, bool]:

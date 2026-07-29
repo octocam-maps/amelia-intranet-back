@@ -33,6 +33,13 @@ class TodayClockStatus:
 class UpcomingHoliday:
     day: date
     name: str
+    # `holidays.scope` (migración 018): 'nacional' | 'autonomico' | 'local' |
+    # 'empresa'. NULLable, porque un festivo dado de alta a mano por el admin
+    # puede no llevarlo. La tarjeta "Próximos festivos" del Inicio se INVENTABA
+    # este dato —rotaba los tres ámbitos por posición en la lista— porque esta
+    # proyección nunca lo trajo, aunque la columna existe y `HolidaysTable` ya
+    # la pinta bien. Si vuelve a faltar aquí, la UI vuelve a mentir.
+    scope: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -19,6 +19,15 @@ def _get_repository() -> PostgresAbsenceRepository:
     return PostgresAbsenceRepository(get_database_pool())
 
 
+def get_absence_repository() -> PostgresAbsenceRepository:
+    """RF-A1: el router necesita `find_user_full_name` directamente (metadato
+    de presentación para el nombre de fichero/cabecera del export
+    individual), sin pasar por un caso de uso — mismo criterio que
+    `notifications.find_email` (consultado desde donde se necesita
+    presentar, no desde el dominio de negocio)."""
+    return _get_repository()
+
+
 def get_list_absence_types_use_case() -> ListAbsenceTypesUseCase:
     return ListAbsenceTypesUseCase(_get_repository())
 

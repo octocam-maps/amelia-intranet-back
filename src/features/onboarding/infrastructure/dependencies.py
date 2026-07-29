@@ -47,13 +47,18 @@ def get_submit_quiz_use_case() -> SubmitQuizUseCase:
 
 
 def get_upload_signed_document_use_case() -> UploadSignedOnboardingDocumentUseCase:
+    # `get_notify_use_case()` aquí es nuevo: desde la reordenación de v1.1
+    # este es el paso que CIERRA el onboarding, así que es quien dispara
+    # `onboarding_completed` a la bandeja de RRHH (antes lo hacía el paso de
+    # perfil, que ya no es el último).
     return UploadSignedOnboardingDocumentUseCase(
-        _get_repository(), get_upload_document_use_case()
+        _get_repository(), get_upload_document_use_case(), get_notify_use_case()
     )
 
 
 def get_acknowledge_manual_use_case() -> AcknowledgeManualUseCase:
-    return AcknowledgeManualUseCase(_get_repository())
+    # Idem para el externo-invitado, cuyo último paso es el manual.
+    return AcknowledgeManualUseCase(_get_repository(), get_notify_use_case())
 
 
 def get_complete_profile_use_case() -> CompleteProfileUseCase:

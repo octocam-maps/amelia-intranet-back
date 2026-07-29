@@ -50,7 +50,7 @@ from .mappers import (
     document_upload_to_dto,
     progress_overview_to_dto,
     progress_to_dto,
-    quiz_attempt_to_dto,
+    quiz_submission_to_dto,
     step_to_admin_dto,
     steps_to_admin_dto,
     steps_with_progress_to_dto,
@@ -116,15 +116,17 @@ def create_onboarding_router() -> APIRouter:
         current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: SubmitQuizUseCase = Depends(get_submit_quiz_use_case),
     ):
-        """Intento único (UNIQUE en BD) — un segundo intento se rechaza sin
-        exponer nunca la respuesta correcta."""
-        attempt = await use_case.execute(
+        """Máximo 2 intentos (`MAX_QUIZ_ATTEMPTS`; la UNIQUE por
+        `attempt_number` en BD es lo que lo blinda ante envíos simultáneos). Un
+        tercero se rechaza. Devuelve las preguntas falladas como IDS — nunca
+        expone la respuesta correcta, ni siquiera al agotar los intentos."""
+        result = await use_case.execute(
             user_id=current_user["sub"],
             role=current_user["role"],
             step_id=step_id,
             answers=dto.answers,
         )
-        return quiz_attempt_to_dto(attempt)
+        return quiz_submission_to_dto(result)
 
     @router.post(
         "/steps/{step_id}/documents",

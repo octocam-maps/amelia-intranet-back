@@ -42,6 +42,7 @@ class IStaffRepository(Protocol):
         full_name: str,
         email: str,
         job_title: Optional[str],
+        contract_type: Optional[str] = None,
         department_id: Optional[str],
         entity_id: str,
         role_id: str,
@@ -82,6 +83,8 @@ class IStaffRepository(Protocol):
         vacation_days_override: Optional[float],
         clear_vacation_days_override: bool,
         status: Optional[str],
+        contract_type: Optional[str] = None,
+        clear_contract_type: bool = False,
     ) -> Optional[StaffMember]:
         """Actualización parcial: cada parámetro en `None` significa "no
         tocar esta columna" (semántica PATCH), no "vaciarla" — EXCEPTO

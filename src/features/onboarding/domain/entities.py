@@ -38,9 +38,12 @@ class OnboardingProgress:
 
 @dataclass(frozen=True)
 class QuizAttempt:
-    """Intento de cuestionario — ÚNICO por `UNIQUE(user_id, step_id)` en
-    `onboarding_quiz_attempts` (garantía real a nivel de BD, no solo en la
-    app)."""
+    """Un intento de cuestionario. Se admiten hasta
+    `policy.MAX_QUIZ_ATTEMPTS` (2 desde 2026-07-29); `attempt_number` los
+    numera y su `UNIQUE(user_id, step_id, attempt_number)` en
+    `onboarding_quiz_attempts` es la garantía real a nivel de BD contra la
+    carrera de doble clic — sustituye a la vieja `UNIQUE(user_id, step_id)`,
+    que era la que imponía el intento único."""
 
     id: str
     user_id: str
@@ -49,6 +52,22 @@ class QuizAttempt:
     score: float
     passed: bool
     submitted_at: datetime
+    attempt_number: int = 1
+
+
+@dataclass(frozen=True)
+class QuizSubmissionResult:
+    """Lo que el trabajador necesita ver tras enviar el cuestionario, que es
+    más que el intento en sí: QUÉ preguntas falló y CUÁNTOS intentos le quedan.
+
+    `incorrect_question_ids` son ids, no respuestas correctas — el cliente ya
+    tiene los enunciados y con el id puede señalar el fallo sin que el backend
+    filtre la solución (ver `policy.incorrect_question_ids`)."""
+
+    attempt: QuizAttempt
+    incorrect_question_ids: list[str]
+    attempts_used: int
+    attempts_left: int
 
 
 @dataclass(frozen=True)

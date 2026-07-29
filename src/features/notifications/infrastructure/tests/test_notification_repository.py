@@ -199,6 +199,71 @@ async def test_list_user_ids_with_open_entry_filters_by_work_date_and_open_clock
 
 
 @pytest.mark.asyncio
+async def test_list_user_ids_pending_clock_in_excludes_users_who_already_clocked_in():
+    pool = AsyncMock()
+    pool.fetch.return_value = [{"id": "user-1"}]
+    repository = PostgresNotificationRepository(pool)
+
+    users = await repository.list_user_ids_pending_clock_in(date(2026, 7, 9))
+
+    assert users == ["user-1"]
+    query = pool.fetch.call_args[0][0]
+    assert "FROM time_clock_entries e" in query
+    assert "e.user_id = u.id AND e.work_date = $1" in query
+
+
+@pytest.mark.asyncio
+async def test_list_user_ids_pending_clock_in_excludes_approved_absence():
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresNotificationRepository(pool)
+
+    await repository.list_user_ids_pending_clock_in(date(2026, 7, 9))
+
+    query = pool.fetch.call_args[0][0]
+    assert "FROM absence_requests a" in query
+    assert "a.status = 'approved'" in query
+    assert "$1 BETWEEN a.start_date AND a.end_date" in query
+
+
+@pytest.mark.asyncio
+async def test_list_user_ids_pending_clock_in_excludes_holiday_scoped_by_entity():
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresNotificationRepository(pool)
+
+    await repository.list_user_ids_pending_clock_in(date(2026, 7, 9))
+
+    query = pool.fetch.call_args[0][0]
+    assert "FROM holidays h" in query
+    assert "h.entity_id IS NULL OR h.entity_id = u.entity_id" in query
+
+
+@pytest.mark.asyncio
+async def test_list_user_ids_pending_clock_in_excludes_externo_invitado_role():
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresNotificationRepository(pool)
+
+    await repository.list_user_ids_pending_clock_in(date(2026, 7, 9))
+
+    query = pool.fetch.call_args[0][0]
+    assert "r.code != 'externo_invitado'" in query
+
+
+@pytest.mark.asyncio
+async def test_list_user_ids_pending_clock_in_excludes_inactive_users():
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresNotificationRepository(pool)
+
+    await repository.list_user_ids_pending_clock_in(date(2026, 7, 9))
+
+    query = pool.fetch.call_args[0][0]
+    assert "u.status = 'active'" in query
+
+
+@pytest.mark.asyncio
 async def test_exists_recipient_notification_with_data_queries_by_user_type_and_data_field():
     pool = AsyncMock()
     pool.fetchval.return_value = True
