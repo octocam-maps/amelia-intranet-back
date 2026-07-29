@@ -88,17 +88,19 @@ def _onboarding_repository_with_available_signature(
         started_at=None,
         completed_at=None,
     )
-    # El paso 4 (manual) nace `locked` en un onboarding real hasta que se
-    # completa el 3 — necesario para comprobar que se desbloquea.
+    # Tras la reordenación de v1.1 (`033_onboarding_steps_reorder_v11.sql`)
+    # los manuales son el paso 3 y la documentación el 5, así que para llegar
+    # aquí el manual TIENE que estar ya completado — al revés que antes, que
+    # el manual (entonces el 4) nacía `locked` esperando a la firma (el 3).
     repository.progress[("user-1", MANUAL_STEP.id)] = OnboardingProgress(
         id="progress-manual",
         user_id="user-1",
         step_id=MANUAL_STEP.id,
-        status="locked",
-        progress_pct=0,
+        status="completed",
+        progress_pct=100,
         data={},
         started_at=None,
-        completed_at=None,
+        completed_at=datetime.now(timezone.utc),
     )
     return repository
 
@@ -113,7 +115,10 @@ def _use_case(
 
 
 @pytest.mark.asyncio
-async def test_happy_path_completes_the_step_and_unlocks_the_next_one():
+async def test_happy_path_completes_the_step_and_closes_the_onboarding():
+    """Este paso es EL ÚLTIMO desde la reordenación de v1.1, así que ya no
+    "desbloquea el siguiente": no hay siguiente. Lo que comprueba este test es
+    que se completa y que no reabre nada hacia atrás."""
     onboarding_repository = _onboarding_repository_with_available_signature()
     use_case = _use_case(onboarding_repository=onboarding_repository)
 
@@ -132,7 +137,9 @@ async def test_happy_path_completes_the_step_and_unlocks_the_next_one():
 
     progress_by_step = onboarding_repository.progress
     assert progress_by_step[("user-1", SIGNATURE_STEP.id)].status == "completed"
-    assert progress_by_step[("user-1", MANUAL_STEP.id)].status == "available"
+    # El manual, que va DELANTE, sigue completado — `unlock_next_step` solo
+    # mira hacia adelante y aquí no hay nada hacia adelante.
+    assert progress_by_step[("user-1", MANUAL_STEP.id)].status == "completed"
 
     # El enlace de onboarding queda registrado (D3) además del
     # `employee_documents` que ya crea `UploadDocumentUseCase`.

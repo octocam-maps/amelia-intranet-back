@@ -51,9 +51,30 @@ QUIZ_STEP = OnboardingStep(
     is_active=True,
 )
 
+MANUAL_STEP = OnboardingStep(
+    id="step-manual",
+    step_order=3,
+    type="manual",
+    # Título actualizado por `033_onboarding_steps_reorder_v11.sql` — el paso
+    # pasa a ser la lectura de TODOS los manuales de referencia, no solo el
+    # del empleado (el seed 020 decía "Manual del empleado", histórico).
+    title="Manuales",
+    config={},
+    is_active=True,
+)
+
+PROFILE_STEP = OnboardingStep(
+    id="step-profile",
+    step_order=4,
+    type="profile",
+    title="Completa tu perfil",
+    config={},
+    is_active=True,
+)
+
 SIGNATURE_STEP = OnboardingStep(
     id="step-signature",
-    step_order=3,
+    step_order=5,
     type="signature",
     # Título actualizado por `029_onboarding_document_uploads.sql`
     # (sdd/docs-firmados-upload-drive) — el sembrado original en
@@ -65,25 +86,11 @@ SIGNATURE_STEP = OnboardingStep(
     is_active=True,
 )
 
-MANUAL_STEP = OnboardingStep(
-    id="step-manual",
-    step_order=4,
-    type="manual",
-    title="Manual del empleado",
-    config={},
-    is_active=True,
-)
-
-PROFILE_STEP = OnboardingStep(
-    id="step-profile",
-    step_order=5,
-    type="profile",
-    title="Completa tu perfil",
-    config={},
-    is_active=True,
-)
-
-ALL_STEPS = [VIDEO_STEP, QUIZ_STEP, SIGNATURE_STEP, MANUAL_STEP, PROFILE_STEP]
+# Orden vigente tras `033_onboarding_steps_reorder_v11.sql` (v1.1 RRHH): la
+# documentación firmada es EL ÚLTIMO paso y los manuales suben al 3, para que
+# nadie llegue a las plantillas sin haber leído antes la documentación de
+# referencia. La lista está en el orden real de `step_order`.
+ALL_STEPS = [VIDEO_STEP, QUIZ_STEP, MANUAL_STEP, PROFILE_STEP, SIGNATURE_STEP]
 
 SIGNATURE_DOCUMENT = OnboardingDocument(
     id="doc-signature",

@@ -9,19 +9,17 @@ el formulario del frontend. Los datos ya no se guardan en el JSONB de
 `onboarding_progress.data` (borrador anterior) — se persisten en
 `users`/`user_profiles`, su ubicación real.
 
-Este es también el paso 5, EL ÚLTIMO de los 5 (`step_order=5`, seed
-`020_onboarding_steps_seed.sql`) — y el externo-invitado nunca lo alcanza
-(`ensure_step_allowed_for_role` lo rechaza porque su onboarding parcial no
-incluye `type='profile'`). Completarlo con éxito es, por tanto, el momento
-exacto en que un trabajador de onboarding COMPLETO (empleado/administrador/
-socio) termina los 5 pasos: dispara `onboarding_completed` a RRHH (RF §2.7)
-con nombre, fecha/hora de finalización, nota del cuestionario y confirmación
-de documentos firmados. Idempotente por construcción: `mark_step_completed_if_
-operable` solo puede tener éxito UNA vez por usuario/paso (una segunda
-llamada ya no encuentra el paso en `available`/`in_progress` y
-`ensure_step_operable` la rechaza más arriba con `StepNotOperableError`
-antes de volver a llegar aquí) — no hace falta un chequeo de idempotencia
-aparte, el propio estado del paso lo garantiza.
+El perfil YA NO es el último paso. Lo era (`step_order=5`, seed
+`020_onboarding_steps_seed.sql`) y este caso de uso disparaba directamente
+`onboarding_completed` por eso; la reordenación de v1.1
+(`033_onboarding_steps_reorder_v11.sql`) lo movió al 4 y puso la subida de
+documentación firmada en el 5. El aviso a RRHH se delega ahora en
+`NotifyOnboardingCompletedUseCase`, que comprueba el ESTADO real de todos
+los pasos aplicables al rol en vez de asumir que este es el que cierra el
+flujo — si aún falta la documentación, no notifica nada.
+
+El externo-invitado nunca alcanza este paso (`ensure_step_allowed_for_role`
+lo rechaza porque su onboarding parcial no incluye `type='profile'`).
 """
 
 from typing import Optional
@@ -42,6 +40,7 @@ from ...domain.policy import (
     ensure_step_operable,
 )
 from ...domain.ports import IOnboardingRepository
+from .notify_onboarding_completed import NotifyOnboardingCompletedUseCase
 
 
 class CompleteProfileUseCase:
@@ -51,6 +50,14 @@ class CompleteProfileUseCase:
         # mismo criterio que `CreateAbsenceRequestUseCase`/
         # `ReviewAbsenceRequestUseCase`.
         self._notify = notify
+        # Se construye a partir de lo YA inyectado (repositorio + notify), así
+        # que el cableado de `infrastructure/dependencies.py` no cambia al
+        # mover el disparador de finalización fuera de este caso de uso.
+        self._notify_completion = (
+            NotifyOnboardingCompletedUseCase(repository, notify)
+            if notify is not None
+            else None
+        )
 
     async def execute(
         self, *, user_id: str, role: str, step_id: str, profile: ProfileCompletionData
@@ -85,60 +92,9 @@ class CompleteProfileUseCase:
 
         await self._repository.unlock_next_step(user_id, step.step_order)
 
-        if self._notify is not None:
-            await self._notify_admins_of_completion(
-                user_id=user_id, profile=profile, completed=completed
-            )
+        # Solo notifica si con este paso el onboarding queda REALMENTE
+        # terminado — completar el perfil ya no implica haber acabado.
+        if self._notify_completion is not None:
+            await self._notify_completion.execute(user_id=user_id, role=role)
 
         return completed
-
-    async def _notify_admins_of_completion(
-        self, *, user_id: str, profile: ProfileCompletionData, completed: OnboardingProgress
-    ) -> None:
-        """Reúne la nota del cuestionario y la confirmación de subida del
-        documento firmado leyendo el propio progreso ya persistido de los
-        pasos 2 y 3 — ambos guardan su resultado en
-        `onboarding_progress.data` al completarse (`SubmitQuizUseCase` ->
-        `{"score": ...}`; `UploadSignedOnboardingDocumentUseCase` ->
-        `{"employee_document_id": ...}`), así que no hace falta una
-        consulta nueva a otra tabla para armar el correo de RF §2.7."""
-        all_steps = await self._repository.list_active_steps()
-        progress_by_step_id = {
-            p.step_id: p for p in await self._repository.list_progress_for_user(user_id)
-        }
-
-        quiz_score: Optional[float] = None
-        documents_signed = False
-        for onboarding_step in all_steps:
-            step_progress = progress_by_step_id.get(onboarding_step.id)
-            if step_progress is None or step_progress.status != "completed":
-                continue
-            if onboarding_step.type == "quiz":
-                quiz_score = step_progress.data.get("score")
-            elif onboarding_step.type == "signature":
-                documents_signed = True
-
-        completed_at = completed.completed_at
-        completed_at_label = (
-            completed_at.strftime("%d/%m/%Y %H:%M") if completed_at else "—"
-        )
-        quiz_score_label = f"{quiz_score}%" if quiz_score is not None else "N/D"
-        signed_label = "sí" if documents_signed else "no"
-
-        await self._notify.notify_admins(
-            type="onboarding_completed",
-            title=f"{profile.full_name} completó su onboarding",
-            body=(
-                f"{profile.full_name} completó el onboarding el {completed_at_label}. "
-                f"Nota del cuestionario: {quiz_score_label}. "
-                f"Documentos firmados: {signed_label}."
-            ),
-            data={
-                "user_id": user_id,
-                "full_name": profile.full_name,
-                "completed_at": completed_at.isoformat() if completed_at else None,
-                "quiz_score": quiz_score,
-                "documents_signed": documents_signed,
-                "url": "/administracion/onboarding",
-            },
-        )

@@ -153,6 +153,14 @@ class IOnboardingRepository(Protocol):
         genérica llegue como 500."""
         ...
 
+    async def find_user_full_name(self, user_id: str) -> Optional[str]:
+        """Nombre para el copy del aviso `onboarding_completed`. Antes se
+        tomaba del payload del paso de perfil, pero ese paso ya no es el que
+        cierra el flujo (reordenación v1.1): quien lo cierra es la subida de
+        documentación, que no trae ningún nombre. `None` si el usuario no
+        existe/está borrado — el aviso cae a un genérico en vez de romper."""
+        ...
+
     async def save_profile_completion(
         self, user_id: str, profile: ProfileCompletionData
     ) -> bool:

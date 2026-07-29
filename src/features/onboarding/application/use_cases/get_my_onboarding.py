@@ -84,13 +84,18 @@ class GetMyOnboardingUseCase:
         if already_notified:
             return
 
+        # El número de paso sale del catálogo (`step_order`), NO hardcodeado:
+        # decía "en el paso 3" y la reordenación de v1.1
+        # (`033_onboarding_steps_reorder_v11.sql`) lo movió al 5, así que el
+        # aviso habría mandado al trabajador a un paso que ya no es ese.
         await self._notify.execute(
             recipient_ids=[user_id],
             type="document_pending_signature",
             title="Tienes un documento pendiente de subir",
             body=(
                 f'Como parte de tu onboarding, tendrás que subir tu '
-                f'documento firmado "{signature_step.title}" en el paso 3.'
+                f'documento firmado "{signature_step.title}" '
+                f'en el paso {signature_step.step_order}.'
             ),
             data={"step_id": signature_step.id, "url": "/onboarding"},
         )

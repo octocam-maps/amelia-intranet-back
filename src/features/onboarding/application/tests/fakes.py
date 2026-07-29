@@ -271,6 +271,18 @@ class FakeOnboardingRepository:
     async def department_exists(self, department_id: str) -> bool:
         return department_id in self.department_ids
 
+    async def find_user_full_name(self, user_id: str) -> Optional[str]:
+        if user_id in self.missing_user_ids:
+            return None
+        # `save_profile_completion` es la vía por la que el nombre llega de
+        # verdad a `users` — si el paso de perfil ya se completó en este
+        # escenario, ese nombre gana sobre el sembrado en `users`.
+        saved = self.saved_profiles.get(user_id)
+        if saved is not None:
+            return saved.full_name
+        info = self.users.get(user_id)
+        return info.get("full_name") if info else None
+
     async def save_profile_completion(
         self, user_id: str, profile: ProfileCompletionData
     ) -> bool:

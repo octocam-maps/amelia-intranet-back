@@ -437,6 +437,16 @@ class PostgresOnboardingRepository(IOnboardingRepository):
         )
         return row is not None
 
+    async def find_user_full_name(self, user_id: str) -> Optional[str]:
+        # `deleted_at IS NULL` por coherencia con el resto de lecturas de
+        # `users` en este repositorio: un usuario borrado no tiene nombre que
+        # publicar en la bandeja de RRHH.
+        row = await self._db.fetchrow(
+            "SELECT full_name FROM users WHERE id = $1 AND deleted_at IS NULL",
+            user_id,
+        )
+        return row["full_name"] if row else None
+
     async def save_profile_completion(
         self, user_id: str, profile: ProfileCompletionData
     ) -> bool:

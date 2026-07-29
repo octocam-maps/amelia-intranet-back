@@ -76,6 +76,37 @@ def ensure_step_allowed_for_role(step: OnboardingStep, role: str) -> None:
         )
 
 
+def is_onboarding_complete(
+    applicable_steps: list[OnboardingStep],
+    progress: list[OnboardingProgress],
+) -> bool:
+    """¿Ha terminado este usuario TODO su onboarding? Verdad calculada sobre
+    el estado real, NO inferida de "completó el paso X".
+
+    Esta función existe porque el código anterior daba el onboarding por
+    terminado dentro de `CompleteProfileUseCase`, asumiendo que el perfil era
+    el último paso (`step_order=5` en el seed 020). Esa suposición se rompió
+    con la reordenación de v1.1 (`033_onboarding_steps_reorder_v11.sql`), que
+    movió el perfil al 4 y la documentación firmada al 5: RRHH habría
+    recibido "onboarding completado" con la documentación todavía sin subir.
+    Acoplar el aviso al ESTADO (todos los pasos aplicables completados) y no
+    a un paso concreto lo hace inmune a la siguiente reordenación.
+
+    `applicable_steps` DEBE venir ya filtrado por rol
+    (`steps_applicable_to_role`): el externo-invitado termina con vídeo +
+    manual, y compararlo contra los 5 pasos completos lo dejaría
+    eternamente "sin terminar".
+
+    Un catálogo aplicable vacío no es "completo" — es un catálogo mal
+    cargado, y disparar el aviso de finalización ahí sería un falso positivo.
+    """
+    if not applicable_steps:
+        return False
+
+    completed_step_ids = {p.step_id for p in progress if p.status == "completed"}
+    return all(step.id in completed_step_ids for step in applicable_steps)
+
+
 def ensure_step_operable(progress: Optional[OnboardingProgress]) -> OnboardingProgress:
     """Un paso solo admite operaciones (reportar progreso, firmar, confirmar
     lectura, completar perfil) si su progreso está en `available` o

@@ -1,7 +1,16 @@
 """
-Caso de uso: completar el paso 3 subiendo el PDF ya firmado FUERA de la
-plataforma (sustituye a la firma nativa, `sign_document.py`, eliminado —
-sdd/docs-firmados-upload-drive). El binario/categoría/MIME/tamaño/Drive los
+Caso de uso: completar el paso de documentación subiendo el PDF ya firmado
+FUERA de la plataforma (sustituye a la firma nativa, `sign_document.py`,
+eliminado — sdd/docs-firmados-upload-drive).
+
+Desde la reordenación de v1.1 (`033_onboarding_steps_reorder_v11.sql`) este
+es EL ÚLTIMO paso (`step_order=5`, antes era el 3): el trabajador llega aquí
+habiendo visto el vídeo, aprobado el cuestionario, leído los manuales y
+completado su perfil, y al subir su documentación firmada CIERRA el
+onboarding. De ahí la llamada a `NotifyOnboardingCompletedUseCase` al final
+—que comprueba el estado real, no asume que este paso sea el último—.
+
+El binario/categoría/MIME/tamaño/Drive los
 resuelve `UploadDocumentUseCase` COMPLETO (feature `documents`), inyectado
 aquí como servicio de aplicación (D1: reuso cruzado de un "Open Host
 Service", mismo criterio que `documents` ya reutiliza
@@ -10,17 +19,20 @@ folder-caching, persistencia de `employee_documents` ni la notificación.
 
 Lo único propio de onboarding es el enlace `onboarding_document_uploads`
 (D3): sin él, `employee_documents.category='signed'` no distingue "esto
-satisfizo el paso 3 de ESTE usuario" de un `signed` suelto que un admin
-subiera vía `POST /documents` por otro motivo.
+satisfizo el paso de documentación de ESTE usuario" de un `signed` suelto que
+un admin subiera vía `POST /documents` por otro motivo.
 
 `user_id` SIEMPRE llega del JWT (nunca de un campo del payload) — este caso
 de uso ni siquiera declara un parámetro alternativo para el dueño del
 documento, así que no hay canal para suplantar a otro usuario.
 """
 
+from typing import Optional
+
 from src.features.documents.application.use_cases.upload_document import (
     UploadDocumentUseCase,
 )
+from src.features.notifications.application.use_cases.notify import NotifyUseCase
 
 from ...domain.entities import OnboardingDocumentUpload
 from ...domain.errors import (
@@ -30,6 +42,7 @@ from ...domain.errors import (
 )
 from ...domain.policy import ensure_step_allowed_for_role, ensure_step_operable
 from ...domain.ports import IOnboardingRepository
+from .notify_onboarding_completed import NotifyOnboardingCompletedUseCase
 
 
 class UploadSignedOnboardingDocumentUseCase:
@@ -37,9 +50,18 @@ class UploadSignedOnboardingDocumentUseCase:
         self,
         repository: IOnboardingRepository,
         upload_document_use_case: UploadDocumentUseCase,
+        notify: Optional[NotifyUseCase] = None,
     ):
         self._repository = repository
         self._upload_document = upload_document_use_case
+        # Opcional (mismo criterio que el resto de los casos de uso con
+        # notificación) para no obligar a los tests que solo verifican la
+        # subida a construir un notificador.
+        self._notify_completion = (
+            NotifyOnboardingCompletedUseCase(repository, notify)
+            if notify is not None
+            else None
+        )
 
     async def execute(
         self,
@@ -95,5 +117,12 @@ class UploadSignedOnboardingDocumentUseCase:
         )
         if completed is not None:
             await self._repository.unlock_next_step(user_id, step.step_order)
+
+            # Este es el paso que cierra el onboarding completo. Se llama
+            # SOLO si el paso pasó de verdad a `completed` (no en un reintento
+            # sobre un paso ya cerrado), que es lo que hace innecesaria una
+            # guarda de idempotencia aparte.
+            if self._notify_completion is not None:
+                await self._notify_completion.execute(user_id=user_id, role=role)
 
         return upload
