@@ -29,7 +29,10 @@ def summary_to_dto(summary: EmployeeDashboardSummary) -> DashboardSummaryDTO:
         has_open_entry=summary.today_clock_status.has_open_entry,
         worked_minutes_today=summary.today_clock_status.worked_minutes_today,
     )
-    holidays_dto = [UpcomingHolidayDTO(day=h.day, name=h.name) for h in summary.upcoming_holidays]
+    holidays_dto = [
+        UpcomingHolidayDTO(day=h.day, name=h.name, scope=h.scope)
+        for h in summary.upcoming_holidays
+    ]
 
     if isinstance(summary, AdminDashboardSummary):
         return DashboardSummaryDTO(

@@ -66,11 +66,13 @@ class PostgresDashboardRepository(IDashboardRepository):
 
     async def list_upcoming_holidays(self, from_date: date, limit: int) -> list[UpcomingHoliday]:
         rows = await self._db.fetch(
-            "SELECT day, name FROM holidays WHERE day >= $1 ORDER BY day ASC LIMIT $2",
+            "SELECT day, name, scope FROM holidays WHERE day >= $1 ORDER BY day ASC LIMIT $2",
             from_date,
             limit,
         )
-        return [UpcomingHoliday(day=row["day"], name=row["name"]) for row in rows]
+        return [
+            UpcomingHoliday(day=row["day"], name=row["name"], scope=row["scope"]) for row in rows
+        ]
 
     async def list_pending_absence_requests(
         self, limit: int
