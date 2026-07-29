@@ -1,12 +1,13 @@
-from typing import Any
+from typing import Any, Optional
 
 from ..domain.entities import (
     DocumentAcknowledgement,
     EmployeeOnboardingSummary,
+    OnboardingDocument,
     OnboardingDocumentUpload,
     OnboardingProgress,
     OnboardingStep,
-    QuizAttempt,
+    QuizSubmissionResult,
 )
 from .schemas import (
     AcknowledgementDTO,
@@ -17,6 +18,7 @@ from .schemas import (
     OnboardingProgressDTO,
     OnboardingProgressOverviewDTO,
     OnboardingStepDTO,
+    OnboardingStepDocumentDTO,
     QuizResultDTO,
     UploadSignedDocumentDTO,
 )
@@ -38,7 +40,9 @@ def _masked_config(step: OnboardingStep) -> dict[str, Any]:
 
 
 def step_with_progress_to_dto(
-    step: OnboardingStep, progress: OnboardingProgress
+    step: OnboardingStep,
+    progress: OnboardingProgress,
+    document: Optional[OnboardingDocument] = None,
 ) -> OnboardingStepDTO:
     return OnboardingStepDTO(
         id=step.id,
@@ -51,14 +55,30 @@ def step_with_progress_to_dto(
         data=progress.data,
         started_at=progress.started_at,
         completed_at=progress.completed_at,
+        document=(
+            OnboardingStepDocumentDTO(
+                id=document.id,
+                kind=document.kind,
+                title=document.title,
+                version=document.version,
+                url=document.storage_ref,
+            )
+            if document is not None
+            else None
+        ),
     )
 
 
 def steps_with_progress_to_dto(
-    pairs: list[tuple[OnboardingStep, OnboardingProgress]],
+    triples: list[
+        tuple[OnboardingStep, OnboardingProgress, Optional[OnboardingDocument]]
+    ],
 ) -> OnboardingMeDTO:
     return OnboardingMeDTO(
-        steps=[step_with_progress_to_dto(step, progress) for step, progress in pairs]
+        steps=[
+            step_with_progress_to_dto(step, progress, document)
+            for step, progress, document in triples
+        ]
     )
 
 
@@ -73,12 +93,15 @@ def progress_to_dto(progress: OnboardingProgress) -> OnboardingProgressDTO:
     )
 
 
-def quiz_attempt_to_dto(attempt: QuizAttempt) -> QuizResultDTO:
+def quiz_submission_to_dto(result: QuizSubmissionResult) -> QuizResultDTO:
     return QuizResultDTO(
-        step_id=attempt.step_id,
-        score=attempt.score,
-        passed=attempt.passed,
-        submitted_at=attempt.submitted_at,
+        step_id=result.attempt.step_id,
+        score=result.attempt.score,
+        passed=result.attempt.passed,
+        submitted_at=result.attempt.submitted_at,
+        incorrect_question_ids=result.incorrect_question_ids,
+        attempts_used=result.attempts_used,
+        attempts_left=result.attempts_left,
     )
 
 

@@ -21,9 +21,14 @@ from typing import Optional
 
 from src.features.notifications.application.use_cases.notify import NotifyUseCase
 
-from ...domain.entities import OnboardingProgress, OnboardingStep
+from ...domain.entities import OnboardingDocument, OnboardingProgress, OnboardingStep
 from ...domain.policy import steps_applicable_to_role
 from ...domain.ports import IOnboardingRepository
+
+# Tipos de paso que llevan un documento asociado en `onboarding_documents`:
+# el manual que hay que leer y la plantilla que hay que firmar y subir. Vídeo,
+# cuestionario y perfil no tienen ninguno.
+_DOCUMENT_STEP_TYPES = ("manual", "signature")
 
 
 class GetMyOnboardingUseCase:
@@ -33,7 +38,9 @@ class GetMyOnboardingUseCase:
 
     async def execute(
         self, *, user_id: str, role: str
-    ) -> list[tuple[OnboardingStep, OnboardingProgress]]:
+    ) -> list[
+        tuple[OnboardingStep, OnboardingProgress, Optional[OnboardingDocument]]
+    ]:
         all_steps = await self._repository.list_active_steps()
         applicable_steps = steps_applicable_to_role(all_steps, role)
 
@@ -54,8 +61,18 @@ class GetMyOnboardingUseCase:
             p.step_id: p for p in await self._repository.list_progress_for_user(user_id)
         }
 
+        # Una consulta por TIPO de documento presente (2 como máximo), no una
+        # por paso. Así el cliente recibe la URL real del manual/plantilla y no
+        # tiene que hardcodearla ni duplicarla en el `config` del paso:
+        # `onboarding_documents.storage_ref` es la única fuente de verdad de
+        # dónde vive el fichero.
+        documents_by_kind: dict[str, Optional[OnboardingDocument]] = {}
+        for kind in _DOCUMENT_STEP_TYPES:
+            if any(step.type == kind for step in applicable_steps):
+                documents_by_kind[kind] = await self._repository.find_active_document(kind)
+
         return [
-            (step, progress_by_step_id[step.id])
+            (step, progress_by_step_id[step.id], documents_by_kind.get(step.type))
             for step in applicable_steps
             if step.id in progress_by_step_id
         ]

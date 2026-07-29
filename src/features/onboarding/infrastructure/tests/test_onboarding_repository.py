@@ -135,6 +135,12 @@ async def test_create_quiz_attempt_translates_unique_violation_to_domain_error()
             answers={"q1": "7"},
             score=100.0,
             passed=True,
+            # La UNIQUE que se viola ahora es
+            # `(user_id, step_id, attempt_number)` — sustituyó a
+            # `UNIQUE(user_id, step_id)` al pasar a dos intentos
+            # (`034_quiz_two_attempts.sql`). Sigue siendo la garantía real
+            # contra el doble envío simultáneo.
+            attempt_number=2,
         )
 
 

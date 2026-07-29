@@ -102,12 +102,17 @@ SIGNATURE_DOCUMENT = OnboardingDocument(
     is_active=True,
 )
 
+# Material REAL desde `035_onboarding_manual_hincator.sql` — antes era el
+# placeholder ("Manual del empleado", `cafebabe…`, sin `storage_ref`). El
+# fichero se sirve como asset estático del front (`public/manuales/`), igual
+# que el vídeo del paso 1: el límite de 10 MB de `POST /documents` protege las
+# subidas de los TRABAJADORES, no el material corporativo que publicamos.
 MANUAL_DOCUMENT = OnboardingDocument(
     id="doc-manual",
     kind="manual",
-    title="Manual del empleado",
+    title="Manual de usuario Hincator® 2026",
     version=1,
-    content_hash="cafebabe" * 8,
-    storage_ref=None,
+    content_hash="b72ce8011190e141b650e3b87a2bd6e15c9e903958035852a545f80473d90731",
+    storage_ref="/manuales/manual-usuario-hincator-2026-ES.pdf",
     is_active=True,
 )

@@ -5,7 +5,37 @@ from src.features.onboarding.application.use_cases.get_my_onboarding import (
 )
 
 from .fakes import FakeOnboardingRepository
-from .steps import ALL_STEPS, MANUAL_STEP, VIDEO_STEP
+from .steps import (
+    ALL_STEPS,
+    MANUAL_DOCUMENT,
+    MANUAL_STEP,
+    QUIZ_STEP,
+    SIGNATURE_STEP,
+    VIDEO_STEP,
+)
+
+
+@pytest.mark.asyncio
+async def test_los_pasos_con_documento_llegan_con_su_url_real():
+    """El cliente no debe hardcodear la ruta del manual ni duplicarla en el
+    `config` del paso: `onboarding_documents.storage_ref` es la única fuente de
+    verdad de dónde vive el fichero, y llega en el propio paso."""
+    repository = FakeOnboardingRepository(steps=ALL_STEPS, documents=[MANUAL_DOCUMENT])
+    use_case = GetMyOnboardingUseCase(repository)
+
+    triples = await use_case.execute(user_id="user-1", role="empleado")
+    documents_by_step = {step.id: document for step, _, document in triples}
+
+    manual = documents_by_step[MANUAL_STEP.id]
+    assert manual is not None
+    assert manual.storage_ref == "/manuales/manual-usuario-hincator-2026-ES.pdf"
+
+    # Los pasos sin documento no inventan ninguno.
+    assert documents_by_step[VIDEO_STEP.id] is None
+    assert documents_by_step[QUIZ_STEP.id] is None
+    # La plantilla de documentación todavía no está configurada (RF-A8.4) —
+    # `None`, no un error.
+    assert documents_by_step[SIGNATURE_STEP.id] is None
 
 
 @pytest.mark.asyncio
@@ -15,8 +45,8 @@ async def test_first_visit_initializes_progress_first_step_available_rest_locked
 
     pairs = await use_case.execute(user_id="user-1", role="empleado")
 
-    assert [step.id for step, _ in pairs] == [s.id for s in ALL_STEPS]
-    statuses = {step.id: progress.status for step, progress in pairs}
+    assert [step.id for step, _, _ in pairs] == [s.id for s in ALL_STEPS]
+    statuses = {step.id: progress.status for step, progress, _ in pairs}
     assert statuses[VIDEO_STEP.id] == "available"
     assert all(
         status == "locked"
@@ -40,7 +70,7 @@ async def test_second_visit_does_not_reset_progress():
     )
 
     pairs = await use_case.execute(user_id="user-1", role="empleado")
-    video_progress = next(p for step, p in pairs if step.id == VIDEO_STEP.id)
+    video_progress = next(p for step, p, _ in pairs if step.id == VIDEO_STEP.id)
     assert video_progress.status == "completed"
 
 
@@ -53,7 +83,7 @@ async def test_external_guest_only_gets_video_and_manual_steps():
 
     pairs = await use_case.execute(user_id="guest-1", role="externo_invitado")
 
-    step_ids = {step.id for step, _ in pairs}
+    step_ids = {step.id for step, _, _ in pairs}
     assert step_ids == {VIDEO_STEP.id, MANUAL_STEP.id}
 
 
@@ -67,6 +97,6 @@ async def test_external_guest_manual_step_starts_locked_video_is_available():
 
     pairs = await use_case.execute(user_id="guest-1", role="externo_invitado")
 
-    statuses = {step.id: progress.status for step, progress in pairs}
+    statuses = {step.id: progress.status for step, progress, _ in pairs}
     assert statuses[VIDEO_STEP.id] == "available"
     assert statuses[MANUAL_STEP.id] == "locked"

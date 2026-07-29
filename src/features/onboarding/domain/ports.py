@@ -81,7 +81,16 @@ class IOnboardingRepository(Protocol):
 
     async def find_quiz_attempt(
         self, user_id: str, step_id: str
-    ) -> Optional[QuizAttempt]: ...
+    ) -> Optional[QuizAttempt]:
+        """El intento MÁS RECIENTE (mayor `attempt_number`) — `None` si no hay
+        ninguno. Con dos intentos posibles ya no es "el intento", así que para
+        decidir si quedan usa `count_quiz_attempts`, no esto."""
+        ...
+
+    async def count_quiz_attempts(self, user_id: str, step_id: str) -> int:
+        """Cuántos intentos lleva gastados este usuario en este paso — lo que
+        `ensure_quiz_attempts_left` compara contra `MAX_QUIZ_ATTEMPTS`."""
+        ...
 
     async def create_quiz_attempt(
         self,
@@ -91,10 +100,14 @@ class IOnboardingRepository(Protocol):
         answers: dict[str, Any],
         score: float,
         passed: bool,
+        attempt_number: int,
     ) -> QuizAttempt:
-        """INSERT — debe traducir la violación de `UNIQUE(user_id, step_id)`
-        a `QuizAlreadyAttemptedError` (nunca dejar que un 500 genérico
-        llegue al cliente por esta carrera)."""
+        """INSERT — debe traducir la violación de
+        `UNIQUE(user_id, step_id, attempt_number)` a
+        `QuizAlreadyAttemptedError` (nunca dejar que un 500 genérico llegue al
+        cliente por esta carrera). Esa UNIQUE es la que impide que dos
+        peticiones simultáneas consuman el mismo número de intento y se salten
+        el techo de `MAX_QUIZ_ATTEMPTS`."""
         ...
 
     async def mark_step_completed_if_operable(

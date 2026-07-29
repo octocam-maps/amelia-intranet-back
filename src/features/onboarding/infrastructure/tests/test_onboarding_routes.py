@@ -190,6 +190,8 @@ def test_socio_can_reach_get_me_like_any_internal_role():
 def test_socio_can_submit_quiz_like_any_internal_role():
     class FakeSubmitQuizUseCase:
         async def execute(self, *, user_id, role, step_id, answers):
+            # El caso de uso devuelve un `QuizSubmissionResult` (intento +
+            # preguntas falladas + intentos restantes), no el intento suelto.
             class _Attempt:
                 pass
 
@@ -198,7 +200,16 @@ def test_socio_can_submit_quiz_like_any_internal_role():
             attempt.score = 1.0
             attempt.passed = True
             attempt.submitted_at = "2026-07-16T10:00:00Z"
-            return attempt
+
+            class _Result:
+                pass
+
+            result = _Result()
+            result.attempt = attempt
+            result.incorrect_question_ids = []
+            result.attempts_used = 1
+            result.attempts_left = 0
+            return result
 
     app.dependency_overrides[onboarding_dependencies.get_submit_quiz_use_case] = (
         lambda: FakeSubmitQuizUseCase()

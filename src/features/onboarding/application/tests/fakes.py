@@ -34,7 +34,9 @@ class FakeOnboardingRepository:
             d.id: d for d in (documents or [])
         }
         self.progress: dict[tuple[str, str], OnboardingProgress] = {}
-        self.quiz_attempts: dict[tuple[str, str], QuizAttempt] = {}
+        # Clave (user_id, step_id, attempt_number) — espeja
+        # `uq_quiz_attempt_per_number`, no la vieja UNIQUE(user_id, step_id).
+        self.quiz_attempts: dict[tuple[str, str, int], QuizAttempt] = {}
         self.document_uploads: list[OnboardingDocumentUpload] = []
         self.acknowledgements: list[DocumentAcknowledgement] = []
         # user_id -> {full_name, email, avatar_url, role} — solo lo que
@@ -137,7 +139,20 @@ class FakeOnboardingRepository:
     async def find_quiz_attempt(
         self, user_id: str, step_id: str
     ) -> Optional[QuizAttempt]:
-        return self.quiz_attempts.get((user_id, step_id))
+        attempts = self._attempts_for(user_id, step_id)
+        if not attempts:
+            return None
+        return max(attempts, key=lambda a: a.attempt_number)
+
+    async def count_quiz_attempts(self, user_id: str, step_id: str) -> int:
+        return len(self._attempts_for(user_id, step_id))
+
+    def _attempts_for(self, user_id: str, step_id: str) -> list[QuizAttempt]:
+        return [
+            attempt
+            for (uid, sid, _), attempt in self.quiz_attempts.items()
+            if uid == user_id and sid == step_id
+        ]
 
     async def create_quiz_attempt(
         self,
@@ -147,12 +162,17 @@ class FakeOnboardingRepository:
         answers: dict[str, Any],
         score: float,
         passed: bool,
+        attempt_number: int,
     ) -> QuizAttempt:
-        key = (user_id, step_id)
+        key = (user_id, step_id, attempt_number)
         if key in self.quiz_attempts:
-            # Espeja la UNIQUE violation real de Postgres (uq_quiz_attempt_single).
+            # Espeja la UNIQUE violation real de Postgres
+            # (`uq_quiz_attempt_per_number`): la colisión es por NÚMERO de
+            # intento, no por usuario/paso — es lo que impide que dos envíos
+            # simultáneos consuman el mismo intento.
             raise QuizAlreadyAttemptedError(
-                "Ya has respondido este cuestionario — solo se admite un intento."
+                "Otro envío de este cuestionario se registró antes que el tuyo — "
+                "recarga la página para ver tu resultado."
             )
         attempt = QuizAttempt(
             id=str(uuid.uuid4()),
@@ -162,6 +182,7 @@ class FakeOnboardingRepository:
             score=score,
             passed=passed,
             submitted_at=datetime.now(timezone.utc),
+            attempt_number=attempt_number,
         )
         self.quiz_attempts[key] = attempt
         return attempt
@@ -250,7 +271,13 @@ class FakeOnboardingRepository:
     async def reset_quiz_attempt(
         self, user_id: str, step_id: str
     ) -> Optional[OnboardingProgress]:
-        self.quiz_attempts.pop((user_id, step_id), None)
+        # Borra TODOS los intentos de este usuario/paso, no solo el primero —
+        # espeja el `DELETE ... WHERE user_id = $1 AND step_id = $2` real, que
+        # no filtra por `attempt_number`.
+        for key in [
+            k for k in self.quiz_attempts if k[0] == user_id and k[1] == step_id
+        ]:
+            del self.quiz_attempts[key]
 
         key = (user_id, step_id)
         current = self.progress.get(key)
