@@ -109,6 +109,7 @@ class FakeStaffRepository:
         email,
         job_title,
         contract_type=None,
+        clear_contract_type=False,
         department_id,
         entity_id,
         role_id,
@@ -164,6 +165,7 @@ class FakeStaffRepository:
         *,
         job_title,
         contract_type=None,
+        clear_contract_type=False,
         department_id,
         entity_id,
         role_id,
@@ -207,7 +209,11 @@ class FakeStaffRepository:
         updated = replace(
             existing,
             job_title=job_title if job_title is not None else existing.job_title,
-            contract_type=contract_type if contract_type is not None else existing.contract_type,
+            contract_type=(
+                None
+                if clear_contract_type
+                else (contract_type if contract_type is not None else existing.contract_type)
+            ),
             department_id=department_id if department_id is not None else existing.department_id,
             entity_id=entity_id if entity_id is not None else existing.entity_id,
             entity_code=entity_code,

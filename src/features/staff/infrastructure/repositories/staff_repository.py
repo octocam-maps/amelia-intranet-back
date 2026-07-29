@@ -240,7 +240,6 @@ class PostgresStaffRepository(IStaffRepository):
         user_id: str,
         *,
         job_title: Optional[str],
-        contract_type: Optional[str] = None,
         department_id: Optional[str],
         entity_id: Optional[str],
         role_id: Optional[str],
@@ -248,17 +247,29 @@ class PostgresStaffRepository(IStaffRepository):
         vacation_days_override: Optional[float],
         clear_vacation_days_override: bool,
         status: Optional[str],
+        contract_type: Optional[str] = None,
+        clear_contract_type: bool = False,
     ) -> Optional[StaffMember]:
         async with self._db.acquire() as connection:
             async with connection.transaction():
                 # COALESCE: cada parámetro en NULL deja la columna como
                 # estaba — semántica PATCH (actualización parcial).
-                # `vacation_days_override` es la excepción: necesita
-                # distinguir "no tocar" de "vaciar" con un solo `None`, así
-                # que se resuelve con el `CASE WHEN $8` (mismo patrón que
-                # `holidays.update_holiday`/`clear_entity`). `RETURNING
-                # hire_date, vacation_days_override` deja recalcular el saldo
-                # sin una segunda ida y vuelta a `users`.
+                #
+                # DOS excepciones, y por el mismo motivo: necesitan distinguir
+                # "no tocar" de "vaciar", y un solo `None` no puede expresar las
+                # dos cosas. Se resuelven con un flag booleano y un `CASE WHEN`
+                # (mismo patrón que `holidays.update_holiday`/`clear_entity`):
+                #   · `vacation_days_override` ($8/$9)
+                #   · `contract_type` ($10/$11)
+                #
+                # `contract_type` llegó tarde a esta query y ES IMPORTANTE
+                # recordar por qué: estuvo en la firma del método sin estar en el
+                # `SET`, así que el PATCH respondía 200 y no guardaba nada. Si
+                # añades otro campo, comprueba que aparece en los TRES sitios —
+                # firma, `SET` y lista de parámetros— y escribe el test antes.
+                #
+                # `RETURNING hire_date, vacation_days_override` deja recalcular
+                # el saldo sin una segunda ida y vuelta a `users`.
                 row = await connection.fetchrow(
                     """
                     UPDATE users
@@ -271,6 +282,10 @@ class PostgresStaffRepository(IStaffRepository):
                         vacation_days_override = CASE
                             WHEN $8 THEN NULL
                             ELSE COALESCE($9, vacation_days_override)
+                        END,
+                        contract_type = CASE
+                            WHEN $10 THEN NULL
+                            ELSE COALESCE($11, contract_type)
                         END,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = $1 AND deleted_at IS NULL
@@ -285,6 +300,8 @@ class PostgresStaffRepository(IStaffRepository):
                     status,
                     clear_vacation_days_override,
                     vacation_days_override,
+                    clear_contract_type,
+                    contract_type,
                 )
                 if row is None:
                     return None
