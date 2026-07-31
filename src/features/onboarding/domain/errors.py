@@ -81,3 +81,12 @@ class OnboardingUserNotFoundError(NotFoundError):
     persistir el paso 5 — defensivo: no debería ocurrir con un JWT válido,
     pero `save_profile_completion` escribe en `users`/`user_profiles` y
     conviene no dejar pasar un `False` silencioso."""
+
+
+class ManualLockedError(ValidationError):
+    """Se intentó confirmar un manual sin haber confirmado antes los de
+    `display_order` menor (migración 040).
+
+    Es la puerta del paso 3: el manual de ClickUp se lee primero y desbloquea el
+    resto. Vive en el backend y no solo en la UI porque el candado del frontend
+    es cosmético — un POST directo al endpoint de confirmación se lo saltaría."""

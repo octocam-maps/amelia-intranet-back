@@ -24,11 +24,15 @@ from src.features.holidays.infrastructure.routes import create_holidays_router
 from src.features.invitations.infrastructure.routes import create_invitations_router
 from src.features.mailbox.infrastructure.routes import create_mailbox_router
 from src.features.notifications.infrastructure.routes import create_notifications_router
+from src.features.onboarding.infrastructure.manuals_routes import create_manuals_router
 from src.features.onboarding.infrastructure.routes import create_onboarding_router
 from src.features.profile.infrastructure.routes import create_profile_router
 from src.features.roles.infrastructure.routes import create_roles_router
 from src.features.staff.infrastructure.routes import create_staff_router
 from src.features.team.infrastructure.routes import create_team_router
+from src.features.email_templates.infrastructure.routes import (
+    create_email_templates_router,
+)
 from src.features.time_clock.infrastructure.routes import create_time_clock_router
 from src.shared.config import get_settings
 from src.shared.database import get_database_pool
@@ -126,6 +130,8 @@ def create_app() -> FastAPI:
     app.include_router(create_profile_router())
     app.include_router(create_roles_router())
     app.include_router(create_invitations_router())
+    app.include_router(create_email_templates_router())
+    app.include_router(create_manuals_router())
     logger.info(
         "Routers registered",
         routers=[

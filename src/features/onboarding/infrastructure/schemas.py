@@ -22,6 +22,13 @@ class OnboardingStepDocumentDTO(BaseModel):
     title: str
     version: int
     url: Optional[str]
+    # Cascada del paso 3 (migración 040). El cliente NO recalcula nada de esto:
+    # `locked` sale de la misma regla de dominio que valida el POST
+    # (`ensure_manual_unlocked`), así que el candado que pinta y el 422 que
+    # recibiría si insistiera no pueden discrepar.
+    display_order: int = 1
+    acknowledged: bool = False
+    locked: bool = False
 
 
 class OnboardingStepDTO(BaseModel):
@@ -38,9 +45,14 @@ class OnboardingStepDTO(BaseModel):
     data: dict[str, Any]
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
-    # Solo en los pasos que tienen documento (`manual`, `signature`); `None`
-    # en vídeo, cuestionario y perfil. También `None` si RRHH todavía no ha
-    # configurado el documento de ese tipo.
+    # Documentos del paso, en orden de lectura. LISTA desde la migración 040: el
+    # paso `manual` admite varios en cascada. Vacía en vídeo, cuestionario y
+    # perfil, y también si RRHH todavía no ha configurado ninguno.
+    documents: list[OnboardingStepDocumentDTO] = []
+    # DEPRECADO — se mantiene por compatibilidad con clientes anteriores a la
+    # 040, que leen `step.document`. Es el PRIMER documento de `documents`
+    # (para el paso 3, el manual que abre la cascada). Retirar cuando no queden
+    # clientes viejos desplegados.
     document: Optional[OnboardingStepDocumentDTO] = None
 
 
@@ -155,6 +167,11 @@ class AdminStepDTO(BaseModel):
     title: str
     config: dict[str, Any]
     is_active: bool
+    # Documentos del paso, para la PREVISUALIZACIÓN del admin. Sin `acknowledged`
+    # ni `locked`: la cascada es el estado de UN trabajador concreto, y en una
+    # previsualización no hay trabajador — pintar candados aquí sugeriría que el
+    # admin tiene un progreso que no tiene.
+    documents: list[OnboardingStepDocumentDTO] = []
 
 
 class AdminStepListDTO(BaseModel):
@@ -173,6 +190,15 @@ class ResetQuizRequestDTO(BaseModel):
     user_id: str
 
 
+class EmployeeStepProgressDTO(BaseModel):
+    """Un paso concreto de una persona, para el desglose de la bandeja de
+    administración."""
+
+    step_order: int
+    title: str
+    status: str  # locked | available | in_progress | completed
+
+
 class EmployeeOnboardingSummaryDTO(BaseModel):
     user_id: str
     full_name: str
@@ -182,7 +208,40 @@ class EmployeeOnboardingSummaryDTO(BaseModel):
     completed_steps: int
     total_steps: int
     current_step_title: Optional[str]
+    # Desglose paso a paso, para que el admin vea DÓNDE está atascada una persona
+    # y no solo "3 de 5". Vacío si nunca visitó su onboarding — que es distinto de
+    # tener los 5 pasos bloqueados.
+    steps: list[EmployeeStepProgressDTO] = []
 
 
 class OnboardingProgressOverviewDTO(BaseModel):
     employees: list[EmployeeOnboardingSummaryDTO]
+
+
+class AcknowledgeManualDTO(BaseModel):
+    """Body de `POST /steps/{step_id}/acknowledge`.
+
+    `document_id` es opcional a propósito: un cliente anterior a la migración 040
+    confirmaba "el manual" sin decir cuál, y con un solo manual eso no era
+    ambiguo. Ausente = "el siguiente pendiente de la cascada", que es lo único
+    que podía significar entonces."""
+
+    document_id: Optional[str] = None
+
+
+class ManualDTO(BaseModel):
+    """Un manual de la biblioteca (`GET /manuals`)."""
+
+    id: str
+    title: str
+    version: int
+    url: Optional[str]
+    # `True` = es uno de los que hay que confirmar en el paso 3 del onboarding.
+    # El cliente lo usa para separar "lectura obligatoria" de "consulta".
+    required_in_onboarding: bool
+    # Si ESTE usuario ya confirmó su lectura. Nadie ve el progreso de otro aquí.
+    acknowledged: bool
+
+
+class ManualsLibraryDTO(BaseModel):
+    manuals: list[ManualDTO]

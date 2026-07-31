@@ -84,7 +84,12 @@ class UploadSignedOnboardingDocumentUseCase:
         current = await self._repository.find_progress(user_id, step_id)
         ensure_step_operable(current)
 
-        document = await self._repository.find_active_document("signature")
+        # `signature` es uno solo (no hay cascada de plantillas): se toma el
+        # primero de la lista, que con `display_order` + `version DESC` es el
+        # vigente. Comparte firma con los manuales para no tener dos formas de
+        # leer la misma tabla.
+        signature_documents = await self._repository.find_active_documents("signature")
+        document = signature_documents[0] if signature_documents else None
         if document is None:
             raise OnboardingDocumentNotFoundError(
                 "Todavía no hay un documento de firma configurado."

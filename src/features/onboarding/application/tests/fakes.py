@@ -207,13 +207,36 @@ class FakeOnboardingRepository:
         self.progress[key] = updated
         return updated
 
-    async def find_active_document(self, kind: str) -> Optional[OnboardingDocument]:
+    async def find_active_documents(self, kind: str) -> list[OnboardingDocument]:
+        # Mismo orden y mismo FILTRO que `PostgresOnboardingRepository`: solo los
+        # de la cascada (`requires_acknowledgement`, migración 043) — si el fake
+        # devolviera también los de biblioteca, los tests del paso 3 medirían una
+        # cascada más larga de la real.
         candidates = [
-            d for d in self.documents.values() if d.kind == kind and d.is_active
+            d
+            for d in self.documents.values()
+            if d.kind == kind and d.is_active and d.requires_acknowledgement
         ]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda d: d.version)
+        return sorted(candidates, key=lambda d: (d.display_order, -d.version))
+
+    async def list_manuals_library(self) -> list[OnboardingDocument]:
+        candidates = [
+            d for d in self.documents.values() if d.kind == "manual" and d.is_active
+        ]
+        # Obligatorios primero, igual que el repositorio real.
+        return sorted(
+            candidates,
+            key=lambda d: (not d.requires_acknowledgement, d.display_order, -d.version),
+        )
+
+    async def list_acknowledged_document_ids(self, user_id: str, kind: str) -> set[str]:
+        return {
+            a.document_id
+            for a in self.acknowledgements
+            if a.user_id == user_id
+            and (doc := self.documents.get(a.document_id)) is not None
+            and doc.kind == kind
+        }
 
     async def create_document_upload(
         self, *, user_id: str, onboarding_document_id: str, employee_document_id: str
@@ -231,6 +254,18 @@ class FakeOnboardingRepository:
     async def create_acknowledgement(
         self, *, user_id: str, document_id: str, ip_address: Optional[str]
     ) -> DocumentAcknowledgement:
+        # `document_acknowledgements` tiene UNIQUE (user_id, document_id) y el
+        # repositorio real hace upsert: reconfirmar NO crea una segunda fila.
+        existing = next(
+            (
+                a
+                for a in self.acknowledgements
+                if a.user_id == user_id and a.document_id == document_id
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing
         acknowledgement = DocumentAcknowledgement(
             id=str(uuid.uuid4()),
             user_id=user_id,

@@ -1,6 +1,6 @@
 """Entidades de dominio del feature `onboarding`. Sin dependencias de framework/SQL."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -84,6 +84,18 @@ class OnboardingDocument:
     content_hash: str
     storage_ref: Optional[str]
     is_active: bool
+    # Orden de lectura dentro de su `kind` (migración 040). Para los manuales
+    # define la CASCADA del paso 3: no se confirma uno sin los de orden menor.
+    # Default a propósito, para no romper los tests y fakes que construyen
+    # documentos sin orden — ahí el orden no es lo que se está probando.
+    display_order: int = 1
+    # `True` = hay que confirmar su lectura para completar el paso 3 (entra en la
+    # cascada). `False` = solo está en la biblioteca de consulta (migración 043).
+    #
+    # La biblioteca es un SUPERCONJUNTO del paso: el manual de uso de la intranet
+    # se consulta pero no se exige leer, y meterlo en la cascada habría alargado el
+    # onboarding con un manual que nadie pidió.
+    requires_acknowledgement: bool = True
 
 
 @dataclass(frozen=True)
@@ -173,3 +185,28 @@ class EmployeeOnboardingSummary:
     completed_steps: int
     total_steps: int
     current_step_title: Optional[str]
+    # Desglose paso a paso, para que el admin pueda ver DÓNDE está atascada una
+    # persona y no solo "3 de 5". El dato ya venía en el snapshot: antes se
+    # colapsaba al agregar y se tiraba.
+    #
+    # Vacío si el usuario nunca ha visitado su onboarding (progreso sin
+    # inicializar), que es distinto de "tiene 5 pasos bloqueados".
+    steps: list[StepProgressSnapshot] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class StepDocument:
+    """Un documento del paso junto a su estado EN LA CASCADA para este usuario
+    (migración 040).
+
+    Existe para que `acknowledged`/`locked` los calcule el DOMINIO
+    (`resolve_step_documents` en `policy.py`) y no el mapper: son la misma regla
+    que valida el POST de confirmación, así que el candado que pinta la UI y el
+    422 que recibiría si insistiera salen de un solo sitio y no pueden
+    discrepar."""
+
+    document: OnboardingDocument
+    acknowledged: bool
+    # `True` = hay un documento anterior en la cascada sin confirmar. Solo puede
+    # ser `True` en los manuales: el `signature` es uno solo.
+    locked: bool

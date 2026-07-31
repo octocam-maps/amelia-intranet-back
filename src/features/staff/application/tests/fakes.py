@@ -12,7 +12,7 @@ from src.features.absences.domain.vacation_entitlement import (
     calculate_vacation_entitlement_days,
     resolve_vacation_entitlement_days,
 )
-from src.features.staff.domain.entities import StaffMember
+from src.features.staff.domain.entities import RoleChange, StaffMember
 from src.shared.email.domain.entities import EmailResult
 
 
@@ -35,6 +35,10 @@ _ROLES = {
     "empleado": "role-empleado",
     "externo_invitado": "role-externo_invitado",
     "socio": "role-socio",
+    # [038] Debe reflejar la tabla `roles` real: sin esta entrada, el fake
+    # rechaza `becario` con `InvalidRoleCodeError` y los tests de promoción
+    # fallarían por el motivo equivocado.
+    "becario": "role-becario",
 }
 
 
@@ -56,6 +60,8 @@ class FakeStaffRepository:
         self.members: dict[str, StaffMember] = {m.id: m for m in (members or [])}
         self.departments: dict[tuple[str, str], str] = {}
         self.invitations: list[RecordedInvitation] = []
+        # Filas que el repositorio real escribiría en `user_role_history` (039).
+        self.role_history: list[dict] = []
 
     def _filtered(self, *, entity_code: Optional[str], search: Optional[str]) -> list[StaffMember]:
         members = list(self.members.values())
@@ -148,6 +154,16 @@ class FakeStaffRepository:
             created_at=datetime.now(timezone.utc),
         )
         self.members[member.id] = member
+        # Fila de alta del historial de roles (039), igual que
+        # `PostgresStaffRepository.create_staff_member`.
+        self.role_history.append(
+            {
+                "user_id": member.id,
+                "from_role_id": None,
+                "to_role_id": role_id,
+                "changed_by": invited_by,
+            }
+        )
         self.invitations.append(
             RecordedInvitation(
                 email=email,
@@ -158,6 +174,27 @@ class FakeStaffRepository:
             )
         )
         return member
+
+    async def list_role_history(self, user_id: str) -> list[RoleChange]:
+        _CODES_BY_ID = {rid: code for code, rid in _ROLES.items()}
+        rows = [r for r in self.role_history if r["user_id"] == user_id]
+        return [
+            RoleChange(
+                id=f"history-{index}",
+                from_role_code=(
+                    _CODES_BY_ID.get(row["from_role_id"])
+                    if row["from_role_id"] is not None
+                    else None
+                ),
+                to_role_code=_CODES_BY_ID.get(row["to_role_id"], "?"),
+                changed_by_id=row["changed_by"],
+                changed_by_name=None,
+                changed_at=datetime(2026, 7, 31, 12, index, tzinfo=timezone.utc),
+                note=None,
+            )
+            # Más reciente primero, igual que el `ORDER BY changed_at DESC` real.
+            for index, row in reversed(list(enumerate(rows)))
+        ]
 
     async def update_staff_member(
         self,
@@ -173,10 +210,24 @@ class FakeStaffRepository:
         vacation_days_override,
         clear_vacation_days_override,
         status,
+        changed_by=None,
     ) -> Optional[StaffMember]:
         existing = self.members.get(user_id)
         if existing is None:
             return None
+
+        # Traza de cambio de rol (039), igual que el repositorio real: solo
+        # cuando el rol cambia de verdad. Se expone para que los tests puedan
+        # afirmar sobre ella sin un Postgres delante.
+        if role_id is not None and role_id != existing.role_id:
+            self.role_history.append(
+                {
+                    "user_id": user_id,
+                    "from_role_id": existing.role_id,
+                    "to_role_id": role_id,
+                    "changed_by": changed_by,
+                }
+            )
 
         entity_code = existing.entity_code
         if entity_id is not None:

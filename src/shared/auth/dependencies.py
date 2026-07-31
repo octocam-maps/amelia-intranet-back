@@ -142,4 +142,13 @@ def require_role(*allowed_roles: str):
             )
         return user
 
+    # Los roles admitidos quedan colgados de la dependencia para poder
+    # AUDITAR la matriz de permisos con un test, recorriendo `app.routes` en vez
+    # de leyendo 77 `Depends` a ojo. Lo usa
+    # `test_every_time_clock_route_is_closed_to_becario`: un endpoint nuevo de
+    # `/time-clock` que copie el guard de un router vecino (`INTERNAL_ROLES`) le
+    # abriría el fichaje al becario, y sin esta introspección ningún test se
+    # enteraría. No lo lee nada en runtime.
+    _dependency._allowed_roles = allowed_roles
+
     return _dependency

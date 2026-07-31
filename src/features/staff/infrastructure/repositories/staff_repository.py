@@ -22,7 +22,7 @@ from src.features.absences.domain.vacation_entitlement import (
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 from src.shared.utils.timezone import today_in_madrid
 
-from ...domain.entities import StaffMember
+from ...domain.entities import RoleChange, StaffMember
 from ...domain.ports import IStaffRepository
 
 _STAFF_SELECT = """
@@ -230,6 +230,22 @@ class PostgresStaffRepository(IStaffRepository):
                     invited_by,
                     expires_at,
                 )
+                # Fila de alta del historial de roles (039), con
+                # `from_role_id = NULL` = "no venía de ningún rol previo". Se
+                # escribe aquí y no al promocionar por primera vez para que el
+                # historial de una persona sea completo desde el alta: sin esta
+                # fila, la ficha de quien nunca cambió de rol saldría vacía y no
+                # se distinguiría de un fallo de carga.
+                await connection.execute(
+                    """
+                    INSERT INTO user_role_history
+                        (user_id, from_role_id, to_role_id, changed_by)
+                    VALUES ($1, NULL, $2, $3)
+                    """,
+                    user_id,
+                    role_id,
+                    invited_by,
+                )
 
         member = await self.find_by_id(str(user_id))
         assert member is not None
@@ -249,6 +265,7 @@ class PostgresStaffRepository(IStaffRepository):
         status: Optional[str],
         contract_type: Optional[str] = None,
         clear_contract_type: bool = False,
+        changed_by: Optional[str] = None,
     ) -> Optional[StaffMember]:
         async with self._db.acquire() as connection:
             async with connection.transaction():
@@ -270,6 +287,11 @@ class PostgresStaffRepository(IStaffRepository):
                 #
                 # `RETURNING hire_date, vacation_days_override` deja recalcular
                 # el saldo sin una segunda ida y vuelta a `users`.
+                # `prev` captura el rol ANTERIOR en el mismo statement que lo
+                # pisa (039_user_role_history.sql). Leerlo con un SELECT suelto
+                # antes del UPDATE también funcionaría dentro de esta
+                # transacción, pero así no hay dos fuentes de "cuál era el rol
+                # viejo" que puedan discrepar, ni un viaje extra.
                 row = await connection.fetchrow(
                     """
                     UPDATE users
@@ -288,8 +310,12 @@ class PostgresStaffRepository(IStaffRepository):
                             ELSE COALESCE($11, contract_type)
                         END,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE id = $1 AND deleted_at IS NULL
-                    RETURNING id, hire_date, vacation_days_override
+                    FROM (
+                        SELECT role_id AS previous_role_id FROM users WHERE id = $1
+                    ) AS prev
+                    WHERE users.id = $1 AND users.deleted_at IS NULL
+                    RETURNING users.id, users.hire_date, users.vacation_days_override,
+                              users.role_id, prev.previous_role_id
                     """,
                     user_id,
                     job_title,
@@ -305,6 +331,25 @@ class PostgresStaffRepository(IStaffRepository):
                 )
                 if row is None:
                     return None
+
+                # Traza del cambio de rol (RF-A10.6), en ESTA transacción: si el
+                # UPDATE se revierte, el historial no queda contando un cambio
+                # que no ocurrió. Solo se escribe cuando el rol cambió de verdad
+                # — una edición de puesto o de entidad no debe generar una fila
+                # de "cambio de rol" con el mismo rol a los dos lados.
+                previous_role_id = row["previous_role_id"]
+                if previous_role_id != row["role_id"]:
+                    await connection.execute(
+                        """
+                        INSERT INTO user_role_history
+                            (user_id, from_role_id, to_role_id, changed_by)
+                        VALUES ($1, $2, $3, $4)
+                        """,
+                        user_id,
+                        previous_role_id,
+                        row["role_id"],
+                        changed_by,
+                    )
 
                 # Solo se recalcula/reescribe el saldo cuando el override
                 # realmente cambió esta petición (se fijó o se vació) — una
@@ -326,3 +371,48 @@ class PostgresStaffRepository(IStaffRepository):
                     )
 
         return await self.find_by_id(user_id)
+
+    async def list_role_history(self, user_id: str) -> list[RoleChange]:
+        # Se resuelven los CODES de rol y el NOMBRE del autor aquí, en la misma
+        # query, en vez de devolver ids crudos: son tres `LEFT JOIN` sobre
+        # tablas pequeñísimas, y la alternativa sería que el frontend cruzara
+        # `GET /roles` y `GET /staff` para pintar una línea de texto.
+        #
+        # LEFT JOIN y no JOIN en los tres: `from_role_id` es NULL en el alta, y
+        # `changed_by` es NULL cuando no consta (filas reconstruidas por la
+        # migración 039, o un autor borrado -> `ON DELETE SET NULL`). Con un JOIN
+        # normal, justo esas filas desaparecerían del historial en silencio.
+        rows = await self._db.fetch(
+            """
+            SELECT h.id,
+                   from_role.code AS from_role_code,
+                   to_role.code   AS to_role_code,
+                   h.changed_by   AS changed_by_id,
+                   author.full_name AS changed_by_name,
+                   h.changed_at,
+                   h.note
+            FROM user_role_history h
+            JOIN roles to_role        ON to_role.id = h.to_role_id
+            LEFT JOIN roles from_role ON from_role.id = h.from_role_id
+            LEFT JOIN users author    ON author.id = h.changed_by
+            WHERE h.user_id = $1
+            ORDER BY h.changed_at DESC, h.id DESC
+            """,
+            user_id,
+        )
+        return [
+            RoleChange(
+                id=str(row["id"]),
+                from_role_code=row["from_role_code"],
+                to_role_code=row["to_role_code"],
+                changed_by_id=(
+                    str(row["changed_by_id"])
+                    if row["changed_by_id"] is not None
+                    else None
+                ),
+                changed_by_name=row["changed_by_name"],
+                changed_at=row["changed_at"],
+                note=row["note"],
+            )
+            for row in rows
+        ]

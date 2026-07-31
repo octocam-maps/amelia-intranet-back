@@ -24,18 +24,25 @@ async def test_los_pasos_con_documento_llegan_con_su_url_real():
     use_case = GetMyOnboardingUseCase(repository)
 
     triples = await use_case.execute(user_id="user-1", role="empleado")
-    documents_by_step = {step.id: document for step, _, document in triples}
+    documents_by_step = {step.id: documents for step, _, documents in triples}
 
-    manual = documents_by_step[MANUAL_STEP.id]
-    assert manual is not None
-    assert manual.storage_ref == "/manuales/manual-usuario-hincator-2026-ES.pdf"
+    # LISTA de `StepDocument` desde la migración 040: el paso de manuales admite
+    # cascada, y cada documento llega con su estado (`acknowledged`/`locked`) ya
+    # resuelto por el dominio.
+    manuals = documents_by_step[MANUAL_STEP.id]
+    assert [m.document.storage_ref for m in manuals] == [
+        "/manuales/manual-usuario-hincator-2026-ES.pdf"
+    ]
+    # Sin confirmar nada: el primero de la cascada está abierto, no bloqueado.
+    assert manuals[0].acknowledged is False
+    assert manuals[0].locked is False
 
     # Los pasos sin documento no inventan ninguno.
-    assert documents_by_step[VIDEO_STEP.id] is None
-    assert documents_by_step[QUIZ_STEP.id] is None
+    assert documents_by_step[VIDEO_STEP.id] == []
+    assert documents_by_step[QUIZ_STEP.id] == []
     # La plantilla de documentación todavía no está configurada (RF-A8.4) —
-    # `None`, no un error.
-    assert documents_by_step[SIGNATURE_STEP.id] is None
+    # lista vacía, no un error.
+    assert documents_by_step[SIGNATURE_STEP.id] == []
 
 
 @pytest.mark.asyncio
@@ -100,3 +107,23 @@ async def test_external_guest_manual_step_starts_locked_video_is_available():
     statuses = {step.id: progress.status for step, progress, _ in pairs}
     assert statuses[VIDEO_STEP.id] == "available"
     assert statuses[MANUAL_STEP.id] == "locked"
+
+
+@pytest.mark.asyncio
+async def test_becario_does_the_full_five_step_onboarding():
+    """RF-A10: el becario accede a todo lo de un empleado salvo el fichaje —
+    el onboarding NO es la excepción, hace los 5 pasos completos.
+
+    `steps_applicable_to_role` (domain/policy.py) solo ramifica sobre
+    `externo_invitado` y el resto cae en el `return list(steps)`, así que el
+    becario ya estaba cubierto al entrar la migración 038 sin tocar el filtro.
+    Este test fija ese comportamiento: si alguien añade una segunda rama a esa
+    función y se lleva por delante al becario, cae aquí.
+    """
+    repository = FakeOnboardingRepository(steps=ALL_STEPS)
+    use_case = GetMyOnboardingUseCase(repository)
+
+    pairs = await use_case.execute(user_id="intern-1", role="becario")
+
+    assert [step.id for step, _, _ in pairs] == [s.id for s in ALL_STEPS]
+    assert len(pairs) == 5

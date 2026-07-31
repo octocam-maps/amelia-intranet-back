@@ -155,15 +155,20 @@ async def test_create_staff_member_inserts_user_and_initial_vacation_balance():
     insert_query = connection.fetchval.call_args[0][0]
     assert "INSERT INTO users" in insert_query
     assert "'invited'" in insert_query
-    # Se sembró el saldo inicial (override=23) Y la fila de `invitations`,
-    # en la MISMA transacción que `users`.
-    assert connection.execute.await_count == 2
+    # Se sembró el saldo inicial (override=23), la fila de `invitations` Y la
+    # fila de alta de `user_role_history` (039) — las tres en la MISMA
+    # transacción que `users`.
+    assert connection.execute.await_count == 3
     balance_query, *balance_args = connection.execute.call_args_list[0][0]
     assert "absence_balances" in balance_query
     assert balance_args == ["user-1", 23]
     invitation_query, *invitation_args = connection.execute.call_args_list[1][0]
     assert "INSERT INTO invitations" in invitation_query
     assert invitation_args[0] == "sandra@ameliahub.com"
+    history_query, *history_args = connection.execute.call_args_list[2][0]
+    assert "INSERT INTO user_role_history" in history_query
+    # `from_role_id` es NULL en el alta: no venía de ningún rol previo.
+    assert history_args == ["user-1", "role-empleado", "admin-1"]
     assert invitation_args[1] == "role-empleado"
     assert invitation_args[2] == "entity-hub"
     assert invitation_args[4] == "admin-1"  # invited_by
@@ -195,8 +200,9 @@ async def test_create_staff_member_seeds_balance_from_automatic_calculation_when
         expires_at=datetime(2026, 7, 24, tzinfo=timezone.utc),
     )
 
-    # Saldo (calculado) + invitación — nunca se salta el saldo.
-    assert connection.execute.await_count == 2
+    # Saldo (calculado) + invitación + alta del historial de roles — nunca se
+    # salta el saldo.
+    assert connection.execute.await_count == 3
     balance_query, *balance_args = connection.execute.call_args_list[0][0]
     assert "absence_balances" in balance_query
     assert balance_args == ["user-1", 20.0]
@@ -230,6 +236,11 @@ async def test_update_staff_member_deactivating_sets_status_suspended():
     connection = _FakeConnection()
     connection.fetchrow.return_value = {
         "id": "user-1",
+        # El rol NO cambia en estos tests, así que `previous_role_id` coincide
+        # con `role_id` y no se escribe fila en `user_role_history` (039) — lo
+        # comprueba `test_update_staff_member_without_a_role_change_writes_no_history`.
+        "role_id": "role-1",
+        "previous_role_id": "role-1",
         "hire_date": None,
         "vacation_days_override": 23,
     }
@@ -266,6 +277,11 @@ async def test_update_staff_member_not_touching_override_does_not_recompute_bala
     connection = _FakeConnection()
     connection.fetchrow.return_value = {
         "id": "user-1",
+        # El rol NO cambia en estos tests, así que `previous_role_id` coincide
+        # con `role_id` y no se escribe fila en `user_role_history` (039) — lo
+        # comprueba `test_update_staff_member_without_a_role_change_writes_no_history`.
+        "role_id": "role-1",
+        "previous_role_id": "role-1",
         "hire_date": date(2020, 1, 1),
         "vacation_days_override": None,
     }
@@ -296,6 +312,11 @@ async def test_update_staff_member_clearing_override_recomputes_from_hire_date()
     connection = _FakeConnection()
     connection.fetchrow.return_value = {
         "id": "user-1",
+        # El rol NO cambia en estos tests, así que `previous_role_id` coincide
+        # con `role_id` y no se escribe fila en `user_role_history` (039) — lo
+        # comprueba `test_update_staff_member_without_a_role_change_writes_no_history`.
+        "role_id": "role-1",
+        "previous_role_id": "role-1",
         "hire_date": date(2020, 1, 1),  # calcularía 20
         "vacation_days_override": None,
     }
@@ -327,6 +348,11 @@ async def test_update_staff_member_setting_a_new_override_recomputes_balance():
     connection = _FakeConnection()
     connection.fetchrow.return_value = {
         "id": "user-1",
+        # El rol NO cambia en estos tests, así que `previous_role_id` coincide
+        # con `role_id` y no se escribe fila en `user_role_history` (039) — lo
+        # comprueba `test_update_staff_member_without_a_role_change_writes_no_history`.
+        "role_id": "role-1",
+        "previous_role_id": "role-1",
         "hire_date": date(2020, 1, 1),  # calcularía 20, pero manda el override
         "vacation_days_override": 15,
     }
@@ -364,6 +390,11 @@ async def test_update_staff_member_persists_contract_type():
     connection = _FakeConnection()
     connection.fetchrow.return_value = {
         "id": "user-1",
+        # El rol NO cambia en estos tests, así que `previous_role_id` coincide
+        # con `role_id` y no se escribe fila en `user_role_history` (039) — lo
+        # comprueba `test_update_staff_member_without_a_role_change_writes_no_history`.
+        "role_id": "role-1",
+        "previous_role_id": "role-1",
         "hire_date": None,
         "vacation_days_override": None,
     }
@@ -404,6 +435,11 @@ async def test_update_staff_member_can_clear_contract_type():
     connection = _FakeConnection()
     connection.fetchrow.return_value = {
         "id": "user-1",
+        # El rol NO cambia en estos tests, así que `previous_role_id` coincide
+        # con `role_id` y no se escribe fila en `user_role_history` (039) — lo
+        # comprueba `test_update_staff_member_without_a_role_change_writes_no_history`.
+        "role_id": "role-1",
+        "previous_role_id": "role-1",
         "hire_date": None,
         "vacation_days_override": None,
     }
@@ -431,3 +467,130 @@ async def test_update_staff_member_can_clear_contract_type():
     # El flag viaja como parámetro y el SQL lo usa en un CASE, como el override.
     assert True in parametros
     assert "CASE" in sql
+
+
+@pytest.mark.asyncio
+async def test_list_role_history_uses_left_joins_so_the_initial_row_survives():
+    """El alta tiene `from_role_id = NULL` y puede tener `changed_by = NULL`
+    (filas reconstruidas por la migración 039, o autor borrado con
+    `ON DELETE SET NULL`). Con `JOIN` normales en esas dos tablas, justo esas
+    filas desaparecerían del historial EN SILENCIO — que es el peor fallo posible
+    en una auditoría."""
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresStaffRepository(pool)
+
+    await repository.list_role_history("user-1")
+
+    query = pool.fetch.call_args[0][0]
+    assert "LEFT JOIN roles from_role" in query
+    assert "LEFT JOIN users author" in query
+    # El rol destino sí es NOT NULL: ahí un JOIN normal es correcto.
+    assert "JOIN roles to_role" in query
+    # Más reciente primero, para pintar el timeline sin reordenar en el cliente.
+    assert "ORDER BY h.changed_at DESC" in query
+
+
+@pytest.mark.asyncio
+async def test_update_staff_member_writes_no_history_when_the_role_does_not_change():
+    """`previous_role_id == role_id` -> ninguna fila. Una edición de puesto no
+    debe generar un "cambio de rol" con el mismo rol a los dos lados."""
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "role_id": "role-1",
+        "previous_role_id": "role-1",
+        "hire_date": None,
+        "vacation_days_override": None,
+    }
+    pool = _FakePool(connection)
+    pool.fetchrow.return_value = _row()
+    repository = PostgresStaffRepository(pool)
+
+    await repository.update_staff_member(
+        "user-1",
+        job_title="Senior PM",
+        department_id=None,
+        entity_id=None,
+        role_id=None,
+        is_external=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=False,
+        status=None,
+        changed_by="admin-1",
+    )
+
+    executed = [call[0][0] for call in connection.execute.call_args_list]
+    assert not any("user_role_history" in query for query in executed)
+
+
+@pytest.mark.asyncio
+async def test_update_staff_member_records_the_role_change_in_the_same_transaction():
+    """La traza se escribe con la misma `connection` que el UPDATE: si este se
+    revierte, el historial no queda contando un cambio que no ocurrió."""
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "role_id": "role-empleado",
+        "previous_role_id": "role-becario",
+        "hire_date": None,
+        "vacation_days_override": None,
+    }
+    pool = _FakePool(connection)
+    pool.fetchrow.return_value = _row()
+    repository = PostgresStaffRepository(pool)
+
+    await repository.update_staff_member(
+        "user-1",
+        job_title=None,
+        department_id=None,
+        entity_id=None,
+        role_id="role-empleado",
+        is_external=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=False,
+        status=None,
+        changed_by="admin-1",
+    )
+
+    history_calls = [
+        call[0] for call in connection.execute.call_args_list
+        if "user_role_history" in call[0][0]
+    ]
+    assert len(history_calls) == 1
+    _, *args = history_calls[0]
+    assert args == ["user-1", "role-becario", "role-empleado", "admin-1"]
+
+
+@pytest.mark.asyncio
+async def test_update_staff_member_captures_the_previous_role_in_the_same_statement():
+    """El rol anterior se lee en el MISMO `UPDATE` que lo pisa (subquery `prev`),
+    no con un SELECT aparte: así no hay dos fuentes de "cuál era el rol viejo"
+    que puedan discrepar."""
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "role_id": "role-1",
+        "previous_role_id": "role-1",
+        "hire_date": None,
+        "vacation_days_override": None,
+    }
+    pool = _FakePool(connection)
+    pool.fetchrow.return_value = _row()
+    repository = PostgresStaffRepository(pool)
+
+    await repository.update_staff_member(
+        "user-1",
+        job_title="X",
+        department_id=None,
+        entity_id=None,
+        role_id=None,
+        is_external=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=False,
+        status=None,
+    )
+
+    update_query = connection.fetchrow.call_args[0][0]
+    assert "previous_role_id" in update_query
+    assert "RETURNING" in update_query

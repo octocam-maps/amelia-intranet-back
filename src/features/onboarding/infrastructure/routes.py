@@ -10,6 +10,8 @@ cortan antes, en el propio `require_role` — defensa en profundidad, no solo
 un ítem oculto del navbar.
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 
 from src.shared.auth.dependencies import require_role
@@ -56,6 +58,7 @@ from .mappers import (
     steps_with_progress_to_dto,
 )
 from .schemas import (
+    AcknowledgeManualDTO,
     AcknowledgementDTO,
     AdminStepDTO,
     AdminStepListDTO,
@@ -161,16 +164,25 @@ def create_onboarding_router() -> APIRouter:
     async def acknowledge_manual(
         step_id: str,
         request: Request,
+        dto: Optional[AcknowledgeManualDTO] = None,
         current_user: dict = Depends(require_role(*ALL_ROLES)),
         use_case: AcknowledgeManualUseCase = Depends(get_acknowledge_manual_use_case),
     ):
-        """Confirmación de lectura del manual — abierto también al
-        externo-invitado (docs/permisos-roles.md § Onboarding parcial)."""
+        """Confirmación de lectura de UN manual — abierto también al
+        externo-invitado (docs/permisos-roles.md § Onboarding parcial).
+
+        `document_id` en el body desde la migración 040 (cascada de manuales).
+        El body entero es opcional: el cliente anterior a la 040 hacía este POST
+        SIN cuerpo, y romperlo dejaría el paso 3 inutilizable en cualquier pestaña
+        abierta durante el despliegue. Sin `document_id` se confirma el siguiente
+        pendiente de la cascada, que es lo único que podía significar cuando había
+        un solo manual."""
         acknowledgement = await use_case.execute(
             user_id=current_user["sub"],
             role=current_user["role"],
             step_id=step_id,
             ip_address=get_client_ip(request),
+            document_id=dto.document_id if dto is not None else None,
         )
         return acknowledgement_to_dto(acknowledgement, step_id)
 

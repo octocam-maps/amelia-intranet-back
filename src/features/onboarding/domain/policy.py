@@ -15,14 +15,17 @@ from src.shared.auth.roles import RoleCode
 from .entities import (
     EmployeeOnboardingSnapshot,
     EmployeeOnboardingSummary,
+    OnboardingDocument,
     OnboardingProgress,
     OnboardingStep,
     ProfileCompletionData,
+    StepDocument,
 )
 from .errors import (
     IncompleteProfileDataError,
     InvalidStepConfigError,
     InvalidVideoProgressError,
+    ManualLockedError,
     QuizAlreadyAttemptedError,
     StepLockedError,
     StepNotAvailableForRoleError,
@@ -377,4 +380,118 @@ def summarize_employee_onboarding(
         completed_steps=completed_steps,
         total_steps=total_steps,
         current_step_title=current_step.title if current_step else None,
+        # Ordenado por `step_order`: el cliente lo pinta como una fila de estados
+        # y no debe tener que reordenarlo.
+        steps=sorted(snapshot.steps, key=lambda s: s.step_order),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cascada de manuales del paso 3 (migración 040). Funciones PURAS: reciben los
+# documentos y los ids ya confirmados, y no tocan BD. Así la regla —que es lo
+# que de verdad puede fallar— se prueba sin Postgres.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def sort_manuals(documents: list[OnboardingDocument]) -> list[OnboardingDocument]:
+    """Orden de lectura: `display_order` y, a igualdad, `id` para que sea
+    ESTABLE. La BD ya garantiza orden único entre manuales activos
+    (`uq_onboarding_documents_active_order`), pero un empate entre uno activo y
+    otro retirado dejaría el orden a merced de cómo Postgres devuelva las filas,
+    y "el siguiente de la cascada" no puede depender de eso."""
+    return sorted(documents, key=lambda d: (d.display_order, d.id))
+
+
+def next_manual_to_acknowledge(
+    documents: list[OnboardingDocument], acknowledged_ids: set[str]
+) -> Optional[OnboardingDocument]:
+    """El primer manual de la cascada que aún no se ha confirmado, o `None` si
+    ya están todos. Es el ÚNICO que el trabajador puede confirmar ahora."""
+    return next(
+        (d for d in sort_manuals(documents) if d.id not in acknowledged_ids), None
+    )
+
+
+def ensure_manual_unlocked(
+    documents: list[OnboardingDocument],
+    acknowledged_ids: set[str],
+    document_id: str,
+) -> OnboardingDocument:
+    """Puerta del paso 3: solo se puede confirmar el siguiente manual pendiente
+    de la cascada. Devuelve el documento validado para que el caso de uso no
+    tenga que volver a buscarlo.
+
+    Vive en el backend y no solo en el candado de la UI porque un POST directo
+    al endpoint de confirmación se saltaría el candado — misma razón por la que
+    `ensure_step_allowed_for_role` existe (regla del proyecto: ocultar ≠
+    proteger).
+
+    Confirmar dos veces el MISMO manual no es un error: `document_acknowledgements`
+    tiene `UNIQUE (user_id, document_id)` y el repositorio hace upsert, así que un
+    doble clic es idempotente. Lo que se rechaza es SALTARSE uno.
+    """
+    ordered = sort_manuals(documents)
+    target = next((d for d in ordered if d.id == document_id), None)
+    if target is None:
+        # Documento que no es un manual activo del paso: lo trata el caso de uso
+        # como "no encontrado", no como bloqueado.
+        raise ManualLockedError("Ese manual no está disponible en este paso.")
+
+    if document_id in acknowledged_ids:
+        return target
+
+    pending = [
+        d
+        for d in ordered
+        if d.display_order < target.display_order and d.id not in acknowledged_ids
+    ]
+    if pending:
+        raise ManualLockedError(
+            f"Antes de confirmar «{target.title}» tienes que leer "
+            f"«{pending[0].title}»."
+        )
+    return target
+
+
+def are_all_manuals_acknowledged(
+    documents: list[OnboardingDocument], acknowledged_ids: set[str]
+) -> bool:
+    """RF-A6.3: el paso 3 se cierra solo cuando TODOS los manuales activos están
+    confirmados. Antes de la 040 el paso se cerraba con la primera confirmación,
+    porque no había más que una.
+
+    Sin manuales configurados devuelve `False`: cerrar el paso porque no hay nada
+    que leer dejaría pasar a alguien sin haber leído lo que el paso promete, y el
+    caso de uso ya trata "no hay manual" como error de configuración.
+    """
+    if not documents:
+        return False
+    return all(d.id in acknowledged_ids for d in documents)
+
+
+def resolve_step_documents(
+    documents: list[OnboardingDocument], acknowledged_ids: set[str]
+) -> list[StepDocument]:
+    """Los documentos del paso en orden de lectura, cada uno con su estado en la
+    cascada para este usuario.
+
+    `locked` es "queda algo anterior sin confirmar", que es EXACTAMENTE la
+    condición que rechaza `ensure_manual_unlocked`. Se derivan de la misma
+    función de orden para que no puedan divergir: si el candado dijera una cosa y
+    el POST otra, el trabajador vería un botón habilitado que devuelve 422.
+
+    Un documento ya confirmado nunca sale `locked`, aunque falte uno anterior
+    (caso posible si RRHH reordena los manuales después de que alguien empiece):
+    lo que ya se leyó, leído está.
+    """
+    ordered = sort_manuals(documents)
+    result: list[StepDocument] = []
+    for index, document in enumerate(ordered):
+        acknowledged = document.id in acknowledged_ids
+        locked = not acknowledged and any(
+            previous.id not in acknowledged_ids for previous in ordered[:index]
+        )
+        result.append(
+            StepDocument(document=document, acknowledged=acknowledged, locked=locked)
+        )
+    return result

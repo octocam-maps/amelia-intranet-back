@@ -120,9 +120,31 @@ class IOnboardingRepository(Protocol):
         completar perfil."""
         ...
 
-    async def find_active_document(self, kind: str) -> Optional[OnboardingDocument]:
-        """El documento vigente (mayor `version`, `is_active=TRUE`) del tipo
-        pedido — `None` si el admin todavía no lo ha configurado (Fase 5)."""
+    async def find_active_documents(self, kind: str) -> list[OnboardingDocument]:
+        """Los documentos vigentes (`is_active=TRUE`) del tipo pedido, en orden
+        de lectura (`display_order`, migración 040). Lista vacía si el admin
+        todavía no ha configurado ninguno.
+
+        PLURAL desde la 040: el paso de manuales admite varios y su orden define
+        la cascada. El `signature` sigue siendo uno solo, y quien lo consume toma
+        el primero — mantenerlo en la misma firma evita dos caminos para leer la
+        misma tabla."""
+        ...
+
+    async def list_manuals_library(self) -> list[OnboardingDocument]:
+        """TODOS los manuales activos, obligatorios o no — la biblioteca de
+        consulta (migración 043).
+
+        Distinto de `find_active_documents('manual')`, que solo devuelve los de la
+        CASCADA del paso 3. La biblioteca es un superconjunto: incluye el manual de
+        uso de la intranet, que se consulta pero no se exige leer."""
+        ...
+
+    async def list_acknowledged_document_ids(self, user_id: str, kind: str) -> set[str]:
+        """Ids de documentos de ese `kind` que este usuario YA confirmó
+        (`document_acknowledgements`). Devuelve un `set` porque quien lo consume
+        solo pregunta pertenencia, nunca orden — el orden lo da
+        `find_active_documents`."""
         ...
 
     async def create_document_upload(

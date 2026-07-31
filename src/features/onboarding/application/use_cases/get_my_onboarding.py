@@ -21,8 +21,8 @@ from typing import Optional
 
 from src.features.notifications.application.use_cases.notify import NotifyUseCase
 
-from ...domain.entities import OnboardingDocument, OnboardingProgress, OnboardingStep
-from ...domain.policy import steps_applicable_to_role
+from ...domain.entities import OnboardingProgress, OnboardingStep, StepDocument
+from ...domain.policy import resolve_step_documents, steps_applicable_to_role
 from ...domain.ports import IOnboardingRepository
 
 # Tipos de paso que llevan un documento asociado en `onboarding_documents`:
@@ -39,7 +39,7 @@ class GetMyOnboardingUseCase:
     async def execute(
         self, *, user_id: str, role: str
     ) -> list[
-        tuple[OnboardingStep, OnboardingProgress, Optional[OnboardingDocument]]
+        tuple[OnboardingStep, OnboardingProgress, list[StepDocument]]
     ]:
         all_steps = await self._repository.list_active_steps()
         applicable_steps = steps_applicable_to_role(all_steps, role)
@@ -66,13 +66,29 @@ class GetMyOnboardingUseCase:
         # tiene que hardcodearla ni duplicarla en el `config` del paso:
         # `onboarding_documents.storage_ref` es la única fuente de verdad de
         # dónde vive el fichero.
-        documents_by_kind: dict[str, Optional[OnboardingDocument]] = {}
+        # LISTA por tipo desde la 040: el paso de manuales puede tener varios y
+        # el cliente los pinta en cascada. `signature` sigue trayendo uno, pero
+        # viaja en la misma forma para no tener dos contratos.
+        #
+        # Cada documento llega con su estado en la cascada (`acknowledged`/
+        # `locked`) ya resuelto por el DOMINIO, con la misma regla que valida el
+        # POST de confirmación — así el candado de la UI y el 422 del backend no
+        # pueden discrepar.
+        documents_by_kind: dict[str, list[StepDocument]] = {}
         for kind in _DOCUMENT_STEP_TYPES:
             if any(step.type == kind for step in applicable_steps):
-                documents_by_kind[kind] = await self._repository.find_active_document(kind)
+                documents = await self._repository.find_active_documents(kind)
+                acknowledged_ids = (
+                    await self._repository.list_acknowledged_document_ids(user_id, kind)
+                    if documents
+                    else set()
+                )
+                documents_by_kind[kind] = resolve_step_documents(
+                    documents, acknowledged_ids
+                )
 
         return [
-            (step, progress_by_step_id[step.id], documents_by_kind.get(step.type))
+            (step, progress_by_step_id[step.id], documents_by_kind.get(step.type, []))
             for step in applicable_steps
             if step.id in progress_by_step_id
         ]

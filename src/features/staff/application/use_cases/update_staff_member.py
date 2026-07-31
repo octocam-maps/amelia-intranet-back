@@ -46,6 +46,7 @@ class UpdateStaffMemberUseCase:
         role_code: Optional[str] = None,
         vacation_days_override: Optional[float] = _NOT_SET,  # type: ignore[assignment]
         is_active: Optional[bool] = None,
+        changed_by: Optional[str] = None,
     ) -> StaffMember:
         member = await self._repository.find_by_id(user_id)
         if member is None:
@@ -124,6 +125,7 @@ class UpdateStaffMemberUseCase:
             vacation_days_override=effective_override,
             clear_vacation_days_override=clear_vacation_days_override,
             status=status,
+            changed_by=changed_by,
         )
         if updated is None:
             raise StaffMemberNotFoundError("La persona no existe.")
@@ -134,7 +136,16 @@ class UpdateStaffMemberUseCase:
         # un access token NUEVO vía `/auth/refresh` mientras dure suspendido
         # (`refresh_session.py` ya lo rechaza, pero revocar de una vez sus
         # sesiones evita depender solo de esa comprobación).
-        if status == "suspended" and self._session_revoker is not None:
+        #
+        # Y TAMBIÉN al cambiar de rol (RF-A10.6): el `role` viaja DENTRO del
+        # access token, así que sin revocar, un becario recién promocionado
+        # seguiría arrastrando `role: becario` hasta 15 minutos — el navbar no le
+        # mostraría Control horario y el backend le seguiría dando 403, con el
+        # cambio ya guardado en BD. Al revés es peor: a quien se le RETIRA un
+        # permiso, ese token viejo se lo mantendría vivo un cuarto de hora.
+        role_changed = role_code is not None and role_code != member.role_code
+        should_revoke = status == "suspended" or role_changed
+        if should_revoke and self._session_revoker is not None:
             await self._session_revoker.revoke_all_sessions_for_user(user_id)
 
         return updated

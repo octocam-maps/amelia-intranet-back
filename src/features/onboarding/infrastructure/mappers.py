@@ -2,18 +2,22 @@ from typing import Any, Optional
 
 from ..domain.entities import (
     DocumentAcknowledgement,
-    EmployeeOnboardingSummary,
     OnboardingDocument,
+    EmployeeOnboardingSummary,
     OnboardingDocumentUpload,
     OnboardingProgress,
     OnboardingStep,
     QuizSubmissionResult,
+    StepDocument,
 )
 from .schemas import (
     AcknowledgementDTO,
+    ManualDTO,
+    ManualsLibraryDTO,
     AdminStepDTO,
     AdminStepListDTO,
     EmployeeOnboardingSummaryDTO,
+    EmployeeStepProgressDTO,
     OnboardingMeDTO,
     OnboardingProgressDTO,
     OnboardingProgressOverviewDTO,
@@ -42,8 +46,22 @@ def _masked_config(step: OnboardingStep) -> dict[str, Any]:
 def step_with_progress_to_dto(
     step: OnboardingStep,
     progress: OnboardingProgress,
-    document: Optional[OnboardingDocument] = None,
+    documents: Optional[list[StepDocument]] = None,
 ) -> OnboardingStepDTO:
+    step_documents = documents or []
+    document_dtos = [
+        OnboardingStepDocumentDTO(
+            id=item.document.id,
+            kind=item.document.kind,
+            title=item.document.title,
+            version=item.document.version,
+            url=item.document.storage_ref,
+            display_order=item.document.display_order,
+            acknowledged=item.acknowledged,
+            locked=item.locked,
+        )
+        for item in step_documents
+    ]
     return OnboardingStepDTO(
         id=step.id,
         step_order=step.step_order,
@@ -55,29 +73,22 @@ def step_with_progress_to_dto(
         data=progress.data,
         started_at=progress.started_at,
         completed_at=progress.completed_at,
-        document=(
-            OnboardingStepDocumentDTO(
-                id=document.id,
-                kind=document.kind,
-                title=document.title,
-                version=document.version,
-                url=document.storage_ref,
-            )
-            if document is not None
-            else None
-        ),
+        documents=document_dtos,
+        # DEPRECADO, por compatibilidad con clientes anteriores a la 040: el
+        # PRIMERO de la cascada, que es el manual que abre el paso 3.
+        document=document_dtos[0] if document_dtos else None,
     )
 
 
 def steps_with_progress_to_dto(
     triples: list[
-        tuple[OnboardingStep, OnboardingProgress, Optional[OnboardingDocument]]
+        tuple[OnboardingStep, OnboardingProgress, list[StepDocument]]
     ],
 ) -> OnboardingMeDTO:
     return OnboardingMeDTO(
         steps=[
-            step_with_progress_to_dto(step, progress, document)
-            for step, progress, document in triples
+            step_with_progress_to_dto(step, progress, documents)
+            for step, progress, documents in triples
         ]
     )
 
@@ -127,7 +138,9 @@ def acknowledgement_to_dto(
     )
 
 
-def step_to_admin_dto(step: OnboardingStep) -> AdminStepDTO:
+def step_to_admin_dto(
+    step: OnboardingStep, documents: Optional[list[OnboardingDocument]] = None
+) -> AdminStepDTO:
     """A diferencia de `step_with_progress_to_dto`, NUNCA enmascara
     `config` — el admin es quien edita la respuesta correcta del quiz."""
     return AdminStepDTO(
@@ -137,11 +150,30 @@ def step_to_admin_dto(step: OnboardingStep) -> AdminStepDTO:
         title=step.title,
         config=step.config,
         is_active=step.is_active,
+        documents=[
+            OnboardingStepDocumentDTO(
+                id=document.id,
+                kind=document.kind,
+                title=document.title,
+                version=document.version,
+                url=document.storage_ref,
+                display_order=document.display_order,
+                # `False` fijos: la cascada es el estado de UN trabajador, y en una
+                # previsualización no hay trabajador.
+                acknowledged=False,
+                locked=False,
+            )
+            for document in (documents or [])
+        ],
     )
 
 
-def steps_to_admin_dto(steps: list[OnboardingStep]) -> AdminStepListDTO:
-    return AdminStepListDTO(steps=[step_to_admin_dto(step) for step in steps])
+def steps_to_admin_dto(
+    steps: list[tuple[OnboardingStep, list[OnboardingDocument]]],
+) -> AdminStepListDTO:
+    return AdminStepListDTO(
+        steps=[step_to_admin_dto(step, documents) for step, documents in steps]
+    )
 
 
 def employee_summary_to_dto(
@@ -156,6 +188,12 @@ def employee_summary_to_dto(
         completed_steps=summary.completed_steps,
         total_steps=summary.total_steps,
         current_step_title=summary.current_step_title,
+        steps=[
+            EmployeeStepProgressDTO(
+                step_order=step.step_order, title=step.title, status=step.status
+            )
+            for step in summary.steps
+        ],
     )
 
 
@@ -164,4 +202,25 @@ def progress_overview_to_dto(
 ) -> OnboardingProgressOverviewDTO:
     return OnboardingProgressOverviewDTO(
         employees=[employee_summary_to_dto(summary) for summary in summaries]
+    )
+
+
+def manuals_library_to_dto(
+    manuals: list[tuple[OnboardingDocument, bool]],
+) -> ManualsLibraryDTO:
+    """`content_hash` NO se expone, igual que en el resto de los DTO de documento:
+    es el registro de integridad interno (RNF2.2), no algo que el cliente
+    necesite."""
+    return ManualsLibraryDTO(
+        manuals=[
+            ManualDTO(
+                id=document.id,
+                title=document.title,
+                version=document.version,
+                url=document.storage_ref,
+                required_in_onboarding=document.requires_acknowledgement,
+                acknowledged=acknowledged,
+            )
+            for document, acknowledged in manuals
+        ]
     )

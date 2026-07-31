@@ -7,7 +7,7 @@ en `infrastructure` y se inyecta aquí por duck typing estructural.
 from datetime import date, datetime
 from typing import Optional, Protocol
 
-from .entities import StaffMember
+from .entities import RoleChange, StaffMember
 
 
 class IStaffRepository(Protocol):
@@ -85,6 +85,10 @@ class IStaffRepository(Protocol):
         status: Optional[str],
         contract_type: Optional[str] = None,
         clear_contract_type: bool = False,
+        # Autor del cambio, para la traza de `user_role_history` (039). Opcional
+        # porque solo se registra cuando el rol cambia de verdad; `None` deja la
+        # fila con autor "no consta" en vez de rechazar el cambio.
+        changed_by: Optional[str] = None,
     ) -> Optional[StaffMember]:
         """Actualización parcial: cada parámetro en `None` significa "no
         tocar esta columna" (semántica PATCH), no "vaciarla" — EXCEPTO
@@ -100,6 +104,17 @@ class IStaffRepository(Protocol):
         `vacaciones` del año en curso — así el contador queda coherente de
         inmediato, sin esperar a la próxima lectura lazy
         (`get_or_create_balance`)."""
+        ...
+
+    async def list_role_history(self, user_id: str) -> list[RoleChange]:
+        """Transiciones de rol de una persona, de la más reciente a la más
+        antigua (`user_role_history`, migración 039). Incluye la fila de alta,
+        con `from_role_code = None`.
+
+        Devuelve lista vacía si la persona no existe: quien pregunta ya sabe si
+        existe (`find_by_id`), y un `None` extra aquí obligaría a distinguir
+        "sin historial" de "no existe" en cada llamador sin que ninguno lo
+        necesite."""
         ...
 
 
@@ -144,3 +159,33 @@ class IDriveFolderProvisioner(Protocol):
     `PostgresStaffRepository` del feature `staff`)."""
 
     async def provision_folder(self, user_id: str, email: str) -> None: ...
+
+
+class IStaffJoinedAnnouncer(Protocol):
+    """Puerto mínimo del aviso al equipo cuando entra alguien nuevo (petición del
+    2026-07-31: "que se mande un mail de bienvenida y aviso a todo el equipo").
+
+    Forma estructural idéntica a `ISessionRevoker` y `IDriveFolderProvisioner`:
+    `staff.domain` NO importa `notifications` ni `email_templates` (evita acoplar
+    tres features en la capa de dominio). El adaptador real se compone en
+    `staff/infrastructure/dependencies.py`, que sí puede combinar features.
+
+    Por qué es un puerto y no una llamada directa al `IEmailSender` que este caso
+    de uso ya tiene: el aviso al equipo necesita resolver DESTINATARIOS según el
+    alcance configurado y mandar además la notificación in-app. Eso es trabajo de
+    `notifications`, no del alta de una persona.
+
+    BEST-EFFORT por contrato: quien lo implemente no debe propagar excepciones —
+    un fallo de correo no puede revertir un alta que ya está en `users`.
+    """
+
+    async def announce(
+        self,
+        *,
+        user_id: str,
+        full_name: str,
+        job_title: Optional[str],
+        entity_id: Optional[str],
+        entity_name: Optional[str],
+    ) -> None:
+        ...

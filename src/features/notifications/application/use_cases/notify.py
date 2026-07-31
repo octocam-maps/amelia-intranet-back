@@ -133,14 +133,25 @@ class NotifyUseCase:
         title: str,
         body: Optional[str] = None,
         data: Optional[dict[str, Any]] = None,
+        exclude_user_ids: Optional[list[str]] = None,
     ) -> list[Notification]:
-        """Atajo para `announcement_published` — resuelve destinatarios
-        acotados a la MISMA audiencia que el anuncio (`all`/`entity`/`role`)
-        en vez de avisar a toda la plantilla. `externo_invitado` queda
-        excluido siempre (ver `list_announcement_recipient_ids`)."""
+        """Atajo para el fan-out acotado por audiencia (`all`/`entity`/`role`) en
+        vez de a toda la plantilla. `externo_invitado` queda excluido siempre (ver
+        `list_announcement_recipient_ids`).
+
+        Lo usan `announcement_published` y `staff_joined_team` (aviso de
+        incorporación, migración 042).
+
+        `exclude_user_ids` recorta ADEMÁS por id concreto — mismo parámetro y
+        mismo motivo que en `notify_team_excluding_role`: el aviso de una
+        incorporación no debe llegarle al recién incorporado en tercera persona,
+        igual que el cumpleañero no recibe su propio cumpleaños."""
         recipient_ids = await self._repository.list_announcement_recipient_ids(
             audience=audience, entity_id=entity_id, role_id=role_id
         )
+        if exclude_user_ids:
+            excluded = set(exclude_user_ids)
+            recipient_ids = [uid for uid in recipient_ids if uid not in excluded]
         return await self.execute(
             recipient_ids=recipient_ids, type=type, title=title, body=body, data=data
         )
