@@ -46,6 +46,11 @@ una migración nueva.
 | `036_hincator_entity.sql` | Amplía `entities.code` CHECK con `hincator` + seed de la cuarta sociedad y sus 5 departamentos. |
 | `037_users_contract_type.sql` | `users.contract_type` (aditiva, nullable a propósito): `full_time`/`part_time`/`intern`. Informativo — independiente de `role_id` y no decide ningún permiso. |
 | `038_becario_role.sql` | Amplía `roles.code` CHECK + seed del rol `becario` (RF-A10) — accede a todo lo de un empleado SALVO el control horario. Se implementa AÑADIÉNDOLO a `ALL_ROLES`/`INTERNAL_ROLES` y restringiendo solo en `TIME_CLOCK_ROLES`. |
+| `039_user_role_history.sql` | `user_role_history` (nueva) — traza de cada cambio de rol, que antes era destructivo. `changed_by` NULLABLE a propósito: el primer admin se sembró sin invitación y su autor no se puede saber; NULL dice "no consta" en vez de mentir. Siembra la fila de alta de la plantilla existente. |
+| `040_onboarding_manuals_cascade.sql` | `display_order` en `onboarding_documents` + índice único parcial — CASCADA de lectura del paso 3 (RF-A11.2): ClickUp (1) es la puerta, Hincator (2) detrás. El paso solo se cierra con todos confirmados. |
+| `041_email_templates.sql` | `email_templates` (nueva) con las 15 plantillas de correo sembradas con los textos que ya estaban en el código (RF-A12.3). El admin edita asunto y cuerpo; el marco (`_shell`) sigue en código. |
+| `042_staff_joined_team_audience.sql` | `audience` + `audience_entity_id` en `email_templates` — alcance del aviso de incorporación (RF-A12.2). `'none'` permite APAGARLO sin dejar de mandar la bienvenida al recién llegado, que es distinto de `is_active = FALSE`. |
+| `043_manuals_library.sql` | `requires_acknowledgement` en `onboarding_documents` (RF-A11.3) — separa "está en la biblioteca" de "hay que confirmar su lectura en el paso 3". Registra el manual de uso de la intranet SOLO en la biblioteca: sin esta columna habría alargado el onboarding. |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero
