@@ -73,6 +73,7 @@ def _row_to_document(row) -> OnboardingDocument:
         content_hash=row["content_hash"],
         storage_ref=row["storage_ref"],
         is_active=row["is_active"],
+        display_order=row["display_order"],
     )
 
 
@@ -321,17 +322,33 @@ class PostgresOnboardingRepository(IOnboardingRepository):
         )
         return _row_to_progress(row) if row else None
 
-    async def find_active_document(self, kind: str) -> Optional[OnboardingDocument]:
-        row = await self._db.fetchrow(
+    async def find_active_documents(self, kind: str) -> list[OnboardingDocument]:
+        # `display_order` primero (migración 040: es la cascada de lectura del
+        # paso 3) y `version DESC` como desempate, que era el criterio único
+        # antes de la 040 — así un documento con dos versiones activas sigue
+        # devolviendo la más nueva primero.
+        rows = await self._db.fetch(
             """
             SELECT * FROM onboarding_documents
             WHERE kind = $1 AND is_active = TRUE
-            ORDER BY version DESC
-            LIMIT 1
+            ORDER BY display_order ASC, version DESC
             """,
             kind,
         )
-        return _row_to_document(row) if row else None
+        return [_row_to_document(row) for row in rows]
+
+    async def list_acknowledged_document_ids(self, user_id: str, kind: str) -> set[str]:
+        rows = await self._db.fetch(
+            """
+            SELECT a.document_id
+            FROM document_acknowledgements a
+            JOIN onboarding_documents d ON d.id = a.document_id
+            WHERE a.user_id = $1 AND d.kind = $2
+            """,
+            user_id,
+            kind,
+        )
+        return {str(row["document_id"]) for row in rows}
 
     async def create_document_upload(
         self, *, user_id: str, onboarding_document_id: str, employee_document_id: str

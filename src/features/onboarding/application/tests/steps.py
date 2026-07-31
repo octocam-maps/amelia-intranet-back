@@ -115,4 +115,23 @@ MANUAL_DOCUMENT = OnboardingDocument(
     content_hash="b72ce8011190e141b650e3b87a2bd6e15c9e903958035852a545f80473d90731",
     storage_ref="/manuales/manual-usuario-hincator-2026-ES.pdf",
     is_active=True,
+    # SEGUNDO de la cascada desde la migración 040: es material técnico del
+    # producto, y quien entra nuevo necesita antes saber por dónde se comunica el
+    # equipo.
+    display_order=2,
 )
+
+# Abre la cascada del paso 3 (migración 040) — mismo orden que el seed real.
+CLICKUP_MANUAL_DOCUMENT = OnboardingDocument(
+    id="doc-manual-clickup",
+    kind="manual",
+    title="Manual de uso de ClickUp",
+    version=1,
+    content_hash="03303afd373dfd67c5e1e22e696dcbd57d167a268f01570e8babdd2d3f14e98d",
+    storage_ref="/manuales/manual-clickup-2026-ES.pdf",
+    is_active=True,
+    display_order=1,
+)
+
+# Los dos manuales en orden de cascada, para los tests que la ejercitan.
+MANUAL_DOCUMENTS = [CLICKUP_MANUAL_DOCUMENT, MANUAL_DOCUMENT]

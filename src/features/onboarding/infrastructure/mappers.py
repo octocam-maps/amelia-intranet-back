@@ -3,11 +3,11 @@ from typing import Any, Optional
 from ..domain.entities import (
     DocumentAcknowledgement,
     EmployeeOnboardingSummary,
-    OnboardingDocument,
     OnboardingDocumentUpload,
     OnboardingProgress,
     OnboardingStep,
     QuizSubmissionResult,
+    StepDocument,
 )
 from .schemas import (
     AcknowledgementDTO,
@@ -42,8 +42,22 @@ def _masked_config(step: OnboardingStep) -> dict[str, Any]:
 def step_with_progress_to_dto(
     step: OnboardingStep,
     progress: OnboardingProgress,
-    document: Optional[OnboardingDocument] = None,
+    documents: Optional[list[StepDocument]] = None,
 ) -> OnboardingStepDTO:
+    step_documents = documents or []
+    document_dtos = [
+        OnboardingStepDocumentDTO(
+            id=item.document.id,
+            kind=item.document.kind,
+            title=item.document.title,
+            version=item.document.version,
+            url=item.document.storage_ref,
+            display_order=item.document.display_order,
+            acknowledged=item.acknowledged,
+            locked=item.locked,
+        )
+        for item in step_documents
+    ]
     return OnboardingStepDTO(
         id=step.id,
         step_order=step.step_order,
@@ -55,29 +69,22 @@ def step_with_progress_to_dto(
         data=progress.data,
         started_at=progress.started_at,
         completed_at=progress.completed_at,
-        document=(
-            OnboardingStepDocumentDTO(
-                id=document.id,
-                kind=document.kind,
-                title=document.title,
-                version=document.version,
-                url=document.storage_ref,
-            )
-            if document is not None
-            else None
-        ),
+        documents=document_dtos,
+        # DEPRECADO, por compatibilidad con clientes anteriores a la 040: el
+        # PRIMERO de la cascada, que es el manual que abre el paso 3.
+        document=document_dtos[0] if document_dtos else None,
     )
 
 
 def steps_with_progress_to_dto(
     triples: list[
-        tuple[OnboardingStep, OnboardingProgress, Optional[OnboardingDocument]]
+        tuple[OnboardingStep, OnboardingProgress, list[StepDocument]]
     ],
 ) -> OnboardingMeDTO:
     return OnboardingMeDTO(
         steps=[
-            step_with_progress_to_dto(step, progress, document)
-            for step, progress, document in triples
+            step_with_progress_to_dto(step, progress, documents)
+            for step, progress, documents in triples
         ]
     )
 

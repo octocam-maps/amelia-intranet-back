@@ -84,6 +84,11 @@ class OnboardingDocument:
     content_hash: str
     storage_ref: Optional[str]
     is_active: bool
+    # Orden de lectura dentro de su `kind` (migración 040). Para los manuales
+    # define la CASCADA del paso 3: no se confirma uno sin los de orden menor.
+    # Default a propósito, para no romper los tests y fakes que construyen
+    # documentos sin orden — ahí el orden no es lo que se está probando.
+    display_order: int = 1
 
 
 @dataclass(frozen=True)
@@ -173,3 +178,21 @@ class EmployeeOnboardingSummary:
     completed_steps: int
     total_steps: int
     current_step_title: Optional[str]
+
+
+@dataclass(frozen=True)
+class StepDocument:
+    """Un documento del paso junto a su estado EN LA CASCADA para este usuario
+    (migración 040).
+
+    Existe para que `acknowledged`/`locked` los calcule el DOMINIO
+    (`resolve_step_documents` en `policy.py`) y no el mapper: son la misma regla
+    que valida el POST de confirmación, así que el candado que pinta la UI y el
+    422 que recibiría si insistiera salen de un solo sitio y no pueden
+    discrepar."""
+
+    document: OnboardingDocument
+    acknowledged: bool
+    # `True` = hay un documento anterior en la cascada sin confirmar. Solo puede
+    # ser `True` en los manuales: el `signature` es uno solo.
+    locked: bool

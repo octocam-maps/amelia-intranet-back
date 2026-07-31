@@ -22,6 +22,13 @@ class OnboardingStepDocumentDTO(BaseModel):
     title: str
     version: int
     url: Optional[str]
+    # Cascada del paso 3 (migración 040). El cliente NO recalcula nada de esto:
+    # `locked` sale de la misma regla de dominio que valida el POST
+    # (`ensure_manual_unlocked`), así que el candado que pinta y el 422 que
+    # recibiría si insistiera no pueden discrepar.
+    display_order: int = 1
+    acknowledged: bool = False
+    locked: bool = False
 
 
 class OnboardingStepDTO(BaseModel):
@@ -38,9 +45,14 @@ class OnboardingStepDTO(BaseModel):
     data: dict[str, Any]
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
-    # Solo en los pasos que tienen documento (`manual`, `signature`); `None`
-    # en vídeo, cuestionario y perfil. También `None` si RRHH todavía no ha
-    # configurado el documento de ese tipo.
+    # Documentos del paso, en orden de lectura. LISTA desde la migración 040: el
+    # paso `manual` admite varios en cascada. Vacía en vídeo, cuestionario y
+    # perfil, y también si RRHH todavía no ha configurado ninguno.
+    documents: list[OnboardingStepDocumentDTO] = []
+    # DEPRECADO — se mantiene por compatibilidad con clientes anteriores a la
+    # 040, que leen `step.document`. Es el PRIMER documento de `documents`
+    # (para el paso 3, el manual que abre la cascada). Retirar cuando no queden
+    # clientes viejos desplegados.
     document: Optional[OnboardingStepDocumentDTO] = None
 
 
@@ -186,3 +198,14 @@ class EmployeeOnboardingSummaryDTO(BaseModel):
 
 class OnboardingProgressOverviewDTO(BaseModel):
     employees: list[EmployeeOnboardingSummaryDTO]
+
+
+class AcknowledgeManualDTO(BaseModel):
+    """Body de `POST /steps/{step_id}/acknowledge`.
+
+    `document_id` es opcional a propósito: un cliente anterior a la migración 040
+    confirmaba "el manual" sin decir cuál, y con un solo manual eso no era
+    ambiguo. Ausente = "el siguiente pendiente de la cascada", que es lo único
+    que podía significar entonces."""
+
+    document_id: Optional[str] = None
