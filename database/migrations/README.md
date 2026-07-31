@@ -90,6 +90,20 @@ El modelo es el mismo que en `backend2`:
 > creada aplicando las migraciones en orden (deben coincidir salvo el orden de
 > columnas que `ALTER ... ADD COLUMN` deja al final, irrelevante para la app).
 
+Esta regla se incumplió entre la `039` y la `044`: `init.sql` se quedó sin
+`user_role_history`, sin `email_templates` y sin las dos columnas nuevas de
+`onboarding_documents`, y sin los seeds de departamentos, pasos de onboarding,
+manuales y plantillas de correo. Una base creada con él arrancaba **sin
+onboarding** (cero pasos) y no admitía la `043`/`045` porque la columna no
+existía. Se puso al día el 2026-07-31 y se verificó con el procedimiento de
+arriba: esquema normalizado con 0 diferencias y seeds idénticos campo por campo.
+
+Nota sobre `044_comprobar_estado.sql`: **no es una migración**, es un script de
+diagnóstico de solo lectura (usa `\echo`, no tiene `BEGIN/COMMIT`) que se escribió
+para averiguar en qué estado quedó `email_templates` al cancelar la `044` real. No
+se aplica en el orden y no se refleja en `init.sql`; comparte número por error.
+Si se automatiza la aplicación de migraciones, hay que excluirlo explícitamente.
+
 - Las migraciones que crean constraints con nombre (`012` EXCLUDE, `016` UNIQUE)
   NO son re-ejecutables (Postgres no soporta `ADD CONSTRAINT IF NOT EXISTS`); si se
   corren dos veces dan error "ya existe" y abortan esa transacción, sin corromper
