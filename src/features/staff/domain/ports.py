@@ -7,7 +7,7 @@ en `infrastructure` y se inyecta aquí por duck typing estructural.
 from datetime import date, datetime
 from typing import Optional, Protocol
 
-from .entities import StaffMember
+from .entities import RoleChange, StaffMember
 
 
 class IStaffRepository(Protocol):
@@ -85,6 +85,10 @@ class IStaffRepository(Protocol):
         status: Optional[str],
         contract_type: Optional[str] = None,
         clear_contract_type: bool = False,
+        # Autor del cambio, para la traza de `user_role_history` (039). Opcional
+        # porque solo se registra cuando el rol cambia de verdad; `None` deja la
+        # fila con autor "no consta" en vez de rechazar el cambio.
+        changed_by: Optional[str] = None,
     ) -> Optional[StaffMember]:
         """Actualización parcial: cada parámetro en `None` significa "no
         tocar esta columna" (semántica PATCH), no "vaciarla" — EXCEPTO
@@ -100,6 +104,17 @@ class IStaffRepository(Protocol):
         `vacaciones` del año en curso — así el contador queda coherente de
         inmediato, sin esperar a la próxima lectura lazy
         (`get_or_create_balance`)."""
+        ...
+
+    async def list_role_history(self, user_id: str) -> list[RoleChange]:
+        """Transiciones de rol de una persona, de la más reciente a la más
+        antigua (`user_role_history`, migración 039). Incluye la fila de alta,
+        con `from_role_code = None`.
+
+        Devuelve lista vacía si la persona no existe: quien pregunta ya sabe si
+        existe (`find_by_id`), y un `None` extra aquí obligaría a distinguir
+        "sin historial" de "no existe" en cada llamador sin que ninguno lo
+        necesite."""
         ...
 
 

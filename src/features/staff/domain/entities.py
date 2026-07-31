@@ -49,3 +49,27 @@ class StaffMember:
     # (`vacation_entitlement.calculate_vacation_entitlement_days`). Mismo
     # motivo de default que el campo anterior.
     vacation_days_calculated: float = 0.0
+
+
+@dataclass(frozen=True)
+class RoleChange:
+    """Una transición de rol registrada (`user_role_history`, migración 039).
+
+    Contesta la pregunta que `users` no puede: DESDE CUÁNDO alguien tiene el rol
+    que tiene. Es lo que hace verificable la antigüedad de un becario que
+    promociona a trabajador (RF-A10.6) — la antigüedad LABORAL sigue viviendo en
+    `users.hire_date`, que es inmutable; esto es la antigüedad EN EL ROL.
+    """
+
+    id: str
+    # `None` = alta inicial: no venía de ningún rol previo.
+    from_role_code: Optional[str]
+    to_role_code: str
+    # `None` = "no consta" (filas reconstruidas por la migración para la
+    # plantilla que ya existía, o un cambio hecho sin autor identificable).
+    # Nunca se rellena a la ligera: una auditoría que miente es peor que un
+    # hueco honesto.
+    changed_by_id: Optional[str]
+    changed_by_name: Optional[str]
+    changed_at: datetime
+    note: Optional[str] = None

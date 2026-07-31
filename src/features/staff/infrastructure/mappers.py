@@ -1,5 +1,10 @@
-from ..domain.entities import StaffMember
-from .schemas import StaffMemberDTO, StaffMemberListDTO
+from ..domain.entities import RoleChange, StaffMember
+from .schemas import (
+    RoleChangeDTO,
+    RoleChangeListDTO,
+    StaffMemberDTO,
+    StaffMemberListDTO,
+)
 
 
 def member_to_dto(member: StaffMember) -> StaffMemberDTO:
@@ -26,3 +31,19 @@ def member_to_dto(member: StaffMember) -> StaffMemberDTO:
 
 def members_to_dto(members: list[StaffMember], total: int) -> StaffMemberListDTO:
     return StaffMemberListDTO(members=[member_to_dto(m) for m in members], total=total)
+
+
+def role_change_to_dto(change: RoleChange) -> RoleChangeDTO:
+    return RoleChangeDTO(
+        id=change.id,
+        from_role_code=change.from_role_code,
+        to_role_code=change.to_role_code,
+        changed_by_id=change.changed_by_id,
+        changed_by_name=change.changed_by_name,
+        changed_at=change.changed_at,
+        note=change.note,
+    )
+
+
+def role_history_to_dto(changes: list[RoleChange]) -> RoleChangeListDTO:
+    return RoleChangeListDTO(changes=[role_change_to_dto(c) for c in changes])

@@ -1,6 +1,6 @@
 """DTOs de request/response (Pydantic) del feature `staff`."""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
@@ -88,3 +88,22 @@ class UpdateStaffMemberDTO(BaseModel):
     # no puede.
     vacation_days_override: Optional[float] = Field(None, ge=0)
     is_active: Optional[bool] = None
+
+
+class RoleChangeDTO(BaseModel):
+    id: str
+    # `None` = alta inicial (no venía de ningún rol previo). El cliente lo pinta
+    # como "Alta", no como "de ??? a X".
+    from_role_code: Optional[str]
+    to_role_code: str
+    # `None` = "no consta": filas reconstruidas por la migración 039 para la
+    # plantilla que ya existía, o autor borrado. Se expone tal cual en vez de
+    # rellenarlo con "Sistema" — una auditoría que miente es peor que un hueco.
+    changed_by_id: Optional[str]
+    changed_by_name: Optional[str]
+    changed_at: datetime
+    note: Optional[str]
+
+
+class RoleChangeListDTO(BaseModel):
+    changes: list[RoleChangeDTO]

@@ -220,7 +220,7 @@ async def test_unknown_entity_code_is_rejected():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "role_code", ["administrador", "empleado", "externo_invitado", "socio"]
+    "role_code", ["administrador", "empleado", "externo_invitado", "socio", "becario"]
 )
 async def test_creates_a_member_with_each_assignable_role(role_code):
     """Los 4 roles de la tabla `roles` (migración 024 sumó `socio`) deben

@@ -146,3 +146,101 @@ def test_admin_can_list_staff():
             assert response.json() == {"members": [], "total": 0}
     finally:
         app.dependency_overrides.clear()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /staff/{id}/role-history (RF-A10.6, migración 039).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _role_change(**overrides):
+    from datetime import datetime, timezone
+
+    from src.features.staff.domain.entities import RoleChange
+
+    defaults = {
+        "id": "history-1",
+        "from_role_code": "becario",
+        "to_role_code": "empleado",
+        "changed_by_id": "admin-1",
+        "changed_by_name": "Beatriz Luna",
+        "changed_at": datetime(2026, 7, 31, 10, 0, tzinfo=timezone.utc),
+        "note": None,
+    }
+    return RoleChange(**{**defaults, **overrides})
+
+
+def test_admin_reads_the_role_history_of_a_staff_member():
+    class FakeUseCase:
+        async def execute(self, user_id):
+            assert user_id == "user-9"
+            return [
+                _role_change(),
+                _role_change(
+                    id="history-0",
+                    from_role_code=None,
+                    to_role_code="becario",
+                    changed_by_id=None,
+                    changed_by_name=None,
+                ),
+            ]
+
+    app.dependency_overrides[staff_dependencies.get_staff_role_history_use_case] = (
+        lambda: FakeUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/staff/user-9/role-history",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    changes = response.json()["changes"]
+    assert [c["to_role_code"] for c in changes] == ["empleado", "becario"]
+    # El alta llega con `from_role_code` y autor a `null` — el cliente lo pinta
+    # como "Alta" y "no consta", nunca inventando un rol previo ni un autor.
+    assert changes[1]["from_role_code"] is None
+    assert changes[1]["changed_by_name"] is None
+
+
+def test_role_history_of_a_missing_member_is_404_not_an_empty_list():
+    """Un id inexistente NO debe devolver `{"changes": []}`: eso se lee como
+    "esta persona no ha cambiado nunca de rol", que es una respuesta distinta."""
+    from src.features.staff.domain.errors import StaffMemberNotFoundError
+
+    class FakeUseCase:
+        async def execute(self, user_id):
+            raise StaffMemberNotFoundError("La persona no existe.")
+
+    app.dependency_overrides[staff_dependencies.get_staff_role_history_use_case] = (
+        lambda: FakeUseCase()
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/staff/nope/role-history",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_non_admin_roles_cannot_read_a_role_history():
+    """Es un dato de gestión de personal. Ni el socio, que tiene visión ampliada
+    del calendario, ni el propio interesado tienen verbo sobre `/staff`."""
+    for role in ("empleado", "socio", "becario", "externo_invitado"):
+        try:
+            with TestClient(app) as client:
+                response = client.get(
+                    "/staff/user-9/role-history",
+                    headers={"Authorization": f"Bearer {_token_for(role)}"},
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 403, f"{role} pudo leer el historial de roles"
