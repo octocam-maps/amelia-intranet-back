@@ -27,6 +27,10 @@ def _row(**overrides) -> dict:
         "is_active": True,
         "updated_by": None,
         "updated_at": datetime(2026, 7, 31, tzinfo=timezone.utc),
+        # Alcance del fan-out (migración 042). `None` en las plantillas que no
+        # avisan a varias personas, que son casi todas.
+        "audience": None,
+        "audience_entity_id": None,
     }
     row.update(overrides)
     return row

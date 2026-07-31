@@ -17,7 +17,11 @@ from ...domain.errors import (
     InvalidRoleCodeError,
     StaffEmailAlreadyExistsError,
 )
-from ...domain.ports import IDriveFolderProvisioner, IStaffRepository
+from ...domain.ports import (
+    IDriveFolderProvisioner,
+    IStaffJoinedAnnouncer,
+    IStaffRepository,
+)
 
 logger = get_logger("staff.create_staff_member")
 
@@ -30,6 +34,7 @@ class CreateStaffMemberUseCase:
         invitation_expires_days: int,
         frontend_url: str,
         drive_folder_provisioner: Optional[IDriveFolderProvisioner] = None,
+        joined_announcer: Optional[IStaffJoinedAnnouncer] = None,
     ):
         self._repository = repository
         self._email_sender = email_sender
@@ -38,6 +43,9 @@ class CreateStaffMemberUseCase:
         # Opcional para no romper los tests existentes que no lo pasan —
         # mismo criterio que `UpdateStaffMemberUseCase.session_revoker`.
         self._drive_folder_provisioner = drive_folder_provisioner
+        # Aviso al equipo (migración 042). Opcional por el mismo motivo: sin él,
+        # el alta funciona igual y solo no se anuncia.
+        self._joined_announcer = joined_announcer
 
     async def execute(
         self,
@@ -124,5 +132,34 @@ class CreateStaffMemberUseCase:
                 email=member.email,
                 error=str(e),
             )
+
+        # Aviso al equipo de la incorporación (migración 042). Va DESPUÉS de la
+        # bienvenida a propósito: si solo pudiera salir un correo, el que importa
+        # es el de la persona que necesita entrar.
+        #
+        # NO se anuncia el alta de un externo-invitado: es un colaborador de fuera
+        # con acceso parcial, no una incorporación al equipo, y anunciarlo a toda
+        # la plantilla sería ruido y además expondría su alta a gente que no tiene
+        # por qué saberla.
+        if (
+            self._joined_announcer is not None
+            and role_code != RoleCode.EXTERNO_INVITADO
+        ):
+            try:
+                await self._joined_announcer.announce(
+                    user_id=member.id,
+                    full_name=member.full_name,
+                    job_title=member.job_title,
+                    entity_id=member.entity_id,
+                    entity_name=member.entity_code,
+                )
+            except Exception as e:
+                # Best-effort, igual que la bienvenida: la persona ya existe en
+                # `users` y un fallo de correo no puede revertir el alta.
+                logger.error(
+                    "Team announcement failed",
+                    user_id=member.id,
+                    error=str(e),
+                )
 
         return member

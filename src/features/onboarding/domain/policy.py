@@ -380,6 +380,9 @@ def summarize_employee_onboarding(
         completed_steps=completed_steps,
         total_steps=total_steps,
         current_step_title=current_step.title if current_step else None,
+        # Ordenado por `step_order`: el cliente lo pinta como una fila de estados
+        # y no debe tener que reordenarlo.
+        steps=sorted(snapshot.steps, key=lambda s: s.step_order),
     )
 
 

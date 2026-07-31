@@ -16,8 +16,13 @@ from src.shared.email.domain.entities import EmailTemplate
 
 _SELECT = """
     SELECT template_key, label, description, subject, body_html, is_active,
-           updated_by, updated_at
+           updated_by, updated_at, audience, audience_entity_id
     FROM email_templates
+"""
+
+_RETURNING = """
+    RETURNING template_key, label, description, subject, body_html, is_active,
+              updated_by, updated_at, audience, audience_entity_id
 """
 
 
@@ -31,6 +36,12 @@ def _row_to_template(row) -> EmailTemplate:
         is_active=row["is_active"],
         updated_by=str(row["updated_by"]) if row["updated_by"] is not None else None,
         updated_at=row["updated_at"],
+        audience=row["audience"],
+        audience_entity_id=(
+            str(row["audience_entity_id"])
+            if row["audience_entity_id"] is not None
+            else None
+        ),
     )
 
 
@@ -63,26 +74,40 @@ class PostgresEmailTemplateRepository:
         subject: str,
         body_html: str,
         updated_by: Optional[str],
+        audience: Optional[str] = None,
+        audience_entity_id: Optional[str] = None,
     ) -> Optional[EmailTemplate]:
         # `is_active = TRUE` en el UPDATE: editar una plantilla que estaba
         # restaurada al texto por defecto es querer volver a usar la personalizada.
         # Sin esto, el admin guardaría un cambio y no vería ningún efecto.
+        #
+        # `audience` con `COALESCE`: solo lo mandan las plantillas de fan-out, así
+        # que un `None` significa "no lo toques" y no "bórralo". `audience_entity_id`
+        # NO usa COALESCE porque pasar de `entity` a `all` tiene que poder limpiar
+        # la entidad — si no, quedaría una referencia huérfana que el CHECK ya no
+        # vigila.
         row = await self._db.fetchrow(
-            """
+            f"""
             UPDATE email_templates
             SET subject = $2,
                 body_html = $3,
                 is_active = TRUE,
                 updated_by = $4,
+                audience = COALESCE($5, audience),
+                audience_entity_id = CASE
+                    WHEN $5 IS NULL THEN audience_entity_id
+                    ELSE $6
+                END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE template_key = $1
-            RETURNING template_key, label, description, subject, body_html,
-                      is_active, updated_by, updated_at
+            {_RETURNING}
             """,
             template_key,
             subject,
             body_html,
             updated_by,
+            audience,
+            audience_entity_id,
         )
         return _row_to_template(row) if row else None
 
@@ -99,9 +124,8 @@ class PostgresEmailTemplateRepository:
                 updated_by = $2,
                 updated_at = CURRENT_TIMESTAMP
             WHERE template_key = $1
-            RETURNING template_key, label, description, subject, body_html,
-                      is_active, updated_by, updated_at
-            """,
+            {_RETURNING}
+            """.format(_RETURNING=_RETURNING),
             template_key,
             updated_by,
         )

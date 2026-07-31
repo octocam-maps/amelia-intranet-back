@@ -38,3 +38,12 @@ class EmailTemplate:
     is_active: bool
     updated_by: Optional[str] = None
     updated_at: Optional[datetime] = None
+    # Alcance del fan-out (migración 042). Solo significa algo en las plantillas
+    # que avisan a VARIAS personas — hoy únicamente `staff_joined_team`. En las
+    # demás el destinatario no se elige: es la persona a la que le pasó la cosa.
+    #
+    # `'none'` = no enviar ese aviso. Distinto de `is_active = False`, que es
+    # "usa el texto por defecto": el admin tiene que poder apagar el aviso al
+    # equipo sin dejar de mandar la bienvenida al recién llegado.
+    audience: Optional[str] = None
+    audience_entity_id: Optional[str] = None

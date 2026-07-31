@@ -1,6 +1,6 @@
 """Entidades de dominio del feature `onboarding`. Sin dependencias de framework/SQL."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -178,6 +178,13 @@ class EmployeeOnboardingSummary:
     completed_steps: int
     total_steps: int
     current_step_title: Optional[str]
+    # Desglose paso a paso, para que el admin pueda ver DÓNDE está atascada una
+    # persona y no solo "3 de 5". El dato ya venía en el snapshot: antes se
+    # colapsaba al agregar y se tiraba.
+    #
+    # Vacío si el usuario nunca ha visitado su onboarding (progreso sin
+    # inicializar), que es distinto de "tiene 5 pasos bloqueados".
+    steps: list[StepProgressSnapshot] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

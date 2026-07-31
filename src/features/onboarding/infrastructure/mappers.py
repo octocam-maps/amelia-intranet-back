@@ -2,6 +2,7 @@ from typing import Any, Optional
 
 from ..domain.entities import (
     DocumentAcknowledgement,
+    OnboardingDocument,
     EmployeeOnboardingSummary,
     OnboardingDocumentUpload,
     OnboardingProgress,
@@ -14,6 +15,7 @@ from .schemas import (
     AdminStepDTO,
     AdminStepListDTO,
     EmployeeOnboardingSummaryDTO,
+    EmployeeStepProgressDTO,
     OnboardingMeDTO,
     OnboardingProgressDTO,
     OnboardingProgressOverviewDTO,
@@ -134,7 +136,9 @@ def acknowledgement_to_dto(
     )
 
 
-def step_to_admin_dto(step: OnboardingStep) -> AdminStepDTO:
+def step_to_admin_dto(
+    step: OnboardingStep, documents: Optional[list[OnboardingDocument]] = None
+) -> AdminStepDTO:
     """A diferencia de `step_with_progress_to_dto`, NUNCA enmascara
     `config` — el admin es quien edita la respuesta correcta del quiz."""
     return AdminStepDTO(
@@ -144,11 +148,30 @@ def step_to_admin_dto(step: OnboardingStep) -> AdminStepDTO:
         title=step.title,
         config=step.config,
         is_active=step.is_active,
+        documents=[
+            OnboardingStepDocumentDTO(
+                id=document.id,
+                kind=document.kind,
+                title=document.title,
+                version=document.version,
+                url=document.storage_ref,
+                display_order=document.display_order,
+                # `False` fijos: la cascada es el estado de UN trabajador, y en una
+                # previsualización no hay trabajador.
+                acknowledged=False,
+                locked=False,
+            )
+            for document in (documents or [])
+        ],
     )
 
 
-def steps_to_admin_dto(steps: list[OnboardingStep]) -> AdminStepListDTO:
-    return AdminStepListDTO(steps=[step_to_admin_dto(step) for step in steps])
+def steps_to_admin_dto(
+    steps: list[tuple[OnboardingStep, list[OnboardingDocument]]],
+) -> AdminStepListDTO:
+    return AdminStepListDTO(
+        steps=[step_to_admin_dto(step, documents) for step, documents in steps]
+    )
 
 
 def employee_summary_to_dto(
@@ -163,6 +186,12 @@ def employee_summary_to_dto(
         completed_steps=summary.completed_steps,
         total_steps=summary.total_steps,
         current_step_title=summary.current_step_title,
+        steps=[
+            EmployeeStepProgressDTO(
+                step_order=step.step_order, title=step.title, status=step.status
+            )
+            for step in summary.steps
+        ],
     )
 
 

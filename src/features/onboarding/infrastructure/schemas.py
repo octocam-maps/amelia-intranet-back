@@ -167,6 +167,11 @@ class AdminStepDTO(BaseModel):
     title: str
     config: dict[str, Any]
     is_active: bool
+    # Documentos del paso, para la PREVISUALIZACIÓN del admin. Sin `acknowledged`
+    # ni `locked`: la cascada es el estado de UN trabajador concreto, y en una
+    # previsualización no hay trabajador — pintar candados aquí sugeriría que el
+    # admin tiene un progreso que no tiene.
+    documents: list[OnboardingStepDocumentDTO] = []
 
 
 class AdminStepListDTO(BaseModel):
@@ -185,6 +190,15 @@ class ResetQuizRequestDTO(BaseModel):
     user_id: str
 
 
+class EmployeeStepProgressDTO(BaseModel):
+    """Un paso concreto de una persona, para el desglose de la bandeja de
+    administración."""
+
+    step_order: int
+    title: str
+    status: str  # locked | available | in_progress | completed
+
+
 class EmployeeOnboardingSummaryDTO(BaseModel):
     user_id: str
     full_name: str
@@ -194,6 +208,10 @@ class EmployeeOnboardingSummaryDTO(BaseModel):
     completed_steps: int
     total_steps: int
     current_step_title: Optional[str]
+    # Desglose paso a paso, para que el admin vea DÓNDE está atascada una persona
+    # y no solo "3 de 5". Vacío si nunca visitó su onboarding — que es distinto de
+    # tener los 5 pasos bloqueados.
+    steps: list[EmployeeStepProgressDTO] = []
 
 
 class OnboardingProgressOverviewDTO(BaseModel):

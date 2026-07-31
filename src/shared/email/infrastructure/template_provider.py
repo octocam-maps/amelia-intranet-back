@@ -35,6 +35,12 @@ def _row_to_template(row) -> EmailTemplate:
         is_active=row["is_active"],
         updated_by=str(row["updated_by"]) if row["updated_by"] is not None else None,
         updated_at=row["updated_at"],
+        audience=row["audience"],
+        audience_entity_id=(
+            str(row["audience_entity_id"])
+            if row["audience_entity_id"] is not None
+            else None
+        ),
     )
 
 

@@ -159,3 +159,33 @@ class IDriveFolderProvisioner(Protocol):
     `PostgresStaffRepository` del feature `staff`)."""
 
     async def provision_folder(self, user_id: str, email: str) -> None: ...
+
+
+class IStaffJoinedAnnouncer(Protocol):
+    """Puerto mínimo del aviso al equipo cuando entra alguien nuevo (petición del
+    2026-07-31: "que se mande un mail de bienvenida y aviso a todo el equipo").
+
+    Forma estructural idéntica a `ISessionRevoker` y `IDriveFolderProvisioner`:
+    `staff.domain` NO importa `notifications` ni `email_templates` (evita acoplar
+    tres features en la capa de dominio). El adaptador real se compone en
+    `staff/infrastructure/dependencies.py`, que sí puede combinar features.
+
+    Por qué es un puerto y no una llamada directa al `IEmailSender` que este caso
+    de uso ya tiene: el aviso al equipo necesita resolver DESTINATARIOS según el
+    alcance configurado y mandar además la notificación in-app. Eso es trabajo de
+    `notifications`, no del alta de una persona.
+
+    BEST-EFFORT por contrato: quien lo implemente no debe propagar excepciones —
+    un fallo de correo no puede revertir un alta que ya está en `users`.
+    """
+
+    async def announce(
+        self,
+        *,
+        user_id: str,
+        full_name: str,
+        job_title: Optional[str],
+        entity_id: Optional[str],
+        entity_name: Optional[str],
+    ) -> None:
+        ...
