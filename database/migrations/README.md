@@ -51,6 +51,8 @@ una migración nueva.
 | `041_email_templates.sql` | `email_templates` (nueva) con las 15 plantillas de correo sembradas con los textos que ya estaban en el código (RF-A12.3). El admin edita asunto y cuerpo; el marco (`_shell`) sigue en código. |
 | `042_staff_joined_team_audience.sql` | `audience` + `audience_entity_id` en `email_templates` — alcance del aviso de incorporación (RF-A12.2). `'none'` permite APAGARLO sin dejar de mandar la bienvenida al recién llegado, que es distinto de `is_active = FALSE`. |
 | `043_manuals_library.sql` | `requires_acknowledgement` en `onboarding_documents` (RF-A11.3) — separa "está en la biblioteca" de "hay que confirmar su lectura en el paso 3". Registra el manual de uso de la intranet SOLO en la biblioteca: sin esta columna habría alargado el onboarding. |
+| `044_email_templates_plain_text.sql` | `email_templates.body_html` -> `body`: el admin escribe TEXTO PLANO y el HTML lo genera `plain_text_to_html` escapando su contenido. Pedirle a RRHH que escriba `<p>` era pedirle que escribiera código, y una etiqueta mal cerrada rompía el correo de toda la plantilla. Lleva `lock_timeout = '5s'` — el RENAME necesita ACCESS EXCLUSIVE y sin timeout cuelga la app mientras espera. **No es retrocompatible**: el código anterior lee `body_html`. |
+| `045_manual_intranet_en_cascada.sql` | El manual de uso de la intranet pasa de la biblioteca a la CASCADA del paso 3 (`requires_acknowledgement = TRUE`, tercero tras ClickUp y Hincator) — revierte la decisión que documentaba la 043. UPDATE de un booleano: no hay INSERT porque la fila ya existía. **No reabre el paso a quien ya lo cerró** (ver el comentario del archivo); el botón muerto que eso dejaba en la UI se corrigió en `ManualStep.tsx`. |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero
@@ -87,6 +89,20 @@ El modelo es el mismo que en `backend2`:
 > verifica comparando `pg_dump -s` de una base creada con `init.sql` contra otra
 > creada aplicando las migraciones en orden (deben coincidir salvo el orden de
 > columnas que `ALTER ... ADD COLUMN` deja al final, irrelevante para la app).
+
+Esta regla se incumplió entre la `039` y la `044`: `init.sql` se quedó sin
+`user_role_history`, sin `email_templates` y sin las dos columnas nuevas de
+`onboarding_documents`, y sin los seeds de departamentos, pasos de onboarding,
+manuales y plantillas de correo. Una base creada con él arrancaba **sin
+onboarding** (cero pasos) y no admitía la `043`/`045` porque la columna no
+existía. Se puso al día el 2026-07-31 y se verificó con el procedimiento de
+arriba: esquema normalizado con 0 diferencias y seeds idénticos campo por campo.
+
+Nota sobre `044_comprobar_estado.sql`: **no es una migración**, es un script de
+diagnóstico de solo lectura (usa `\echo`, no tiene `BEGIN/COMMIT`) que se escribió
+para averiguar en qué estado quedó `email_templates` al cancelar la `044` real. No
+se aplica en el orden y no se refleja en `init.sql`; comparte número por error.
+Si se automatiza la aplicación de migraciones, hay que excluirlo explícitamente.
 
 - Las migraciones que crean constraints con nombre (`012` EXCLUDE, `016` UNIQUE)
   NO son re-ejecutables (Postgres no soporta `ADD CONSTRAINT IF NOT EXISTS`); si se

@@ -97,6 +97,15 @@ CREATE INDEX IF NOT EXISTS idx_users_entity_id  ON users(entity_id);
 CREATE INDEX IF NOT EXISTS idx_users_manager_id ON users(manager_id);
 CREATE INDEX IF NOT EXISTS idx_users_status     ON users(status);
 
+COMMENT ON COLUMN users.vacation_days_override IS
+    'Override manual del admin sobre el entitlement anual de vacaciones. '
+    'NULL = automático (calculado desde hire_date). No-NULL = el valor fijado '
+    'manda sobre el cálculo automático.';
+
+COMMENT ON COLUMN users.contract_type IS
+    'full_time | part_time | intern — de la hoja de plantilla. NULL = dato '
+    'desconocido, no jornada completa.';
+
 -- Perfil RRHH (datos sensibles RGPD → cifrado en reposo recomendado).
 CREATE TABLE IF NOT EXISTS user_profiles (
     user_id                 UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -149,6 +158,23 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id   ON auth_sessions(user_id)
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_jti       ON auth_sessions(jti);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_family_id ON auth_sessions(family_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_active    ON auth_sessions(user_id) WHERE revoked_at IS NULL;
+
+-- Traza de cada cambio de rol [039], que antes era destructivo (un UPDATE sobre
+-- `users.role_id` sin histórico). `changed_by` es NULLABLE a propósito: el primer
+-- admin se sembró directo en `users`, sin invitación, y su autor no se puede
+-- saber — NULL dice "no consta" en vez de mentir.
+CREATE TABLE IF NOT EXISTS user_role_history (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- NULL = alta inicial (no venía de ningún rol previo).
+    from_role_id UUID REFERENCES roles(id) ON DELETE RESTRICT,
+    to_role_id   UUID NOT NULL REFERENCES roles(id) ON DELETE RESTRICT,
+    changed_by   UUID REFERENCES users(id) ON DELETE SET NULL,
+    changed_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    note         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_user_role_history_user
+    ON user_role_history(user_id, changed_at DESC);
 
 -- ----------------------------------------------------------------------------
 -- Onboarding (Fase 2)
@@ -208,9 +234,31 @@ CREATE TABLE IF NOT EXISTS onboarding_documents (
     content_hash VARCHAR(64) NOT NULL,       -- SHA-256 del documento vigente
     storage_ref  TEXT,
     is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Orden de lectura dentro de su `kind` [040]. Para kind=manual define la
+    -- CASCADA del paso 3: no se confirma un manual sin los de orden menor.
+    display_order INTEGER NOT NULL DEFAULT 1,
+    -- TRUE = entra en la cascada del paso 3; FALSE = solo biblioteca de
+    -- consulta [043]. Separa "está publicado" de "hay que confirmar su lectura".
+    requires_acknowledgement BOOLEAN NOT NULL DEFAULT TRUE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+COMMENT ON COLUMN onboarding_documents.display_order IS
+    'Orden de lectura dentro de su `kind`. Para kind=manual define la CASCADA: '
+    'no se puede confirmar un manual sin haber confirmado todos los de orden menor.';
+
+COMMENT ON COLUMN onboarding_documents.requires_acknowledgement IS
+    'TRUE = hay que confirmar su lectura para completar el paso 3 (entra en la '
+    'cascada). FALSE = solo está en la biblioteca de consulta. Los `signature` '
+    'no lo usan.';
+
+-- El orden debe ser único entre los que ESTÁN en la cascada [043]: si dos
+-- empataran, "el siguiente manual pendiente" sería no determinista. Los de
+-- biblioteca no compiten por un puesto de lectura, y por eso quedan fuera.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_onboarding_documents_cascade_order
+    ON onboarding_documents (kind, display_order)
+    WHERE is_active = TRUE AND requires_acknowledgement = TRUE;
 
 -- La firma nativa (`document_signatures`, fecha/hora + IP + hash) se
 -- eliminó en `030_drop_document_signatures.sql` (sdd/docs-firmados-upload-
@@ -472,6 +520,50 @@ CREATE TABLE IF NOT EXISTS email_log (
 );
 CREATE INDEX IF NOT EXISTS idx_email_log_user_id ON email_log(user_id);
 
+-- Plantillas de correo editables por el administrador [041 + 042 + 044].
+-- `template_key` es clave natural: coincide 1:1 con el `template` que pasa
+-- `IEmailSender.send`, así que no hace falta un JOIN para saber qué plantilla usa
+-- un envío. El marco visual del correo (`_shell`) sigue en código; aquí solo
+-- viven asunto y cuerpo.
+CREATE TABLE IF NOT EXISTS email_templates (
+    template_key VARCHAR(80) PRIMARY KEY,
+    -- Etiqueta y descripción para la pantalla de administración: sin esto el
+    -- admin vería una lista de slugs (`clock_out_missing`) y tendría que
+    -- adivinar cuándo se manda cada correo.
+    label        VARCHAR(120) NOT NULL,
+    description  TEXT NOT NULL,
+    subject      TEXT NOT NULL,
+    -- TEXTO PLANO, no HTML [044]: la columna se llamaba `body_html` y el nombre
+    -- mentía. El HTML lo genera `plain_text_to_html`, que ESCAPA este contenido.
+    body         TEXT NOT NULL,
+    -- `FALSE` = "usa el texto por defecto del código". Es el botón "Restaurar":
+    -- desactivar en vez de borrar conserva lo que el admin había escrito.
+    is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Alcance del aviso, hoy solo lo usa `staff_joined_team` [042]. `'none'`
+    -- APAGA el aviso al equipo sin dejar de mandar la bienvenida al recién
+    -- llegado, que es distinto de `is_active = FALSE`.
+    audience           VARCHAR(20),
+    audience_entity_id UUID REFERENCES entities(id) ON DELETE SET NULL,
+    updated_by   UUID REFERENCES users(id) ON DELETE SET NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_email_templates_audience CHECK (
+        audience IS NULL OR audience IN ('all', 'entity', 'none')
+    ),
+    -- `entity` sin entidad elegida sería un fan-out a nadie, en silencio.
+    CONSTRAINT ck_email_templates_audience_entity CHECK (
+        audience <> 'entity' OR audience_entity_id IS NOT NULL
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_email_templates_active
+    ON email_templates(template_key) WHERE is_active = TRUE;
+
+COMMENT ON COLUMN email_templates.body IS
+    'Cuerpo en TEXTO PLANO escrito por el administrador. Línea en blanco = '
+    'párrafo nuevo; `**texto**` = negrita; las URLs y correos se enlazan solos. '
+    'El HTML lo genera `plain_text_to_html` y escapa este contenido: aquí NO se '
+    'guardan etiquetas.';
+
 -- =============================================================================
 -- SEEDS (idempotentes)
 -- =============================================================================
@@ -504,13 +596,211 @@ SELECT
     FALSE
 ON CONFLICT (email) DO NOTHING;
 
--- Los 6 tipos de ausencia del modal de solicitud [010 + 013], con los colores
--- finales del deck de Fase 3.
-INSERT INTO absence_types (code, name, is_paid, affects_balance, default_entitled_days, color) VALUES
-    ('vacaciones',      'Vacaciones',      TRUE, TRUE,  23, '#F59F0A'),
-    ('baja_medica',     'Baja médica',     TRUE, FALSE, 0,  '#EF4343'),
-    ('asuntos_propios', 'Asuntos propios', TRUE, TRUE,  0,  '#3B82F6'),
-    ('justificada',     'Justificada',     TRUE, FALSE, 0,  '#6B7280'),
-    ('remoto',          'Remoto',          TRUE, FALSE, 0,  '#8B5CF6'),
-    ('otros',           'Otros',           TRUE, FALSE, 0,  '#9CA3AF')
+-- Catálogo CERRADO de tipos de ausencia [010 + 013 + 019 + 032]. Los 12 de
+-- RF-A5, que RECTIFICAN los 6 de RF3.8 (`baja_medica` pasó a llamarse
+-- "Enfermedades", y `asuntos_propios` cambió de color): los colores están
+-- medidos por contraste y dicromacia en la 032, no elegidos a ojo.
+--
+-- `default_entitled_days` de `vacaciones` sigue en 23 porque es lo que dejan las
+-- migraciones y este archivo REFLEJA su estado, no lo corrige. Pero OJO: ese 23
+-- está derogado como saldo real — `absences/domain/vacation_entitlement.py`
+-- calcula 20 días/año por semestres completos y es quien manda. Si hay que
+-- alinearlo, va en una migración nueva y luego aquí.
+INSERT INTO absence_types (
+    code, name, is_paid, affects_balance, default_entitled_days, color,
+    requires_approval, requires_justification, max_days_per_year
+) VALUES
+    ('asuntos_propios',        'Asuntos Propios',           TRUE, TRUE,  0.0,  '#C2410C', TRUE, FALSE, NULL),
+    ('baja_medica',            'Enfermedades',              TRUE, FALSE, 0.0,  '#EF4343', TRUE, FALSE, NULL),
+    ('bloqueado',              'Bloqueado',                 TRUE, FALSE, 0.0,  '#94A3B8', TRUE, FALSE, NULL),
+    ('descanso_horas_extra',   'Descanso por horas extra',  TRUE, FALSE, 0.0,  '#78716C', TRUE, FALSE, NULL),
+    ('enfermedad_familiar',    'Enfermedad de un familiar', TRUE, FALSE, 0.0,  '#0E7490', TRUE, FALSE, NULL),
+    ('fallecimiento_familiar', 'Fallecimiento Familiar',    TRUE, FALSE, 0.0,  '#44403C', TRUE, FALSE, NULL),
+    ('justificada',            'Justificada',               TRUE, FALSE, 0.0,  '#6B7280', TRUE, FALSE, NULL),
+    ('otros',                  'Otros',                     TRUE, FALSE, 0.0,  '#9CA3AF', TRUE, FALSE, NULL),
+    ('paternidad',             'Paternidad',                TRUE, FALSE, 0.0,  '#1E3A8A', TRUE, FALSE, NULL),
+    ('permiso_matrimonio',     'Permiso Matrimonio',        TRUE, FALSE, 0.0,  '#F9A8D4', TRUE, FALSE, NULL),
+    ('remoto',                 'Remoto',                    TRUE, FALSE, 0.0,  '#8B5CF6', TRUE, FALSE, NULL),
+    ('vacaciones',             'Vacaciones',                TRUE, TRUE,  23.0, '#F59F0A', TRUE, FALSE, NULL)
 ON CONFLICT (code) DO NOTHING;
+
+-- Los 5 departamentos, para las CUATRO sociedades [036]. El producto cartesiano
+-- es deliberado: `departments` no tiene CRUD propio (ver 016), el admin los
+-- nombra al dar de alta gente, así que tener el juego completo por entidad es lo
+-- que evita duplicados escritos a mano. Sin esto una base nueva arranca con
+-- entidades y CERO departamentos, y el alta de plantilla se queda sin opciones.
+INSERT INTO departments (entity_id, name)
+SELECT e.id, d.name
+FROM entities e
+CROSS JOIN (VALUES
+    ('Administración'),
+    ('Comercial'),
+    ('Ingeniería'),
+    ('Operaciones'),
+    ('Producto')
+) AS d(name)
+ON CONFLICT (entity_id, name) DO NOTHING;
+
+-- Los 5 pasos del onboarding [020], YA EN EL ORDEN VIGENTE de v1.1 [033]:
+-- 1 vídeo · 2 cuestionario · 3 manuales · 4 perfil · 5 documentación firmada.
+-- El orden vive SOLO en `step_order`; no hay constante equivalente en el código.
+-- Sin este seed una base nueva arranca con CERO pasos y el onboarding no existe.
+--
+-- Shape de `config` por tipo (este seed es el único sitio que lo documenta):
+--   video      -> {"url": string, "duration": integer (segundos)}
+--   quiz       -> {"questions": [{id, text, options[], correct}], "threshold": 0..1}
+--                 `correct` NO viaja al cliente: `_masked_config` lo enmascara.
+--   manual / profile / signature -> {} (su material vive en `onboarding_documents`)
+INSERT INTO onboarding_steps (step_order, type, title, config) VALUES
+    (1, 'video', 'Bienvenida a Amelia',
+        '{"url": "/src/assets/videos/hincator.mp4", "duration": 96}'::jsonb),
+    (2, 'quiz', 'Cuestionario: El Hincator',
+        '{
+            "threshold": 0.7,
+            "questions": [
+                {
+                    "id": "q1",
+                    "text": "¿Cuántos parámetros críticos captura el Hincator de cada hinca?",
+                    "options": ["5", "7", "10", "3"],
+                    "correct": "7"
+                },
+                {
+                    "id": "q2",
+                    "text": "¿En cuánto tiempo captura el Hincator los parámetros de una hinca?",
+                    "options": ["15 segundos", "5 segundos", "1 minuto", "30 segundos"],
+                    "correct": "15 segundos"
+                },
+                {
+                    "id": "q3",
+                    "text": "¿Cuántas hincas por hora puede inspeccionar?",
+                    "options": ["Hasta 50", "Hasta 100", "Hasta 200", "Hasta 25"],
+                    "correct": "Hasta 100"
+                },
+                {
+                    "id": "q4",
+                    "text": "En zonas remotas, ¿qué garantiza que los datos lleguen del campo a la oficina al instante?",
+                    "options": ["Fibra óptica", "Conexión satelital Starlink", "Red 4G", "WiFi"],
+                    "correct": "Conexión satelital Starlink"
+                }
+            ]
+        }'::jsonb),
+    (3, 'manual',    'Manuales',                      '{}'::jsonb),
+    (4, 'profile',   'Completa tu perfil',            '{}'::jsonb),
+    (5, 'signature', 'Sube tu documentación firmada', '{}'::jsonb)
+ON CONFLICT (step_order) DO NOTHING;
+
+-- Documentos del onboarding [020 + 035 + 040 + 043 + 045]. `onboarding_documents`
+-- no tiene UNIQUE natural, así que la idempotencia va con `WHERE NOT EXISTS`
+-- sobre `storage_ref` (el de firma, que no tiene, va por `kind` + `version`).
+--
+-- Los tres manuales se sirven como ASSETS ESTÁTICOS del frontend
+-- (`amelia-intranet-web/public/manuales/`), no por `POST /documents`: son
+-- material corporativo que publicamos nosotros, así que `DOCUMENTS_MAX_UPLOAD_MB`
+-- no les aplica (el del Hincator pesa 12,65 MB). `content_hash` es el SHA-256 del
+-- fichero EXACTO que se sirve — lo imprime `amelia-intranet/docs/build-manual-pdf.py
+-- <manual> --publish`. Si un PDF se regenera, el hash deja de cuadrar y hay que
+-- actualizar su fila: eso es lo que hace verificable la integridad de lo que el
+-- trabajador confirma haber leído (RNF2.2).
+--
+-- Los TRES son obligatorios (`requires_acknowledgement = TRUE`) y su
+-- `display_order` es la CASCADA de lectura del paso 3.
+INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref, display_order, requires_acknowledgement)
+SELECT 'manual', 'Manual de uso de ClickUp', 1,
+       '03303afd373dfd67c5e1e22e696dcbd57d167a268f01570e8babdd2d3f14e98d',
+       '/manuales/manual-clickup-2026-ES.pdf', 1, TRUE
+WHERE NOT EXISTS (
+    SELECT 1 FROM onboarding_documents
+    WHERE kind = 'manual' AND storage_ref = '/manuales/manual-clickup-2026-ES.pdf'
+);
+
+INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref, display_order, requires_acknowledgement)
+SELECT 'manual', 'Manual de usuario Hincator® 2026', 1,
+       'b72ce8011190e141b650e3b87a2bd6e15c9e903958035852a545f80473d90731',
+       '/manuales/manual-usuario-hincator-2026-ES.pdf', 2, TRUE
+WHERE NOT EXISTS (
+    SELECT 1 FROM onboarding_documents
+    WHERE kind = 'manual' AND storage_ref = '/manuales/manual-usuario-hincator-2026-ES.pdf'
+);
+
+INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref, display_order, requires_acknowledgement)
+SELECT 'manual', 'Manual de uso de la intranet', 1,
+       '48b3ba6060556f6449ccc0fa036f2a6c77db50c6fa9d06e4d32779ebba5b9787',
+       '/manuales/manual-de-uso-intranet.pdf', 3, TRUE
+WHERE NOT EXISTS (
+    SELECT 1 FROM onboarding_documents
+    WHERE kind = 'manual' AND storage_ref = '/manuales/manual-de-uso-intranet.pdf'
+);
+
+-- Documento del paso 5 (la documentación laboral que se descarga, se firma y se
+-- vuelve a subir). `content_hash` sigue siendo un PLACEHOLDER: RRHH no ha
+-- entregado el PDF definitivo. `storage_ref` a NULL es lo que hace que la UI diga
+-- "RRHH todavía no ha publicado este documento" en vez de ofrecer una descarga
+-- rota.
+INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref)
+SELECT 'signature', 'Documentación laboral', 1,
+       'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', NULL
+WHERE NOT EXISTS (
+    SELECT 1 FROM onboarding_documents WHERE kind = 'signature' AND version = 1
+);
+
+-- Las 15 plantillas de correo [041 + 042 + 044], en TEXTO PLANO.
+--
+-- Las 13 que tienen `{{title}}`/`{{body}}` NO están a medio hacer: son avisos
+-- cuyo texto lo genera el código de la notificación in-app, y la plantilla solo
+-- decide el envoltorio. Solo `staff_invited` y `staff_joined_team` tienen redacción
+-- propia, porque son las dos que no nacen de una notificación.
+INSERT INTO email_templates (template_key, label, description, subject, body, audience) VALUES
+    ('absence_approved', 'Ausencia aprobada',
+     'A la persona solicitante, cuando el administrador aprueba su ausencia.',
+     '{{title}}', '{{body}}', NULL),
+    ('absence_rejected', 'Ausencia rechazada',
+     'A la persona solicitante, cuando el administrador rechaza su ausencia.',
+     '{{title}}', '{{body}}', NULL),
+    ('absence_requested', 'Ausencia solicitada',
+     'Al administrador, cuando alguien solicita una ausencia.',
+     '{{title}}', '{{body}}', NULL),
+    ('announcement_published', 'Anuncio publicado',
+     'A la audiencia del anuncio cuando se publica o se edita.',
+     '{{title}}', '{{body}}', NULL),
+    ('birthday', 'Cumpleaños',
+     'Al equipo, el día del cumpleaños de un compañero.',
+     '{{title}}', '{{body}}', NULL),
+    ('clock_in_reminder', 'Recordatorio de fichaje',
+     'Diario de lunes a viernes, a quien no ha fichado. No se envía a externos ni becarios.',
+     '{{title}}', '{{body}}', NULL),
+    ('clock_out_missing', 'Jornada sin cerrar',
+     'A quien dejó un fichaje abierto el día anterior.',
+     '{{title}}', '{{body}}', NULL),
+    ('document_pending_signature', 'Documentación pendiente de firmar',
+     'A la persona, recordando que le queda subir la documentación firmada.',
+     '{{title}}', '{{body}}', NULL),
+    ('document_uploaded', 'Documento nuevo',
+     'A la persona, cuando se sube un documento a su carpeta.',
+     '{{title}}', '{{body}}', NULL),
+    ('mailbox_message', 'Mensaje del buzón anónimo',
+     'Al administrador, cuando entra un mensaje anónimo. NUNCA incluye datos del remitente.',
+     '{{title}}', '{{body}}', NULL),
+    ('onboarding_completed', 'Onboarding completado',
+     'Al administrador, cuando alguien termina su onboarding.',
+     '{{title}}', '{{body}}', NULL),
+    ('payslip_available', 'Nómina disponible',
+     'A la persona, cuando se publica una nómina en su carpeta.',
+     '{{title}}', '{{body}}', NULL),
+    ('staff_invited', 'Bienvenida al dar de alta',
+     'Se envía a la persona recién dada de alta en la intranet, con el enlace para entrar con su cuenta de Google.',
+     'Te damos la bienvenida a la intranet de Amelia',
+     'Hola {{full_name}},
+
+RRHH te ha dado de alta en la intranet de Amelia. Accede con tu cuenta de Google corporativa para completar tu onboarding y empezar a gestionar tu jornada, ausencias y documentos.',
+     NULL),
+    ('staff_joined_team', 'Aviso al equipo de una incorporación',
+     'Se envía al equipo cuando se da de alta a alguien nuevo. El alcance de destinatarios se configura aparte.',
+     'Nueva incorporación en Amelia: {{full_name}}',
+     '{{full_name}} se incorpora a {{entity_name}} como {{job_title}}.
+
+Dadle la bienvenida cuando os cruceis.',
+     'all'),
+    ('work_anniversary', 'Aniversario laboral',
+     'Al equipo, en el aniversario de incorporación de un compañero.',
+     '{{title}}', '{{body}}', NULL)
+ON CONFLICT (template_key) DO NOTHING;
