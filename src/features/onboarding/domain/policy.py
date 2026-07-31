@@ -5,6 +5,7 @@ chequeo de "paso operable" en cada caso de uso.
 """
 
 import re
+from dataclasses import replace
 from datetime import date, datetime
 from typing import Optional
 
@@ -34,8 +35,35 @@ from .errors import (
 
 # El externo-invitado hace onboarding PARCIAL: solo vídeo + manual
 # (docs/permisos-roles.md § Onboarding: "parcial, sin firma/cuestionario/perfil").
-# administrador y empleado hacen los 5 pasos completos.
+# El resto de roles tiene los 5 pasos.
 _EXTERNAL_GUEST_ALLOWED_TYPES = frozenset({"video", "manual"})
+
+# El ADMINISTRADOR no está sujeto al bloqueo secuencial (decisión del team-lead,
+# 2026-07-31). Sigue teniendo los 5 pasos —los necesita para revisar qué ve la
+# plantilla, y el paso de perfil es suyo de verdad— pero puede abrir cualquiera
+# sin haber completado el anterior.
+#
+# POR QUÉ ERA UN BUG: quien administra el onboarding no lo cumple. Para revisar
+# el paso 3 (los manuales) Beatriz tenía que ver el vídeo entero sin poder
+# adelantarlo y aprobar el cuestionario, con sus 2 intentos contados. Un
+# administrador atascado en su propio cuestionario no puede arreglárselo a nadie.
+#
+# ES UNA EXENCIÓN DE ORDEN, NO DE PERMISO: el administrador ya tenía derecho a
+# los 5 pasos; lo único que se le retira es la obligación de recorrerlos en fila.
+# El externo-invitado NO entra aquí: a él se le niegan pasos enteros
+# (`ensure_step_allowed_for_role`), que es otra cosa.
+_ROLES_EXEMPT_FROM_SEQUENTIAL_GATING = frozenset({RoleCode.ADMINISTRADOR})
+
+
+def is_exempt_from_sequential_gating(role: str) -> bool:
+    """Único predicado del que cuelgan las tres puertas del onboarding: el
+    estado que se devuelve en `GET /onboarding/me`, el rechazo del POST y el
+    candado de la cascada de manuales.
+
+    Uno solo, a propósito. Si el candado de la UI y la validación del POST
+    consultaran reglas distintas, el administrador vería un paso abierto que
+    responde 422 — o peor, uno cerrado que en realidad podía operar."""
+    return role in _ROLES_EXEMPT_FROM_SEQUENTIAL_GATING
 
 # Salto máximo (en puntos de `progress_pct`) que se admite entre dos reportes
 # consecutivos del vídeo del paso 1. Cualquier salto mayor —incluido el caso
@@ -160,16 +188,58 @@ def is_onboarding_complete(
     return all(step.id in completed_step_ids for step in applicable_steps)
 
 
-def ensure_step_operable(progress: Optional[OnboardingProgress]) -> OnboardingProgress:
+def resolve_status_for_role(status: str, role: str) -> str:
+    """Estado EFECTIVO de un paso para este rol. `onboarding_progress.status`
+    guarda el bloqueo secuencial tal cual, y eso está bien: es el dato real de
+    por dónde va la persona. Lo que cambia con el rol es si ese bloqueo le
+    aplica.
+
+    Se resuelve al leer y no al escribir en la BD a propósito: si mañana alguien
+    deja de ser administrador, su progreso vuelve a bloquearse solo, sin ninguna
+    migración de datos que arreglar. Guardar `available` en las filas del admin
+    habría dejado el candado abierto para siempre."""
+    if status == "locked" and is_exempt_from_sequential_gating(role):
+        return "available"
+    return status
+
+
+def resolve_progress_for_role(
+    progress: OnboardingProgress, role: str
+) -> OnboardingProgress:
+    """El progreso tal y como lo debe VER este rol, con el estado efectivo ya
+    aplicado. Es lo que viaja en `GET /onboarding/me`, así que el riel de pasos
+    del cliente no necesita conocer ninguna regla de rol: pinta el estado que
+    recibe, y ese estado ya lo decidió el dominio.
+
+    Devuelve el mismo objeto si no hay nada que cambiar (el caso de casi todo el
+    mundo), para no fabricar copias por costumbre."""
+    status = resolve_status_for_role(progress.status, role)
+    if status == progress.status:
+        return progress
+    return replace(progress, status=status)
+
+
+def ensure_step_operable(
+    progress: Optional[OnboardingProgress], role: str
+) -> OnboardingProgress:
     """Un paso solo admite operaciones (reportar progreso, firmar, confirmar
-    lectura, completar perfil) si su progreso está en `available` o
-    `in_progress`. `locked` -> bloqueo secuencial; `completed` -> ya no se
-    repite (el cuestionario en particular es de un único intento)."""
-    if progress is None or progress.status == "locked":
+    lectura, completar perfil) si su estado EFECTIVO para el rol está en
+    `available` o `in_progress`. `locked` -> bloqueo secuencial (del que el
+    administrador está exento); `completed` -> ya no se repite.
+
+    `progress is None` sigue siendo bloqueo para todo el mundo, exento o no: sin
+    fila de progreso no hay paso que operar, y fabricarla aquí escondería un
+    fallo de `ensure_progress_initialized`."""
+    if progress is None:
         raise StepLockedError(
             "Este paso todavía está bloqueado — completa primero el paso anterior."
         )
-    if progress.status == "completed":
+    status = resolve_status_for_role(progress.status, role)
+    if status == "locked":
+        raise StepLockedError(
+            "Este paso todavía está bloqueado — completa primero el paso anterior."
+        )
+    if status == "completed":
         raise StepNotOperableError("Este paso ya está completado.")
     return progress
 
@@ -416,10 +486,15 @@ def ensure_manual_unlocked(
     documents: list[OnboardingDocument],
     acknowledged_ids: set[str],
     document_id: str,
+    role: str,
 ) -> OnboardingDocument:
     """Puerta del paso 3: solo se puede confirmar el siguiente manual pendiente
     de la cascada. Devuelve el documento validado para que el caso de uso no
     tenga que volver a buscarlo.
+
+    El administrador está exento del ORDEN (`is_exempt_from_sequential_gating`),
+    igual que del bloqueo entre pasos: puede abrir el manual que quiera. Lo que
+    NO se relaja para nadie es que el documento exista y esté activo.
 
     Vive en el backend y no solo en el candado de la UI porque un POST directo
     al endpoint de confirmación se saltaría el candado — misma razón por la que
@@ -437,7 +512,7 @@ def ensure_manual_unlocked(
         # como "no encontrado", no como bloqueado.
         raise ManualLockedError("Ese manual no está disponible en este paso.")
 
-    if document_id in acknowledged_ids:
+    if document_id in acknowledged_ids or is_exempt_from_sequential_gating(role):
         return target
 
     pending = [
@@ -470,26 +545,32 @@ def are_all_manuals_acknowledged(
 
 
 def resolve_step_documents(
-    documents: list[OnboardingDocument], acknowledged_ids: set[str]
+    documents: list[OnboardingDocument], acknowledged_ids: set[str], role: str
 ) -> list[StepDocument]:
     """Los documentos del paso en orden de lectura, cada uno con su estado en la
     cascada para este usuario.
 
     `locked` es "queda algo anterior sin confirmar", que es EXACTAMENTE la
-    condición que rechaza `ensure_manual_unlocked`. Se derivan de la misma
-    función de orden para que no puedan divergir: si el candado dijera una cosa y
-    el POST otra, el trabajador vería un botón habilitado que devuelve 422.
+    condición que rechaza `ensure_manual_unlocked` — incluida la exención del
+    administrador, que aquí se consulta con el MISMO predicado. Se derivan de la
+    misma función de orden para que no puedan divergir: si el candado dijera una
+    cosa y el POST otra, el trabajador vería un botón habilitado que devuelve 422.
 
     Un documento ya confirmado nunca sale `locked`, aunque falte uno anterior
     (caso posible si RRHH reordena los manuales después de que alguien empiece):
     lo que ya se leyó, leído está.
     """
     ordered = sort_manuals(documents)
+    exempt = is_exempt_from_sequential_gating(role)
     result: list[StepDocument] = []
     for index, document in enumerate(ordered):
         acknowledged = document.id in acknowledged_ids
-        locked = not acknowledged and any(
-            previous.id not in acknowledged_ids for previous in ordered[:index]
+        locked = (
+            not acknowledged
+            and not exempt
+            and any(
+                previous.id not in acknowledged_ids for previous in ordered[:index]
+            )
         )
         result.append(
             StepDocument(document=document, acknowledged=acknowledged, locked=locked)

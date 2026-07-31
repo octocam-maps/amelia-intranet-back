@@ -76,7 +76,7 @@ class AcknowledgeManualUseCase:
         ensure_step_allowed_for_role(step, role)
 
         current = await self._repository.find_progress(user_id, step_id)
-        ensure_step_operable(current)
+        ensure_step_operable(current, role)
 
         documents = await self._repository.find_active_documents("manual")
         if not documents:
@@ -107,7 +107,7 @@ class AcknowledgeManualUseCase:
                 )
             # La cascada: rechaza saltarse un manual anterior. Reconfirmar uno ya
             # confirmado sí se admite (doble clic).
-            target = ensure_manual_unlocked(documents, acknowledged_ids, document_id)
+            target = ensure_manual_unlocked(documents, acknowledged_ids, document_id, role)
 
         acknowledgement = await self._repository.create_acknowledgement(
             user_id=user_id, document_id=target.id, ip_address=ip_address

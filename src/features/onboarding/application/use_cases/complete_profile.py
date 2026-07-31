@@ -71,7 +71,7 @@ class CompleteProfileUseCase:
         ensure_step_allowed_for_role(step, role)
 
         current = await self._repository.find_progress(user_id, step_id)
-        ensure_step_operable(current)
+        ensure_step_operable(current, role)
 
         # Segunda barrera anti-vacío (la primera es el DTO de FastAPI) —
         # regla no negociable del requerimiento §7.

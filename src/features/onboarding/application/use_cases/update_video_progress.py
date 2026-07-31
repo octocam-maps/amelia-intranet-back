@@ -42,7 +42,7 @@ class UpdateVideoProgressUseCase:
         ensure_step_allowed_for_role(step, role)
 
         current = await self._repository.find_progress(user_id, step_id)
-        current = ensure_step_operable(current)
+        current = ensure_step_operable(current, role)
 
         if new_pct < current.progress_pct:
             raise InvalidVideoProgressError(
