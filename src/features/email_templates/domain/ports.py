@@ -28,7 +28,7 @@ class IEmailTemplateRepository(Protocol):
         template_key: str,
         *,
         subject: str,
-        body_html: str,
+        body: str,
         updated_by: Optional[str],
     ) -> Optional[EmailTemplate]:
         """Guarda el texto del admin y REACTIVA la plantilla: editar es querer

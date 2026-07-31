@@ -11,7 +11,7 @@ class EmailTemplateDTO(BaseModel):
     label: str
     description: str
     subject: str
-    body_html: str
+    body: str
     # `False` = está usando el texto por defecto del código. La pantalla lo pinta
     # como "Por defecto" frente a "Editada", que es la distinción que el admin
     # necesita para saber qué ha tocado.
@@ -30,7 +30,7 @@ class EmailTemplateListDTO(BaseModel):
 
 class UpdateEmailTemplateDTO(BaseModel):
     subject: str = Field(..., min_length=1, max_length=300)
-    body_html: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1)
 
 
 class PreviewEmailTemplateDTO(BaseModel):
@@ -38,7 +38,7 @@ class PreviewEmailTemplateDTO(BaseModel):
     previsualiza lo ya guardado."""
 
     subject: Optional[str] = None
-    body_html: Optional[str] = None
+    body: Optional[str] = None
 
 
 class EmailTemplatePreviewDTO(BaseModel):

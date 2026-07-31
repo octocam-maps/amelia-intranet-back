@@ -45,7 +45,7 @@ class UpdateEmailTemplateUseCase:
         template_key: str,
         *,
         subject: str,
-        body_html: str,
+        body: str,
         updated_by: Optional[str] = None,
     ) -> EmailTemplate:
         # Un asunto vacío deja el correo con la línea en blanco en la bandeja de
@@ -54,7 +54,7 @@ class UpdateEmailTemplateUseCase:
         # `min_length` del DTO porque el caso de uso es lo que se puede testear.
         if not subject.strip():
             raise InvalidEmailTemplateError("El asunto no puede estar vacío.")
-        if not body_html.strip():
+        if not body.strip():
             raise InvalidEmailTemplateError(
                 "El cuerpo del correo no puede estar vacío."
             )
@@ -62,7 +62,7 @@ class UpdateEmailTemplateUseCase:
         updated = await self._repository.update_template(
             template_key,
             subject=subject.strip(),
-            body_html=body_html.strip(),
+            body=body.strip(),
             updated_by=updated_by,
         )
         if updated is None:
@@ -106,7 +106,7 @@ class PreviewEmailTemplateUseCase:
         template_key: str,
         *,
         subject: Optional[str] = None,
-        body_html: Optional[str] = None,
+        body: Optional[str] = None,
     ) -> tuple[str, str]:
         existing = await self._repository.find_by_key(template_key)
         if existing is None:
@@ -119,7 +119,7 @@ class PreviewEmailTemplateUseCase:
             label=existing.label,
             description=existing.description,
             subject=subject if subject is not None else existing.subject,
-            body_html=body_html if body_html is not None else existing.body_html,
+            body=body if body is not None else existing.body,
             # Forzado a `True`: se previsualiza el texto personalizado incluso si
             # la plantilla está restaurada al de fábrica — si no, el admin
             # escribiría un borrador y la previsualización le devolvería el texto

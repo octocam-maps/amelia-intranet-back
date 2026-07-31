@@ -19,7 +19,7 @@ class EmailResult:
 class EmailTemplate:
     """Plantilla editable por el administrador (`email_templates`, migración 041).
 
-    Solo `subject` y `body_html`: el MARCO del correo (cabecera con logo, botón
+    Solo `subject` y `body`: el MARCO del correo (cabecera con logo, botón
     de CTA, pie) sigue en código y no se expone. Si el admin pudiera editar el
     HTML completo, un guardado mal hecho saldría sin logo o con el layout roto
     para toda la plantilla, y nadie lo vería hasta que llegara a las bandejas.
@@ -34,7 +34,7 @@ class EmailTemplate:
     label: str
     description: str
     subject: str
-    body_html: str
+    body: str
     is_active: bool
     updated_by: Optional[str] = None
     updated_at: Optional[datetime] = None

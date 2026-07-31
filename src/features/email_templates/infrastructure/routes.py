@@ -68,7 +68,7 @@ def create_email_templates_router() -> APIRouter:
         template = await use_case.execute(
             template_key,
             subject=dto.subject,
-            body_html=dto.body_html,
+            body=dto.body,
             updated_by=current_user["sub"],
         )
         return template_to_dto(template)
@@ -102,7 +102,7 @@ def create_email_templates_router() -> APIRouter:
         límite de longitud de URL y quedarían en los logs de acceso.
         """
         subject, html = await use_case.execute(
-            template_key, subject=dto.subject, body_html=dto.body_html
+            template_key, subject=dto.subject, body=dto.body
         )
         return EmailTemplatePreviewDTO(subject=subject, html=html)
 

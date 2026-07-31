@@ -51,7 +51,7 @@ def test_only_the_admin_can_reach_the_email_templates(role, method, path):
     # llevan.
     kwargs = {"headers": {"Authorization": f"Bearer {_token_for(role)}"}}
     if method != "get":
-        kwargs["json"] = {"subject": "x", "body_html": "<p>x</p>"}
+        kwargs["json"] = {"subject": "x", "body": "x"}
     try:
         with TestClient(app) as client:
             response = getattr(client, method)(path, **kwargs)
@@ -90,7 +90,7 @@ def test_the_list_ships_the_available_placeholders():
 
 def test_preview_returns_the_rendered_subject_and_html():
     class FakeUseCase:
-        async def execute(self, template_key, *, subject=None, body_html=None):
+        async def execute(self, template_key, *, subject=None, body=None):
             assert subject == "Hola {{full_name}}"
             return "Hola Ana Ejemplo", "<html><body>ok</body></html>"
 
@@ -118,7 +118,7 @@ def test_an_empty_subject_is_rejected_by_the_dto_with_422():
         with TestClient(app) as client:
             response = client.patch(
                 "/email-templates/staff_invited",
-                json={"subject": "", "body_html": "<p>x</p>"},
+                json={"subject": "", "body": "x"},
                 headers={"Authorization": f"Bearer {_token_for('administrador')}"},
             )
     finally:
@@ -137,7 +137,7 @@ def test_there_is_no_endpoint_to_create_a_template():
                 json={
                     "template_key": "inventada",
                     "subject": "x",
-                    "body_html": "<p>x</p>",
+                    "body": "x",
                 },
                 headers={"Authorization": f"Bearer {_token_for('administrador')}"},
             )

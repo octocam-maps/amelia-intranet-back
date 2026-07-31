@@ -25,7 +25,7 @@ class TestUpdate:
         updated = await use_case.execute(
             "staff_invited",
             subject="Bienvenida a Amelia, {{full_name}}",
-            body_html="<p>Nos alegra tenerte.</p>",
+            body="Nos alegra tenerte.",
             updated_by="admin-1",
         )
 
@@ -41,7 +41,7 @@ class TestUpdate:
         use_case = UpdateEmailTemplateUseCase(repository)
 
         updated = await use_case.execute(
-            "staff_invited", subject="Nuevo", body_html="<p>Nuevo</p>"
+            "staff_invited", subject="Nuevo", body="Nuevo"
         )
 
         assert updated.is_active is True
@@ -53,14 +53,14 @@ class TestUpdate:
         use_case = UpdateEmailTemplateUseCase(FakeEmailTemplateRepository())
 
         with pytest.raises(InvalidEmailTemplateError):
-            await use_case.execute("staff_invited", subject="   ", body_html="<p>x</p>")
+            await use_case.execute("staff_invited", subject="   ", body="x")
 
     @pytest.mark.asyncio
     async def test_rejects_an_empty_body(self):
         use_case = UpdateEmailTemplateUseCase(FakeEmailTemplateRepository())
 
         with pytest.raises(InvalidEmailTemplateError):
-            await use_case.execute("staff_invited", subject="Asunto", body_html="  ")
+            await use_case.execute("staff_invited", subject="Asunto", body="  ")
 
     @pytest.mark.asyncio
     async def test_trims_the_saved_text(self):
@@ -68,11 +68,11 @@ class TestUpdate:
         use_case = UpdateEmailTemplateUseCase(repository)
 
         updated = await use_case.execute(
-            "staff_invited", subject="  Asunto  ", body_html="  <p>x</p>  "
+            "staff_invited", subject="  Asunto  ", body="  x  "
         )
 
         assert updated.subject == "Asunto"
-        assert updated.body_html == "<p>x</p>"
+        assert updated.body == "x"
 
     @pytest.mark.asyncio
     async def test_an_unknown_key_is_not_found(self):
@@ -82,7 +82,7 @@ class TestUpdate:
         use_case = UpdateEmailTemplateUseCase(FakeEmailTemplateRepository())
 
         with pytest.raises(EmailTemplateNotFoundError):
-            await use_case.execute("no_existe", subject="A", body_html="<p>B</p>")
+            await use_case.execute("no_existe", subject="A", body="B")
 
 
 class TestRestore:
@@ -91,7 +91,7 @@ class TestRestore:
         """Restaurar NO borra: el texto que el admin había escrito se conserva por
         si quiere volver a él."""
         repository = FakeEmailTemplateRepository(
-            [build_template(subject="Mi asunto", body_html="<p>Mi texto</p>")]
+            [build_template(subject="Mi asunto", body="Mi texto")]
         )
         use_case = RestoreEmailTemplateUseCase(repository)
 
@@ -99,7 +99,7 @@ class TestRestore:
 
         assert restored.is_active is False
         assert restored.subject == "Mi asunto"
-        assert restored.body_html == "<p>Mi texto</p>"
+        assert restored.body == "Mi texto"
 
     @pytest.mark.asyncio
     async def test_an_unknown_key_is_not_found(self):
@@ -120,7 +120,7 @@ class TestPreview:
         subject, html = await use_case.execute(
             "staff_invited",
             subject="Borrador para {{full_name}}",
-            body_html="<p>Texto en borrador</p>",
+            body="Texto en borrador",
         )
 
         assert subject == "Borrador para Ana Ejemplo"
@@ -160,7 +160,7 @@ class TestPreview:
             FakeEmailTemplateRepository(), frontend_url=FRONTEND
         )
 
-        _, html = await use_case.execute("staff_invited", body_html="<p>x</p>")
+        _, html = await use_case.execute("staff_invited", body="x")
 
         assert "<html" in html.lower()
         assert FRONTEND in html

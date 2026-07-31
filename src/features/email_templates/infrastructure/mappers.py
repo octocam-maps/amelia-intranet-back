@@ -10,7 +10,7 @@ def template_to_dto(template: EmailTemplate) -> EmailTemplateDTO:
         label=template.label,
         description=template.description,
         subject=template.subject,
-        body_html=template.body_html,
+        body=template.body,
         is_active=template.is_active,
         updated_by=template.updated_by,
         updated_at=template.updated_at,

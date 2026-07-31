@@ -31,7 +31,7 @@ def _row_to_template(row) -> EmailTemplate:
         label=row["label"],
         description=row["description"],
         subject=row["subject"],
-        body_html=row["body_html"],
+        body=row["body"],
         is_active=row["is_active"],
         updated_by=str(row["updated_by"]) if row["updated_by"] is not None else None,
         updated_at=row["updated_at"],

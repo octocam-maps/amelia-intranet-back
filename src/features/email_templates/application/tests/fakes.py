@@ -13,7 +13,7 @@ def build_template(**overrides) -> EmailTemplate:
         "label": "Bienvenida al dar de alta",
         "description": "Se envía a la persona recién dada de alta.",
         "subject": "Te damos la bienvenida a la intranet de Amelia",
-        "body_html": "<p>Hola {{full_name}},</p>",
+        "body": "Hola {{full_name}},",
         "is_active": True,
         "updated_by": None,
         "updated_at": None,
@@ -34,7 +34,7 @@ class FakeEmailTemplateRepository:
         return self.templates.get(template_key)
 
     async def update_template(
-        self, template_key, *, subject, body_html, updated_by
+        self, template_key, *, subject, body, updated_by
     ) -> Optional[EmailTemplate]:
         existing = self.templates.get(template_key)
         if existing is None:
@@ -45,7 +45,7 @@ class FakeEmailTemplateRepository:
             label=existing.label,
             description=existing.description,
             subject=subject,
-            body_html=body_html,
+            body=body,
             is_active=True,
             updated_by=updated_by,
             updated_at=datetime(2026, 7, 31, tzinfo=timezone.utc),
@@ -59,13 +59,13 @@ class FakeEmailTemplateRepository:
         existing = self.templates.get(template_key)
         if existing is None:
             return None
-        # NO borra: conserva `subject`/`body_html` para que el admin pueda volver.
+        # NO borra: conserva `subject`/`body` para que el admin pueda volver.
         restored = EmailTemplate(
             template_key=existing.template_key,
             label=existing.label,
             description=existing.description,
             subject=existing.subject,
-            body_html=existing.body_html,
+            body=existing.body,
             is_active=False,
             updated_by=updated_by,
             updated_at=datetime(2026, 7, 31, tzinfo=timezone.utc),

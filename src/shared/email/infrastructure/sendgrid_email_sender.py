@@ -169,6 +169,57 @@ _ALLOWED_PLACEHOLDERS = (
 _PLACEHOLDER_RE = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
+_URL_RE = re.compile(r"(https?://[^\s<]+)")
+_EMAIL_RE = re.compile(r"\b([\w.+-]+@[\w-]+\.[\w.-]+)\b")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.S)
+
+
+def plain_text_to_html(text: str) -> str:
+    """Convierte el TEXTO PLANO que escribe el administrador en el HTML del
+    cuerpo del correo (migración 044).
+
+    El editor de plantillas ya no pide HTML: una persona de RRHH no tiene por qué
+    saber cerrar un `<p>`, y una etiqueta mal escrita rompía el correo de toda la
+    plantilla sin que nadie lo viera hasta que llegaba a las bandejas.
+
+    Reglas, todas ellas convenciones que no hay que aprender:
+      · línea en blanco  → párrafo nuevo
+      · salto simple     → `<br>`
+      · `**texto**`      → negrita (igual que WhatsApp)
+      · URLs y correos   → enlazados solos
+
+    LO PRIMERO QUE HACE ES ESCAPAR. Así el admin no puede romper el correo ni
+    inyectar markup aunque escriba `<script>`, y un texto normal con `<` o `&`
+    ("temperatura < 5º", "I+D & calidad") sale como se escribió en vez de
+    convertirse en una etiqueta a medias.
+
+    Se escapa ANTES de aplicar negrita y enlaces a propósito: si se hiciera al
+    revés, `html.escape` convertiría en literal el `<strong>` y el `<a>` que
+    acabamos de generar.
+    """
+    escaped = _html.escape(text.strip())
+
+    # Negrita y enlaces se aplican sobre el texto YA escapado, así que las
+    # etiquetas que se insertan aquí son las únicas que sobreviven.
+    escaped = _BOLD_RE.sub(r"<strong>\1</strong>", escaped)
+    escaped = _URL_RE.sub(
+        r'<a href="\1" style="color:#1D4FD7;">\1</a>', escaped
+    )
+    escaped = _EMAIL_RE.sub(
+        r'<a href="mailto:\1" style="color:#1D4FD7;">\1</a>', escaped
+    )
+
+    # Un bloque = un párrafo. `\n\s*\n` y no `\n\n` para tolerar los espacios
+    # sueltos que deja un copiar-pegar desde Word o desde un correo.
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", escaped) if b.strip()]
+    if not blocks:
+        return ""
+    return "".join(
+        f'<p style="margin:0 0 14px;">{b.replace(chr(10), "<br>")}</p>'
+        for b in blocks
+    )
+
+
 def render_placeholders(
     text: str, context: dict[str, Any], *, escape: bool = True
 ) -> str:
@@ -223,9 +274,13 @@ def render_email(
       `template` coincide 1:1 con el `type` de la notificación in-app).
     """
     if override is not None and override.is_active:
-        # El asunto va SIN escapar: es texto plano, no HTML.
+        # Los dos van SIN escapar aquí: el asunto es texto plano y no lo necesita,
+        # y el cuerpo lo escapa `plain_text_to_html` justo después — escaparlo dos
+        # veces dejaría `&amp;lt;` en el correo.
         subject = render_placeholders(override.subject, context, escape=False)
-        body_html = render_placeholders(override.body_html, context)
+        body_html = plain_text_to_html(
+            render_placeholders(override.body, context, escape=False)
+        )
         # El MARCO no se toca: `_shell` sigue poniendo logo, CTA y pie. El admin
         # edita el mensaje, no el envoltorio.
         cta_url = _cta_url(frontend_url, str(context.get("url") or ""))

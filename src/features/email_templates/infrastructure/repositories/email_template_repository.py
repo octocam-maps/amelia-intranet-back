@@ -15,13 +15,13 @@ from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 from src.shared.email.domain.entities import EmailTemplate
 
 _SELECT = """
-    SELECT template_key, label, description, subject, body_html, is_active,
+    SELECT template_key, label, description, subject, body, is_active,
            updated_by, updated_at, audience, audience_entity_id
     FROM email_templates
 """
 
 _RETURNING = """
-    RETURNING template_key, label, description, subject, body_html, is_active,
+    RETURNING template_key, label, description, subject, body, is_active,
               updated_by, updated_at, audience, audience_entity_id
 """
 
@@ -32,7 +32,7 @@ def _row_to_template(row) -> EmailTemplate:
         label=row["label"],
         description=row["description"],
         subject=row["subject"],
-        body_html=row["body_html"],
+        body=row["body"],
         is_active=row["is_active"],
         updated_by=str(row["updated_by"]) if row["updated_by"] is not None else None,
         updated_at=row["updated_at"],
@@ -72,7 +72,7 @@ class PostgresEmailTemplateRepository:
         template_key: str,
         *,
         subject: str,
-        body_html: str,
+        body: str,
         updated_by: Optional[str],
         audience: Optional[str] = None,
         audience_entity_id: Optional[str] = None,
@@ -90,7 +90,7 @@ class PostgresEmailTemplateRepository:
             f"""
             UPDATE email_templates
             SET subject = $2,
-                body_html = $3,
+                body = $3,
                 is_active = TRUE,
                 updated_by = $4,
                 audience = COALESCE($5, audience),
@@ -104,7 +104,7 @@ class PostgresEmailTemplateRepository:
             """,
             template_key,
             subject,
-            body_html,
+            body,
             updated_by,
             audience,
             audience_entity_id,

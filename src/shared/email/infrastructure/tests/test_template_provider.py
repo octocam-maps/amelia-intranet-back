@@ -23,7 +23,7 @@ def _row(**overrides) -> dict:
         "label": "Bienvenida",
         "description": "x",
         "subject": "Bienvenida, {{full_name}}",
-        "body_html": "<p>Hola</p>",
+        "body": "Hola",
         "is_active": True,
         "updated_by": None,
         "updated_at": datetime(2026, 7, 31, tzinfo=timezone.utc),
