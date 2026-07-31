@@ -23,6 +23,38 @@ BEGIN;
 -- La columna se RENOMBRA porque `body_html` mentiría: ya no guarda HTML. Un
 -- nombre que miente es peor que un nombre largo — el siguiente que lo lea
 -- asumirá que puede meter etiquetas.
+-- ───────────────────────────────────────────────────────────────────────────
+--  LOCK TIMEOUT — leer esto antes de ejecutar en producción
+--
+--  `ALTER TABLE ... RENAME COLUMN` necesita un ACCESS EXCLUSIVE LOCK. El
+--  renombrado en sí es instantáneo (solo toca metadatos), pero CONSEGUIR el lock
+--  no lo es: el backend lee `email_templates` en cada envío de correo
+--  (`PostgresEmailTemplateProvider`), así que cualquier conexión con una
+--  transacción abierta sobre esa tabla lo hace esperar.
+--
+--  Y esperar es lo PELIGROSO: un ACCESS EXCLUSIVE pendiente encola a todo el que
+--  llegue detrás, incluidas las lecturas. Sin este timeout, una migración que
+--  "tarda" 5 minutos no tarda: cuelga la aplicación 5 minutos.
+--
+--  Con `lock_timeout` falla en 5 segundos y revierte todo. Es LOCAL a esta
+--  transacción: no cambia la configuración del servidor.
+--
+--  SI FALLA POR TIMEOUT, mira quién tiene la tabla ocupada:
+--
+--    SELECT pid, state, wait_event_type, now() - xact_start AS duracion,
+--           left(query, 80) AS query
+--    FROM pg_stat_activity
+--    WHERE datname = current_database() AND pid <> pg_backend_pid()
+--      AND (state = 'idle in transaction' OR query ILIKE '%email_templates%')
+--    ORDER BY xact_start;
+--
+--  Lo habitual es una conexión `idle in transaction` del pool del backend. Lo más
+--  limpio es PARAR el backend, aplicar y arrancarlo con el código nuevo — que
+--  además hace falta: esta migración NO es retrocompatible, el código anterior
+--  lee `body_html` y esa columna deja de existir.
+-- ───────────────────────────────────────────────────────────────────────────
+SET LOCAL lock_timeout = '5s';
+
 ALTER TABLE email_templates RENAME COLUMN body_html TO body;
 
 COMMENT ON COLUMN email_templates.body IS
