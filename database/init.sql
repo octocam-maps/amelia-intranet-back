@@ -24,7 +24,8 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- Entidades legales del grupo: Hub / Lab / Ops
 CREATE TABLE IF NOT EXISTS entities (
     id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    code       VARCHAR(20) NOT NULL UNIQUE CHECK (code IN ('hub', 'lab', 'ops')),
+    code       VARCHAR(20) NOT NULL UNIQUE
+                 CHECK (code IN ('hub', 'lab', 'ops', 'hincator')),  -- 'hincator' [036]
     name       VARCHAR(120) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -36,7 +37,9 @@ CREATE TABLE IF NOT EXISTS entities (
 CREATE TABLE IF NOT EXISTS roles (
     id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     code       VARCHAR(30) NOT NULL UNIQUE
-                 CHECK (code IN ('administrador', 'empleado', 'externo_invitado', 'socio')),
+                 CHECK (code IN ('administrador', 'empleado', 'externo_invitado',
+                                 'socio',      -- [024]
+                                 'becario')),  -- [038] todo salvo control horario
     name       VARCHAR(80) NOT NULL,
     is_system  BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -75,6 +78,15 @@ CREATE TABLE IF NOT EXISTS users (
     status         VARCHAR(20) NOT NULL DEFAULT 'invited'
                      CHECK (status IN ('invited', 'active', 'suspended')),
     is_external    BOOLEAN NOT NULL DEFAULT FALSE,
+    drive_folder_id        VARCHAR(120),    -- [025] carpeta personal en Drive
+    vacation_days_override NUMERIC(5,1),    -- [027] NULL = cálculo automático por hire_date
+    -- [037] NULL dice "no lo sabemos"; un default diría "es de jornada
+    -- completa", que puede ser falso. Independiente de `role_id`: un becario
+    -- puede tener cualquier rol y este campo no decide ningún permiso.
+    contract_type          TEXT,
+    CONSTRAINT ck_users_contract_type CHECK (
+        contract_type IS NULL OR contract_type IN ('full_time', 'part_time', 'intern')
+    ),
     last_login_at  TIMESTAMPTZ,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -170,15 +182,22 @@ CREATE TABLE IF NOT EXISTS onboarding_progress (
 CREATE INDEX IF NOT EXISTS idx_onboarding_progress_user_id ON onboarding_progress(user_id);
 
 -- Cuestionario: UN SOLO INTENTO garantizado por UNIQUE(user_id, step_id).
+-- [034] MÁXIMO 2 INTENTOS, no uno. El techo vive en
+-- `onboarding/domain/policy.py::MAX_QUIZ_ATTEMPTS` y a propósito NO se replica
+-- como CHECK aquí; lo que sí garantiza la BD, y solo ella puede, es que no
+-- existan dos intentos con el mismo `attempt_number` — el blindaje contra la
+-- carrera del doble clic que antes daba `UNIQUE(user_id, step_id)`.
 CREATE TABLE IF NOT EXISTS onboarding_quiz_attempts (
-    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    step_id      UUID NOT NULL REFERENCES onboarding_steps(id) ON DELETE CASCADE,
-    answers      JSONB NOT NULL,
-    score        NUMERIC(5,2) NOT NULL,
-    passed       BOOLEAN NOT NULL,
-    submitted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_quiz_attempt_single UNIQUE (user_id, step_id)
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    step_id        UUID NOT NULL REFERENCES onboarding_steps(id) ON DELETE CASCADE,
+    answers        JSONB NOT NULL,
+    score          NUMERIC(5,2) NOT NULL,
+    passed         BOOLEAN NOT NULL,
+    attempt_number INTEGER NOT NULL DEFAULT 1,
+    submitted_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_quiz_attempt_per_number UNIQUE (user_id, step_id, attempt_number),
+    CONSTRAINT ck_quiz_attempt_number_positive CHECK (attempt_number >= 1)
 );
 
 CREATE TABLE IF NOT EXISTS onboarding_documents (
@@ -461,13 +480,15 @@ INSERT INTO roles (code, name) VALUES
     ('administrador',    'Administrador'),
     ('empleado',         'Empleado'),
     ('externo_invitado', 'Externo-invitado'),
-    ('socio',            'Socio')
+    ('socio',            'Socio'),
+    ('becario',          'Becario')
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO entities (code, name) VALUES
-    ('hub', 'Amelia Hub'),
-    ('lab', 'Amelia Lab'),
-    ('ops', 'Amelia Ops')
+    ('hub',      'Amelia Hub'),
+    ('lab',      'Amelia Lab'),
+    ('ops',      'Amelia Ops'),
+    ('hincator', 'Hincator')
 ON CONFLICT (code) DO NOTHING;
 
 -- Único Administrador (Beatriz Luna, People Manager). Email real de People

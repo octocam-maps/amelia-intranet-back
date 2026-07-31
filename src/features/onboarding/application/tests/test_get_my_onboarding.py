@@ -100,3 +100,23 @@ async def test_external_guest_manual_step_starts_locked_video_is_available():
     statuses = {step.id: progress.status for step, progress, _ in pairs}
     assert statuses[VIDEO_STEP.id] == "available"
     assert statuses[MANUAL_STEP.id] == "locked"
+
+
+@pytest.mark.asyncio
+async def test_becario_does_the_full_five_step_onboarding():
+    """RF-A10: el becario accede a todo lo de un empleado salvo el fichaje —
+    el onboarding NO es la excepción, hace los 5 pasos completos.
+
+    `steps_applicable_to_role` (domain/policy.py) solo ramifica sobre
+    `externo_invitado` y el resto cae en el `return list(steps)`, así que el
+    becario ya estaba cubierto al entrar la migración 038 sin tocar el filtro.
+    Este test fija ese comportamiento: si alguien añade una segunda rama a esa
+    función y se lleva por delante al becario, cae aquí.
+    """
+    repository = FakeOnboardingRepository(steps=ALL_STEPS)
+    use_case = GetMyOnboardingUseCase(repository)
+
+    pairs = await use_case.execute(user_id="intern-1", role="becario")
+
+    assert [step.id for step, _, _ in pairs] == [s.id for s in ALL_STEPS]
+    assert len(pairs) == 5

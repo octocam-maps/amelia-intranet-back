@@ -12,6 +12,7 @@ import pytest
 from src.features.notifications.infrastructure.repositories.notification_repository import (
     PostgresNotificationRepository,
 )
+from src.shared.auth.roles import ROLES_WITHOUT_TIME_CLOCK, TIME_CLOCK_ROLES
 
 
 def _row(**overrides) -> dict:
@@ -240,7 +241,8 @@ async def test_list_user_ids_pending_clock_in_excludes_holiday_scoped_by_entity(
 
 
 @pytest.mark.asyncio
-async def test_list_user_ids_pending_clock_in_excludes_externo_invitado_role():
+async def test_list_user_ids_pending_clock_in_excludes_roles_without_time_clock():
+    """RF-A4.3: `externo_invitado` y, desde la migración 038, `becario`."""
     pool = AsyncMock()
     pool.fetch.return_value = []
     repository = PostgresNotificationRepository(pool)
@@ -248,7 +250,32 @@ async def test_list_user_ids_pending_clock_in_excludes_externo_invitado_role():
     await repository.list_user_ids_pending_clock_in(date(2026, 7, 9))
 
     query = pool.fetch.call_args[0][0]
-    assert "r.code != 'externo_invitado'" in query
+    assert "'externo_invitado'" in query
+    assert "'becario'" in query
+    assert "r.code NOT IN" in query
+
+
+@pytest.mark.asyncio
+async def test_list_user_ids_pending_clock_in_never_excludes_a_role_that_can_clock_in():
+    """El invariante que de verdad importa, y que un `assert` sobre el literal
+    del SQL no cubría: la exclusión del recordatorio es EXACTAMENTE el
+    complemento de `TIME_CLOCK_ROLES`. Si alguien añade un rol al recordatorio
+    sin dárselo al fichaje (o al revés), este test cae — el síntoma en
+    producción habría sido un email diario pidiendo fichar a quien recibe un
+    403 al intentarlo, o un silencio para quien sí debe fichar."""
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresNotificationRepository(pool)
+
+    await repository.list_user_ids_pending_clock_in(date(2026, 7, 9))
+
+    query = pool.fetch.call_args[0][0]
+    excluded_clause = query.split("r.code NOT IN (")[1].split(")")[0]
+
+    for role in TIME_CLOCK_ROLES:
+        assert f"'{role.value}'" not in excluded_clause
+    for role in ROLES_WITHOUT_TIME_CLOCK:
+        assert f"'{role.value}'" in excluded_clause
 
 
 @pytest.mark.asyncio

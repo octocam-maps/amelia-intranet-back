@@ -34,10 +34,18 @@ una migración nueva.
 | `024_socio_role.sql` | Amplía `roles.code` CHECK + seed del rol `socio` — igual que un empleado en toda la app + visión global del calendario de vacaciones (ver/exportar PDF/Excel), sin permisos de administración. |
 | `025_users_drive_folder_id.sql` | `users.drive_folder_id` (aditiva) — cachea el id de la subcarpeta de Google Drive del empleado (Fase 4 v2, Drive real: WU-A de `sdd/fase4-nominas-documentos`). |
 | `026_user_profiles_company_phone.sql` | `user_profiles.company_phone` (aditiva) — último campo que faltaba de los 7 del paso 5 del onboarding ("Completar perfil", RF §3.5); el resto (`dni_nif`, `birth_date`, `phone`, `address`, `users.full_name`, `users.department_id`) ya existía desde `001_core_identity.sql`. |
+| `027_users_vacation_days_override.sql` | `users.vacation_days_override` (aditiva) — días de vacaciones/año fijados a mano por RRHH; `NULL` = cálculo automático desde `hire_date` (`absences/domain/vacation_entitlement.py`). |
 | `028_employee_documents_signed_category.sql` | Amplía `employee_documents.category` CHECK con `signed` (sdd/docs-firmados-upload-drive) — el paso 3 del onboarding deja de firmar dentro de la plataforma y pasa a exigir la subida del PDF ya firmado, indexado como un documento más. |
 | `029_onboarding_document_uploads.sql` | `onboarding_document_uploads` (nueva) — enlace "este upload satisfizo el paso 3 de ESTE usuario" + corrige el título sembrado del paso 3 ("Sube tu documentación firmada"). |
 | `030_drop_document_signatures.sql` | `DROP TABLE document_signatures` — última pieza de la firma nativa eliminada; irreversible, sin histórico (decisión de producto). Aplicada al FINAL, tras verificar el reemplazo completo (028+029 + backend/frontend nuevos). |
 | `031_time_clock_entries_source_manual_live.sql` | Amplía `time_clock_entries.source` CHECK con `manual`/`live` (LOGIC-2, pentest ético) — el alta manual y el fichaje en vivo dejan de compartir el histórico `web` para que RRHH pueda auditar horas autodeclaradas vs. fichadas en tiempo real. |
+| `032_absence_types_v11_catalog.sql` | Catálogo cerrado de 10 tipos de ausencia (RF-A5), rectificando los 6 de RF3.8 — colores medidos por contraste y dicromacia. |
+| `033_onboarding_steps_reorder_v11.sql` | Reordena el onboarding (RF-A8): 1 vídeo · 2 cuestionario · 3 **manuales** · 4 perfil · 5 **documentación firmada**. El orden vive SOLO en `step_order`, no hay constante en el código. |
+| `034_quiz_two_attempts.sql` | El cuestionario pasa de 1 a **2 intentos** (RF-A9): `attempt_number` + `UNIQUE(user_id, step_id, attempt_number)` sustituyen a `uq_quiz_attempt_single`. El techo vive en `policy.py::MAX_QUIZ_ATTEMPTS`, no en un CHECK. |
+| `035_onboarding_manual_hincator.sql` | Sustituye el placeholder `cafebabe…` por el manual REAL (Hincator 2026 ES) con su `storage_ref` y `content_hash` SHA-256. Se sirve como asset estático del front, no por `POST /documents` (RF-A6). |
+| `036_hincator_entity.sql` | Amplía `entities.code` CHECK con `hincator` + seed de la cuarta sociedad y sus 5 departamentos. |
+| `037_users_contract_type.sql` | `users.contract_type` (aditiva, nullable a propósito): `full_time`/`part_time`/`intern`. Informativo — independiente de `role_id` y no decide ningún permiso. |
+| `038_becario_role.sql` | Amplía `roles.code` CHECK + seed del rol `becario` (RF-A10) — accede a todo lo de un empleado SALVO el control horario. Se implementa AÑADIÉNDOLO a `ALL_ROLES`/`INTERNAL_ROLES` y restringiendo solo en `TIME_CLOCK_ROLES`. |
 
 Los módulos 2-6 se crean todos en Fase 1 (según `docs/fase-0-esquema-datos.md`, ya
 aprobado) para no tener que ir migrando el esquema en cada fase de producto — pero

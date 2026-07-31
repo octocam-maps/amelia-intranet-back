@@ -646,3 +646,98 @@ def test_batch_create_rejects_range_over_seven_days_with_422():
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "TimeClockBatchRangeTooLongError"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rol `becario` [migración 038, RF-A10]: accede a TODO lo que ve un empleado
+# SALVO el control horario. Es el único módulo que se le niega, así que este
+# router es el único del backend que usa `TIME_CLOCK_ROLES` en vez de
+# `INTERNAL_ROLES`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import pytest  # noqa: E402
+
+_BECARIO_FORBIDDEN_REQUESTS = [
+    ("get", "/time-clock/entries", None),
+    ("get", "/time-clock/current", None),
+    ("get", "/time-clock/entries/export", None),
+    ("get", "/time-clock/entries/export.xlsx", None),
+    ("post", "/time-clock/entries", {"work_date": "2026-07-20", "clock_in": "09:00"}),
+    ("post", "/time-clock/entries/batch", {}),
+    ("post", "/time-clock/clock-in", {}),
+    ("post", "/time-clock/clock-out", {}),
+    ("post", "/time-clock/breaks/start", {}),
+    ("post", "/time-clock/breaks/end", {}),
+]
+
+
+@pytest.mark.parametrize("method,path,payload", _BECARIO_FORBIDDEN_REQUESTS)
+def test_becario_cannot_use_the_time_clock(method, path, payload):
+    """403 en el BACKEND, no solo el ítem oculto del navbar. Escribir la URL a
+    mano no debe dar acceso (regla no negociable del proyecto)."""
+    response = None
+    try:
+        with TestClient(app) as client:
+            kwargs = {"headers": {"Authorization": f"Bearer {_token_for('becario')}"}}
+            if payload is not None:
+                kwargs["json"] = payload
+            response = getattr(client, method)(path, **kwargs)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403, (
+        f"{method.upper()} {path} dejó pasar a un becario (devolvió "
+        f"{response.status_code}) — ¿usa INTERNAL_ROLES y no TIME_CLOCK_ROLES?"
+    )
+
+
+def test_every_time_clock_route_is_closed_to_becario():
+    """Test ESTRUCTURAL, el que de verdad protege a futuro: recorre las rutas
+    reales del router y comprueba que ninguna admite `becario`.
+
+    El test paramétrico de arriba solo cubre los endpoints que existían al
+    escribirlo; un endpoint nuevo que copie el `Depends` de un router vecino
+    (`INTERNAL_ROLES`) le abriría el fichaje al becario y ningún test se
+    enteraría. Este sí.
+
+    Los roles admitidos se leen de `_allowed_roles`, que cuelga
+    `require_role` justamente para poder auditar la matriz con un test
+    (`src/shared/auth/dependencies.py`). Las rutas NO están aplanadas en
+    `app.routes`: esta versión de FastAPI envuelve cada `include_router` en un
+    `_IncludedRouter` y las deja en su `original_router`.
+    """
+    from src.shared.auth.roles import RoleCode
+
+    time_clock_routes = [
+        route
+        for included in app.routes
+        for route in getattr(getattr(included, "original_router", None), "routes", [])
+        if getattr(route, "path", "").startswith("/time-clock")
+    ]
+    assert time_clock_routes, "no se encontró ninguna ruta de /time-clock"
+
+    unguarded, offenders = [], []
+    for route in time_clock_routes:
+        allowed = next(
+            (
+                roles
+                for dependency in route.dependant.dependencies
+                if (roles := getattr(dependency.call, "_allowed_roles", None))
+                is not None
+            ),
+            None,
+        )
+        label = f"{sorted(route.methods)} {route.path}"
+        if allowed is None:
+            unguarded.append(label)
+        elif RoleCode.BECARIO in allowed:
+            offenders.append(label)
+
+    assert not offenders, (
+        "estas rutas de /time-clock admiten a un becario: " + ", ".join(offenders)
+    )
+    # Un endpoint sin `require_role` es peor que uno con el guard equivocado:
+    # lo puede usar cualquier usuario autenticado, becario incluido.
+    assert not unguarded, (
+        "estas rutas de /time-clock no tienen guard de rol: " + ", ".join(unguarded)
+    )
