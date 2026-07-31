@@ -57,7 +57,7 @@ class SubmitQuizUseCase:
         ensure_step_allowed_for_role(step, role)
 
         current = await self._repository.find_progress(user_id, step_id)
-        ensure_step_operable(current)
+        ensure_step_operable(current, role)
 
         attempts_used = await self._repository.count_quiz_attempts(user_id, step_id)
         ensure_quiz_attempts_left(attempts_used)

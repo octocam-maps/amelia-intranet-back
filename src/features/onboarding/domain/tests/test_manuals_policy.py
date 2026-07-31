@@ -7,6 +7,7 @@ import pytest
 
 from src.features.onboarding.domain.entities import OnboardingDocument
 from src.features.onboarding.domain.errors import ManualLockedError
+from src.shared.auth.roles import RoleCode
 from src.features.onboarding.domain.policy import (
     are_all_manuals_acknowledged,
     ensure_manual_unlocked,
@@ -14,6 +15,12 @@ from src.features.onboarding.domain.policy import (
     resolve_step_documents,
     sort_manuals,
 )
+
+
+# La cascada es la del TRABAJADOR. El administrador está exento del orden
+# (`is_exempt_from_sequential_gating`) y tiene su propia clase de tests abajo.
+EMPLEADO = RoleCode.EMPLEADO.value
+ADMIN = RoleCode.ADMINISTRADOR.value
 
 
 def manual(doc_id: str, order: int, title: str = "Manual") -> OnboardingDocument:
@@ -62,26 +69,26 @@ class TestNextManualToAcknowledge:
 
 class TestEnsureManualUnlocked:
     def test_the_first_is_open(self):
-        assert ensure_manual_unlocked(BOTH, set(), "clickup").id == "clickup"
+        assert ensure_manual_unlocked(BOTH, set(), "clickup", EMPLEADO).id == "clickup"
 
     def test_skipping_the_first_is_rejected(self):
         with pytest.raises(ManualLockedError) as error:
-            ensure_manual_unlocked(BOTH, set(), "hincator")
+            ensure_manual_unlocked(BOTH, set(), "hincator", EMPLEADO)
 
         # El mensaje dice QUÉ falta, no solo que está bloqueado.
         assert "ClickUp" in str(error.value)
 
     def test_the_second_opens_once_the_first_is_read(self):
-        assert ensure_manual_unlocked(BOTH, {"clickup"}, "hincator").id == "hincator"
+        assert ensure_manual_unlocked(BOTH, {"clickup"}, "hincator", EMPLEADO).id == "hincator"
 
     def test_reacknowledging_an_already_read_manual_is_allowed(self):
         """Doble clic: la BD tiene UNIQUE (user_id, document_id) y hace upsert."""
-        assert ensure_manual_unlocked(BOTH, {"clickup"}, "clickup").id == "clickup"
+        assert ensure_manual_unlocked(BOTH, {"clickup"}, "clickup", EMPLEADO).id == "clickup"
 
     def test_an_already_read_manual_stays_open_even_if_a_previous_one_is_missing(self):
         """Caso real si RRHH REORDENA los manuales después de que alguien empiece:
         lo que ya se leyó, leído está — no se le puede pedir que lo relea."""
-        assert ensure_manual_unlocked(BOTH, {"hincator"}, "hincator").id == "hincator"
+        assert ensure_manual_unlocked(BOTH, {"hincator"}, "hincator", EMPLEADO).id == "hincator"
 
 
 class TestAreAllManualsAcknowledged:
@@ -104,7 +111,7 @@ class TestAreAllManualsAcknowledged:
 
 class TestResolveStepDocuments:
     def test_only_the_first_is_open_at_the_start(self):
-        resolved = resolve_step_documents(BOTH, set())
+        resolved = resolve_step_documents(BOTH, set(), EMPLEADO)
 
         assert [(d.document.id, d.acknowledged, d.locked) for d in resolved] == [
             ("clickup", False, False),
@@ -112,7 +119,7 @@ class TestResolveStepDocuments:
         ]
 
     def test_reading_the_first_unlocks_the_second(self):
-        resolved = resolve_step_documents(BOTH, {"clickup"})
+        resolved = resolve_step_documents(BOTH, {"clickup"}, EMPLEADO)
 
         assert [(d.document.id, d.acknowledged, d.locked) for d in resolved] == [
             ("clickup", True, False),
@@ -120,7 +127,7 @@ class TestResolveStepDocuments:
         ]
 
     def test_an_acknowledged_manual_is_never_locked(self):
-        resolved = resolve_step_documents(BOTH, {"hincator"})
+        resolved = resolve_step_documents(BOTH, {"hincator"}, EMPLEADO)
         by_id = {d.document.id: d for d in resolved}
 
         assert by_id["hincator"].locked is False
@@ -131,10 +138,10 @@ class TestResolveStepDocuments:
         devuelve el POST salen de la misma regla. Si divergieran, el trabajador
         vería un botón habilitado que responde 422."""
         for acknowledged in [set(), {"clickup"}, {"hincator"}, {"clickup", "hincator"}]:
-            for item in resolve_step_documents(BOTH, acknowledged):
+            for item in resolve_step_documents(BOTH, acknowledged, EMPLEADO):
                 rejected = False
                 try:
-                    ensure_manual_unlocked(BOTH, acknowledged, item.document.id)
+                    ensure_manual_unlocked(BOTH, acknowledged, item.document.id, EMPLEADO)
                 except ManualLockedError:
                     rejected = True
                 assert item.locked == rejected, (

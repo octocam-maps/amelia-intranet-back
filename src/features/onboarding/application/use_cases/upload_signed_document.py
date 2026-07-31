@@ -82,7 +82,7 @@ class UploadSignedOnboardingDocumentUseCase:
         ensure_step_allowed_for_role(step, role)
 
         current = await self._repository.find_progress(user_id, step_id)
-        ensure_step_operable(current)
+        ensure_step_operable(current, role)
 
         # `signature` es uno solo (no hay cascada de plantillas): se toma el
         # primero de la lista, que con `display_order` + `version DESC` es el

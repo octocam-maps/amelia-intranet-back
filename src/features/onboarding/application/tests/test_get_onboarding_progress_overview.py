@@ -154,3 +154,51 @@ async def test_returns_one_row_per_user_regardless_of_progress_state():
     assert {s.user_id for s in summaries} == {"user-1", "user-2"}
     user_2_summary = next(s for s in summaries if s.user_id == "user-2")
     assert user_2_summary.status == "not_started"
+
+
+@pytest.mark.asyncio
+async def test_the_administrator_does_not_appear_in_the_overview():
+    """El administrador está exento del recorrido secuencial, así que su fila
+    diría "0 de 5, pendiente" para siempre: Beatriz persiguiéndose a sí misma en
+    su propia bandeja de seguimiento."""
+    repository = FakeOnboardingRepository(
+        steps=ALL_STEPS,
+        users={
+            "user-1": {"full_name": "Ana", "email": "ana@ameliahub.com", "role": "empleado"},
+            "admin-1": {
+                "full_name": "Beatriz Luna",
+                "email": "people@ameliahub.com",
+                "role": "administrador",
+            },
+        },
+    )
+    use_case = GetOnboardingProgressOverviewUseCase(repository)
+
+    summaries = await use_case.execute()
+
+    assert [s.full_name for s in summaries] == ["Ana"]
+
+
+@pytest.mark.asyncio
+async def test_every_other_role_does_appear():
+    """Regresión de la exclusión de arriba: filtrar al administrador no debe
+    haberse llevado por delante al becario ni al externo, que SÍ hacen el
+    recorrido y a los que RRHH necesita perseguir."""
+    repository = FakeOnboardingRepository(
+        steps=ALL_STEPS,
+        users={
+            "u-emp": {"full_name": "Ana", "email": "ana@ameliahub.com", "role": "empleado"},
+            "u-bec": {"full_name": "Miquel", "email": "miquel@ameliahub.com", "role": "becario"},
+            "u-soc": {"full_name": "David", "email": "david@octocam-maps.com", "role": "socio"},
+            "u-ext": {
+                "full_name": "Diego",
+                "email": "diego@ameliahub.com",
+                "role": "externo_invitado",
+            },
+        },
+    )
+    use_case = GetOnboardingProgressOverviewUseCase(repository)
+
+    summaries = await use_case.execute()
+
+    assert sorted(s.full_name for s in summaries) == ["Ana", "David", "Diego", "Miquel"]

@@ -22,7 +22,11 @@ from typing import Optional
 from src.features.notifications.application.use_cases.notify import NotifyUseCase
 
 from ...domain.entities import OnboardingProgress, OnboardingStep, StepDocument
-from ...domain.policy import resolve_step_documents, steps_applicable_to_role
+from ...domain.policy import (
+    resolve_progress_for_role,
+    resolve_step_documents,
+    steps_applicable_to_role,
+)
 from ...domain.ports import IOnboardingRepository
 
 # Tipos de paso que llevan un documento asociado en `onboarding_documents`:
@@ -84,11 +88,19 @@ class GetMyOnboardingUseCase:
                     else set()
                 )
                 documents_by_kind[kind] = resolve_step_documents(
-                    documents, acknowledged_ids
+                    documents, acknowledged_ids, role
                 )
 
+        # El estado se resuelve por ROL antes de salir: el administrador está
+        # exento del bloqueo secuencial, así que sus pasos `locked` viajan como
+        # `available`. La fila de la BD no se toca — ver
+        # `resolve_status_for_role`.
         return [
-            (step, progress_by_step_id[step.id], documents_by_kind.get(step.type, []))
+            (
+                step,
+                resolve_progress_for_role(progress_by_step_id[step.id], role),
+                documents_by_kind.get(step.type, []),
+            )
             for step in applicable_steps
             if step.id in progress_by_step_id
         ]
