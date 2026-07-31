@@ -29,6 +29,9 @@ from src.features.profile.infrastructure.routes import create_profile_router
 from src.features.roles.infrastructure.routes import create_roles_router
 from src.features.staff.infrastructure.routes import create_staff_router
 from src.features.team.infrastructure.routes import create_team_router
+from src.features.email_templates.infrastructure.routes import (
+    create_email_templates_router,
+)
 from src.features.time_clock.infrastructure.routes import create_time_clock_router
 from src.shared.config import get_settings
 from src.shared.database import get_database_pool
@@ -126,6 +129,7 @@ def create_app() -> FastAPI:
     app.include_router(create_profile_router())
     app.include_router(create_roles_router())
     app.include_router(create_invitations_router())
+    app.include_router(create_email_templates_router())
     logger.info(
         "Routers registered",
         routers=[

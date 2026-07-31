@@ -18,6 +18,7 @@ en el proveedor de festivos.
 """
 
 import html as _html
+import re
 from typing import Any, Optional
 
 import httpx
@@ -25,7 +26,8 @@ import httpx
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 from src.shared.logger import get_logger
 
-from ..domain.entities import EmailResult
+from ..domain.entities import EmailResult, EmailTemplate
+from ..domain.ports import IEmailTemplateProvider
 
 logger = get_logger("shared.email.sendgrid")
 
@@ -147,17 +149,95 @@ def _shell(
     )
 
 
+# Placeholders admitidos en las plantillas editables (`email_templates`,
+# migración 041). LISTA BLANCA a propósito, y no un `format`/Jinja sobre el
+# contexto entero: así el admin no puede filtrar a un correo un dato que ese
+# envío no debía incluir (p. ej. el remitente de un mensaje del buzón anónimo,
+# que es anónimo por diseño).
+#
+# Los VALORES se escapan siempre: el `body_html` lo escribe el admin, pero
+# `full_name` o `job_title` vienen de la BD y no deben poder inyectar markup.
+_ALLOWED_PLACEHOLDERS = (
+    "title",
+    "body",
+    "full_name",
+    "entity_name",
+    "job_title",
+    "url",
+)
+
+_PLACEHOLDER_RE = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+
+
+def render_placeholders(
+    text: str, context: dict[str, Any], *, escape: bool = True
+) -> str:
+    """Sustituye `{{campo}}` por su valor, solo para los campos de la lista
+    blanca.
+
+    `escape=True` (cuerpo HTML) escapa el valor: `full_name` o `job_title` vienen
+    de la BD y no deben poder inyectar markup en el correo.
+
+    `escape=False` es para el ASUNTO, que es texto plano y no HTML: escaparlo ahí
+    haría que un apellido con `&` llegara como `&amp;` a la bandeja de entrada.
+
+    Un placeholder desconocido (o de un campo que este envío no trae) se deja
+    LITERAL en vez de vaciarse: un hueco silencioso convierte "Hola {{nombe}},"
+    en "Hola ," y nadie sabe por qué; dejándolo visible, el admin ve su errata en
+    la previsualización y la corrige. Nunca revienta el envío.
+    """
+
+    def _replace(match: re.Match) -> str:
+        name = match.group(1)
+        if name not in _ALLOWED_PLACEHOLDERS:
+            logger.warning("Unknown email placeholder", placeholder=name)
+            return match.group(0)
+        value = context.get(name)
+        if value is None:
+            return match.group(0)
+        return _html.escape(str(value)) if escape else str(value)
+
+    return _PLACEHOLDER_RE.sub(_replace, text)
+
+
 def render_email(
-    template: str, context: dict[str, Any], *, frontend_url: str
+    template: str,
+    context: dict[str, Any],
+    *,
+    frontend_url: str,
+    override: Optional[EmailTemplate] = None,
 ) -> tuple[str, str]:
     """Función PURA: `(template, context) -> (asunto, html)`. Sin red ni SQL.
 
-    Dos familias de plantilla:
+    `override` es la plantilla que el admin haya guardado (`email_templates`,
+    migración 041) YA LEÍDA por quien llama — este módulo no consulta la BD. Es
+    la razón de que sea un parámetro y no un SELECT aquí dentro: la promesa de
+    "sin red ni SQL" es lo que hace testeable toda la capa de render, y romperla
+    para ahorrar una indirección habría salido caro.
+
+    Sin `override` (o con la plantilla desactivada), se usan los textos por
+    defecto de más abajo:
     - `staff_invited` (alta/reenvío de plantilla): trae `full_name` +
       `frontend_url` en el contexto, no `title`/`body`.
     - resto: todo lo que pasa por `NotifyUseCase` trae `title`/`body` (el
       `template` coincide 1:1 con el `type` de la notificación in-app).
     """
+    if override is not None and override.is_active:
+        # El asunto va SIN escapar: es texto plano, no HTML.
+        subject = render_placeholders(override.subject, context, escape=False)
+        body_html = render_placeholders(override.body_html, context)
+        # El MARCO no se toca: `_shell` sigue poniendo logo, CTA y pie. El admin
+        # edita el mensaje, no el envoltorio.
+        cta_url = _cta_url(frontend_url, str(context.get("url") or ""))
+        return subject, _shell(
+            subject,
+            body_html,
+            cta_url,
+            "Ver en la intranet",
+            logo_url=_logo_url(frontend_url),
+            preheader=subject,
+        )
+
     if template == "staff_invited":
         full_name = str(context.get("full_name") or "").strip()
         login_url = str(context.get("frontend_url") or frontend_url)
@@ -214,6 +294,7 @@ class SendGridEmailSender:
         frontend_url: str,
         *,
         transport: Optional[httpx.BaseTransport] = None,
+        template_provider: Optional[IEmailTemplateProvider] = None,
     ):
         # Falla al construir (no al enviar) si falta la key — así el error salta
         # al arrancar la app con `EMAIL_PROVIDER=sendgrid` mal configurado, no
@@ -227,6 +308,10 @@ class SendGridEmailSender:
         self._db = db_pool
         self._frontend_url = frontend_url
         self._transport = transport  # inyectable solo en tests (httpx.MockTransport)
+        # Plantillas editables por el admin (migración 041). Opcional: sin él, el
+        # sender usa los textos por defecto del código, que es exactamente el
+        # comportamiento anterior a esa migración.
+        self._template_provider = template_provider
 
     async def send(
         self,
@@ -236,7 +321,14 @@ class SendGridEmailSender:
         context: dict[str, Any],
         user_id: Optional[str] = None,
     ) -> EmailResult:
-        subject, body_html = render_email(template, context, frontend_url=self._frontend_url)
+        override = (
+            await self._template_provider.get(template)
+            if self._template_provider is not None
+            else None
+        )
+        subject, body_html = render_email(
+            template, context, frontend_url=self._frontend_url, override=override
+        )
         payload = {
             "personalizations": [{"to": [{"email": to}]}],
             "from": {"email": self._from_email},
