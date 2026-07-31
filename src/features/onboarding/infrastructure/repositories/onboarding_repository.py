@@ -74,6 +74,7 @@ def _row_to_document(row) -> OnboardingDocument:
         storage_ref=row["storage_ref"],
         is_active=row["is_active"],
         display_order=row["display_order"],
+        requires_acknowledgement=row["requires_acknowledgement"],
     )
 
 
@@ -327,13 +328,31 @@ class PostgresOnboardingRepository(IOnboardingRepository):
         # paso 3) y `version DESC` como desempate, que era el criterio único
         # antes de la 040 — así un documento con dos versiones activas sigue
         # devolviendo la más nueva primero.
+        # `requires_acknowledgement = TRUE`: esto alimenta la CASCADA del paso 3,
+        # no la biblioteca. Sin este filtro, el manual de uso de la intranet
+        # (migración 043) aparecería como un cuarto paso obligatorio que nadie
+        # pidió leer. La biblioteca completa la sirve `list_manuals_library`.
         rows = await self._db.fetch(
             """
             SELECT * FROM onboarding_documents
-            WHERE kind = $1 AND is_active = TRUE
+            WHERE kind = $1 AND is_active = TRUE AND requires_acknowledgement = TRUE
             ORDER BY display_order ASC, version DESC
             """,
             kind,
+        )
+        return [_row_to_document(row) for row in rows]
+
+    async def list_manuals_library(self) -> list[OnboardingDocument]:
+        # TODOS los manuales activos, obligatorios o no: la biblioteca es un
+        # superconjunto del paso 3. Los obligatorios primero (así el orden refleja
+        # "lo que tienes que leer" antes que "lo que puedes consultar") y dentro de
+        # cada grupo por `display_order`.
+        rows = await self._db.fetch(
+            """
+            SELECT * FROM onboarding_documents
+            WHERE kind = 'manual' AND is_active = TRUE
+            ORDER BY requires_acknowledgement DESC, display_order ASC, version DESC
+            """
         )
         return [_row_to_document(row) for row in rows]
 

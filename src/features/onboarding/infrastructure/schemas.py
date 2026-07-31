@@ -227,3 +227,21 @@ class AcknowledgeManualDTO(BaseModel):
     que podía significar entonces."""
 
     document_id: Optional[str] = None
+
+
+class ManualDTO(BaseModel):
+    """Un manual de la biblioteca (`GET /manuals`)."""
+
+    id: str
+    title: str
+    version: int
+    url: Optional[str]
+    # `True` = es uno de los que hay que confirmar en el paso 3 del onboarding.
+    # El cliente lo usa para separar "lectura obligatoria" de "consulta".
+    required_in_onboarding: bool
+    # Si ESTE usuario ya confirmó su lectura. Nadie ve el progreso de otro aquí.
+    acknowledged: bool
+
+
+class ManualsLibraryDTO(BaseModel):
+    manuals: list[ManualDTO]

@@ -17,6 +17,7 @@ from ..application.use_cases.get_my_onboarding import GetMyOnboardingUseCase
 from ..application.use_cases.get_onboarding_progress_overview import (
     GetOnboardingProgressOverviewUseCase,
 )
+from ..application.use_cases.list_manuals_library import ListManualsLibraryUseCase
 from ..application.use_cases.list_onboarding_steps_admin import (
     ListOnboardingStepsForAdminUseCase,
 )
@@ -79,3 +80,7 @@ def get_onboarding_progress_overview_use_case() -> GetOnboardingProgressOverview
 
 def get_reset_quiz_attempt_use_case() -> ResetQuizAttemptUseCase:
     return ResetQuizAttemptUseCase(_get_repository())
+
+
+def get_list_manuals_library_use_case() -> ListManualsLibraryUseCase:
+    return ListManualsLibraryUseCase(_get_repository())

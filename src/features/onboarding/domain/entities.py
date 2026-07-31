@@ -89,6 +89,13 @@ class OnboardingDocument:
     # Default a propósito, para no romper los tests y fakes que construyen
     # documentos sin orden — ahí el orden no es lo que se está probando.
     display_order: int = 1
+    # `True` = hay que confirmar su lectura para completar el paso 3 (entra en la
+    # cascada). `False` = solo está en la biblioteca de consulta (migración 043).
+    #
+    # La biblioteca es un SUPERCONJUNTO del paso: el manual de uso de la intranet
+    # se consulta pero no se exige leer, y meterlo en la cascada habría alargado el
+    # onboarding con un manual que nadie pidió.
+    requires_acknowledgement: bool = True
 
 
 @dataclass(frozen=True)

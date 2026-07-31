@@ -135,3 +135,20 @@ CLICKUP_MANUAL_DOCUMENT = OnboardingDocument(
 
 # Los dos manuales en orden de cascada, para los tests que la ejercitan.
 MANUAL_DOCUMENTS = [CLICKUP_MANUAL_DOCUMENT, MANUAL_DOCUMENT]
+
+# Manual de CONSULTA (migración 043): está en la biblioteca pero NO en la cascada
+# del paso 3 — se consulta sin tener que confirmar su lectura.
+LIBRARY_MANUAL_DOCUMENT = OnboardingDocument(
+    id="doc-manual-intranet",
+    kind="manual",
+    title="Manual de uso de la intranet",
+    version=1,
+    content_hash="48b3ba6060556f6449ccc0fa036f2a6c77db50c6fa9d06e4d32779ebba5b9787",
+    storage_ref="/manuales/manual-de-uso-intranet.pdf",
+    is_active=True,
+    display_order=3,
+    requires_acknowledgement=False,
+)
+
+# La biblioteca completa: los dos obligatorios + el de consulta.
+ALL_MANUALS = [*MANUAL_DOCUMENTS, LIBRARY_MANUAL_DOCUMENT]

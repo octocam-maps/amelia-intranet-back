@@ -131,6 +131,15 @@ class IOnboardingRepository(Protocol):
         misma tabla."""
         ...
 
+    async def list_manuals_library(self) -> list[OnboardingDocument]:
+        """TODOS los manuales activos, obligatorios o no — la biblioteca de
+        consulta (migración 043).
+
+        Distinto de `find_active_documents('manual')`, que solo devuelve los de la
+        CASCADA del paso 3. La biblioteca es un superconjunto: incluye el manual de
+        uso de la intranet, que se consulta pero no se exige leer."""
+        ...
+
     async def list_acknowledged_document_ids(self, user_id: str, kind: str) -> set[str]:
         """Ids de documentos de ese `kind` que este usuario YA confirmó
         (`document_acknowledgements`). Devuelve un `set` porque quien lo consume

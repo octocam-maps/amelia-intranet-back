@@ -24,6 +24,7 @@ from src.features.holidays.infrastructure.routes import create_holidays_router
 from src.features.invitations.infrastructure.routes import create_invitations_router
 from src.features.mailbox.infrastructure.routes import create_mailbox_router
 from src.features.notifications.infrastructure.routes import create_notifications_router
+from src.features.onboarding.infrastructure.manuals_routes import create_manuals_router
 from src.features.onboarding.infrastructure.routes import create_onboarding_router
 from src.features.profile.infrastructure.routes import create_profile_router
 from src.features.roles.infrastructure.routes import create_roles_router
@@ -130,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(create_roles_router())
     app.include_router(create_invitations_router())
     app.include_router(create_email_templates_router())
+    app.include_router(create_manuals_router())
     logger.info(
         "Routers registered",
         routers=[

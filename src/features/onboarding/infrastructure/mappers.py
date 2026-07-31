@@ -12,6 +12,8 @@ from ..domain.entities import (
 )
 from .schemas import (
     AcknowledgementDTO,
+    ManualDTO,
+    ManualsLibraryDTO,
     AdminStepDTO,
     AdminStepListDTO,
     EmployeeOnboardingSummaryDTO,
@@ -200,4 +202,25 @@ def progress_overview_to_dto(
 ) -> OnboardingProgressOverviewDTO:
     return OnboardingProgressOverviewDTO(
         employees=[employee_summary_to_dto(summary) for summary in summaries]
+    )
+
+
+def manuals_library_to_dto(
+    manuals: list[tuple[OnboardingDocument, bool]],
+) -> ManualsLibraryDTO:
+    """`content_hash` NO se expone, igual que en el resto de los DTO de documento:
+    es el registro de integridad interno (RNF2.2), no algo que el cliente
+    necesite."""
+    return ManualsLibraryDTO(
+        manuals=[
+            ManualDTO(
+                id=document.id,
+                title=document.title,
+                version=document.version,
+                url=document.storage_ref,
+                required_in_onboarding=document.requires_acknowledgement,
+                acknowledged=acknowledged,
+            )
+            for document, acknowledged in manuals
+        ]
     )

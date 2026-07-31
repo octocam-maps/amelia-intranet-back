@@ -208,12 +208,26 @@ class FakeOnboardingRepository:
         return updated
 
     async def find_active_documents(self, kind: str) -> list[OnboardingDocument]:
-        # Mismo orden que `PostgresOnboardingRepository`: `display_order` ASC
-        # (la cascada de la 040) y `version` DESC como desempate.
+        # Mismo orden y mismo FILTRO que `PostgresOnboardingRepository`: solo los
+        # de la cascada (`requires_acknowledgement`, migración 043) — si el fake
+        # devolviera también los de biblioteca, los tests del paso 3 medirían una
+        # cascada más larga de la real.
         candidates = [
-            d for d in self.documents.values() if d.kind == kind and d.is_active
+            d
+            for d in self.documents.values()
+            if d.kind == kind and d.is_active and d.requires_acknowledgement
         ]
         return sorted(candidates, key=lambda d: (d.display_order, -d.version))
+
+    async def list_manuals_library(self) -> list[OnboardingDocument]:
+        candidates = [
+            d for d in self.documents.values() if d.kind == "manual" and d.is_active
+        ]
+        # Obligatorios primero, igual que el repositorio real.
+        return sorted(
+            candidates,
+            key=lambda d: (not d.requires_acknowledgement, d.display_order, -d.version),
+        )
 
     async def list_acknowledged_document_ids(self, user_id: str, kind: str) -> set[str]:
         return {
