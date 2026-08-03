@@ -74,6 +74,15 @@ class Settings:
 
         self.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
 
+        # Verificador del id_token de Google: "google" (default) valida firma
+        # real contra el JWKS de Google; "fake" acepta un id_token sintético
+        # SIN firma para poder automatizar los E2E de Playwright, donde
+        # conducir el login real de Google es imposible (2FA, detección de
+        # bots). Mismo patrón que EMAIL_PROVIDER/DRIVE_PROVIDER, pero este
+        # sustituye el control de acceso completo: `_enforce_secure_defaults`
+        # ABORTA el arranque si no es "google" en prod/stage.
+        self.google_oidc_provider = os.getenv("GOOGLE_OIDC_PROVIDER", "google")
+
         # Dominios de Google Workspace considerados "internos" — determinan
         # quién puede auto-provisionarse como `empleado` sin invitación (ver
         # LoginWithGoogleUseCase e IGoogleIdentityVerifier.is_internal). CSV
@@ -190,6 +199,23 @@ class Settings:
         olvidado en el despliegue no debe convertir un error de configuración
         en una brecha. Se acumulan TODOS los problemas para reportarlos juntos,
         no solo el primero."""
+        # Este chequeo NO depende de ENVIRONMENT a propósito. El guard de
+        # abajo confía en que el despliegue exporte ENVIRONMENT=prod; si
+        # alguien lo olvida, el default es "dev" y todo lo demás se relaja en
+        # silencio. Para el bypass de autenticación eso no es tolerable, así
+        # que se cruza con una segunda señal que sí delata un despliegue real:
+        # la cookie de refresh marcada Secure (es decir, se sirve por HTTPS).
+        # Un entorno local en HTTP nunca la lleva — si la lleva, esto no es
+        # local, diga lo que diga ENVIRONMENT.
+        if self.google_oidc_provider != "google" and self.refresh_token_cookie_secure:
+            raise RuntimeError(
+                f"GOOGLE_OIDC_PROVIDER='{self.google_oidc_provider}' junto con "
+                "REFRESH_TOKEN_COOKIE_SECURE=true: se estaría sirviendo por "
+                "HTTPS con la verificación del id_token de Google desactivada. "
+                "El verificador falso es EXCLUSIVAMENTE para desarrollo y E2E "
+                "en local."
+            )
+
         if self.environment not in _SECURE_ENVIRONMENTS:
             return
 
@@ -227,6 +253,18 @@ class Settings:
                 "CORS_ORIGINS incluye '*' junto con allow_credentials=True: "
                 "cualquier origen podría hacer peticiones autenticadas con "
                 "la cookie de refresh."
+            )
+
+        # GOOGLE_OIDC_PROVIDER != "google" desactiva la verificación de firma
+        # del id_token: cualquiera podría hacer POST /auth/login con un token
+        # sintético que declare el email del administrador. No es un default
+        # inseguro más — es la puerta de entrada sin cerradura.
+        if self.google_oidc_provider != "google":
+            problems.append(
+                f"GOOGLE_OIDC_PROVIDER='{self.google_oidc_provider}': el "
+                "id_token de Google no se verificaría contra Google. "
+                "Cualquiera podría iniciar sesión como cualquier usuario. "
+                "Solo se admite 'google' fuera de dev/test."
             )
 
         if problems:

@@ -95,13 +95,3 @@ class GoogleOIDCVerifier:
             avatar_url=payload.get("picture"),
             hosted_domain=payload.get("hd"),
         )
-
-
-_verifier_instance: Optional[GoogleOIDCVerifier] = None
-
-
-def get_google_oidc_verifier() -> GoogleOIDCVerifier:
-    global _verifier_instance
-    if _verifier_instance is None:
-        _verifier_instance = GoogleOIDCVerifier()
-    return _verifier_instance

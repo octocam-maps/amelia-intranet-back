@@ -37,6 +37,11 @@ class _ScopedLogger:
     def debug(self, message: str, **kwargs: Any) -> None:
         self._logger.bind(**kwargs).debug(message)
 
+    def critical(self, message: str, **kwargs: Any) -> None:
+        """Reservado para lo que, si aparece en un entorno desplegado, es un
+        incidente — no un aviso. Hoy lo usa el verificador OIDC falso."""
+        self._logger.bind(**kwargs).critical(message)
+
 
 def get_logger(name: str) -> _ScopedLogger:
     _configure_once()
