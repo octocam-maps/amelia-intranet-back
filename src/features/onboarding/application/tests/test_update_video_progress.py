@@ -265,3 +265,91 @@ async def test_wrong_step_type_is_rejected():
         await use_case.execute(
             user_id="user-1", role="empleado", step_id=QUIZ_STEP.id, new_pct=10
         )
+
+
+# --- Exención de ritmo del administrador (2026-08-03) ---------------------
+#
+# Las tres validaciones de ritmo se saltan JUNTAS para el administrador. Cada
+# test aísla una: si mañana alguien relaja solo una de las tres, los otros dos
+# fallan y señalan cuál falta.
+
+
+@pytest.mark.asyncio
+async def test_admin_can_rewind_the_video():
+    """Retroceder es el caso que el empleado tiene explícitamente prohibido
+    ("El progreso del vídeo no puede retroceder")."""
+    repository = _repository_with_available_video()
+    _push_started_at_into_the_past(
+        repository, "user-1", VIDEO_STEP.id, _VIDEO_DURATION
+    )
+    use_case = UpdateVideoProgressUseCase(repository)
+    await use_case.execute(
+        user_id="user-1", role="administrador", step_id=VIDEO_STEP.id, new_pct=60
+    )
+
+    progress = await use_case.execute(
+        user_id="user-1", role="administrador", step_id=VIDEO_STEP.id, new_pct=20
+    )
+
+    # Rebobinar NO borra lo ya alcanzado: se persiste el máximo.
+    assert progress.progress_pct == 60
+
+
+@pytest.mark.asyncio
+async def test_admin_can_jump_beyond_the_max_jump():
+    """0 -> 100 de un golpe: el caso que el requerimiento cita como el intento
+    de salto a rechazar, y que para el administrador es sencillamente adelantar
+    la barra hasta el final."""
+    repository = _repository_with_available_video()
+    use_case = UpdateVideoProgressUseCase(repository)
+
+    progress = await use_case.execute(
+        user_id="user-1", role="administrador", step_id=VIDEO_STEP.id, new_pct=100
+    )
+
+    assert progress.progress_pct == 100
+    assert progress.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_admin_progress_is_not_checked_against_elapsed_time():
+    """Sin dejar pasar tiempo real: `started_at` se queda donde está y se
+    reporta un avance que a un empleado le rechazaría el techo temporal."""
+    repository = _repository_with_available_video()
+    use_case = UpdateVideoProgressUseCase(repository)
+    await use_case.execute(
+        user_id="user-1", role="administrador", step_id=VIDEO_STEP.id, new_pct=10
+    )
+
+    progress = await use_case.execute(
+        user_id="user-1", role="administrador", step_id=VIDEO_STEP.id, new_pct=95
+    )
+
+    assert progress.progress_pct == 95
+
+
+@pytest.mark.asyncio
+async def test_employee_is_still_bound_by_all_three_rules():
+    """La contraparte: lo que el administrador puede hacer, el empleado no.
+    Sin esto la exención podría estar abriendo el candado para todos."""
+    repository = _repository_with_available_video()
+    use_case = UpdateVideoProgressUseCase(repository)
+
+    # 1. Salto máximo por reporte.
+    with pytest.raises(InvalidVideoProgressError):
+        await use_case.execute(
+            user_id="user-1", role="empleado", step_id=VIDEO_STEP.id, new_pct=100
+        )
+
+    _push_started_at_into_the_past(
+        repository, "user-1", VIDEO_STEP.id, _VIDEO_DURATION
+    )
+    await use_case.execute(
+        user_id="user-1", role="empleado", step_id=VIDEO_STEP.id, new_pct=25
+    )
+
+    # 2. Retroceso.
+    with pytest.raises(InvalidVideoProgressError):
+        await use_case.execute(
+            user_id="user-1", role="empleado", step_id=VIDEO_STEP.id, new_pct=10
+        )
