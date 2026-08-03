@@ -1,7 +1,9 @@
 """Caso de uso: editar una persona de la plantilla — puesto, departamento,
-entidad, rol, override de vacaciones/año y estado (activo/suspendido).
+entidad, rol, fecha de alta, override de vacaciones/año y estado
+(activo/suspendido).
 Actualización parcial: solo se tocan los campos que llegan informados."""
 
+from datetime import date
 from typing import Any, Optional
 
 from src.shared.auth.roles import RoleCode
@@ -46,6 +48,24 @@ class UpdateStaffMemberUseCase:
         role_code: Optional[str] = None,
         vacation_days_override: Optional[float] = _NOT_SET,  # type: ignore[assignment]
         is_active: Optional[bool] = None,
+        # La fecha de alta DEJA DE SER INMUTABLE (decisión del team-lead,
+        # 2026-08-03). Antes solo podía fijarse al crear a la persona, y el
+        # formulario de edición la mostraba deshabilitada.
+        #
+        # POR QUÉ CAMBIA: quien se sembró por migración antes de que existiera
+        # la columna (`007_seed_initial_admin.sql`, la columna llegó en la
+        # `015`) se quedó con `hire_date` NULL y sin forma de rellenarla. Y con
+        # `hire_date` NULL el entitlement de vacaciones es 0 días
+        # (`FALLBACK_DAYS_WHEN_HIRE_DATE_UNKNOWN`), así que esas personas —el
+        # administrador entre ellas— no pueden solicitar ni un día. La
+        # inmutabilidad protegía la antigüedad de un cambio accidental, pero
+        # dejaba sin salida a quien nunca la tuvo.
+        #
+        # NO SE PUEDE VACIAR, solo fijar: `None` significa "no tocar", nunca
+        # "borrar la fecha". Vaciarla devolvería el saldo a 0 y tiraría la
+        # antigüedad; corregir una fecha mal puesta se hace escribiendo otra.
+        # Por eso aquí NO hay sentinela `_NOT_SET` como en el override.
+        hire_date: Optional[date] = None,
         changed_by: Optional[str] = None,
     ) -> StaffMember:
         member = await self._repository.find_by_id(user_id)
@@ -125,6 +145,7 @@ class UpdateStaffMemberUseCase:
             vacation_days_override=effective_override,
             clear_vacation_days_override=clear_vacation_days_override,
             status=status,
+            hire_date=hire_date,
             changed_by=changed_by,
         )
         if updated is None:

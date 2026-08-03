@@ -92,6 +92,9 @@ def create_staff_router() -> APIRouter:
             "entity_code": dto.entity,
             "role_code": dto.role,
             "is_active": dto.is_active,
+            # Sin sentinela: `None` = no tocar. La fecha de alta se puede
+            # fijar y corregir, pero no vaciar — ver `UpdateStaffMemberUseCase`.
+            "hire_date": dto.hire_date,
             # Autor de la traza de `user_role_history` (039) cuando esta
             # petición cambie el rol.
             "changed_by": current_user["sub"],

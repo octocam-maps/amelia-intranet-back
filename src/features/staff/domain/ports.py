@@ -85,6 +85,9 @@ class IStaffRepository(Protocol):
         status: Optional[str],
         contract_type: Optional[str] = None,
         clear_contract_type: bool = False,
+        # Editable desde el 2026-08-03 — ver `UpdateStaffMemberUseCase`. Solo
+        # admite FIJAR una fecha; `None` = no tocar, nunca "vaciar".
+        hire_date: Optional[date] = None,
         # Autor del cambio, para la traza de `user_role_history` (039). Opcional
         # porque solo se registra cuando el rol cambia de verdad; `None` deja la
         # fila con autor "no consta" en vez de rechazar el cambio.
