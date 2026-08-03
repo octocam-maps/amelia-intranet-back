@@ -315,3 +315,81 @@ async def test_reassigning_the_same_role_does_not_revoke_sessions():
     await use_case.execute(member.id, role_code="empleado", changed_by="admin-1")
 
     assert session_revoker.revoked_user_ids == []
+
+
+# --- Fecha de alta editable (2026-08-03) ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_setting_hire_date_recomputes_the_vacation_entitlement():
+    """EL CASO QUE MOTIVÓ EL CAMBIO: quien se sembró sin `hire_date` tenía 0
+    días de vacaciones y ninguna forma de arreglarlo — no podía solicitar ni un
+    día. Rellenar la fecha tiene que recalcular el saldo, no solo guardarla."""
+    repository = FakeStaffRepository()
+    member = await build_create_staff_member_use_case(repository).execute(
+        full_name="Beatriz Luna",
+        email="people@ameliahub.com",
+        job_title="People Manager",
+        department=None,
+        entity_code="hub",
+        role_code="administrador",
+        hire_date=None,  # sembrada por migración antes de existir la columna
+        vacation_days_override=None,
+        invited_by=_DEFAULT_INVITED_BY,
+    )
+    assert member.vacation_days_per_year == 0  # el bug, antes del arreglo
+    use_case = UpdateStaffMemberUseCase(repository)
+
+    updated = await use_case.execute(member.id, hire_date=date(2020, 1, 1))
+
+    assert updated.hire_date == date(2020, 1, 1)
+    assert updated.vacation_days_per_year == 20
+
+
+@pytest.mark.asyncio
+async def test_not_passing_hire_date_leaves_it_untouched():
+    """`None` = "no informado" = no tocar. Editar el puesto no puede borrar la
+    antigüedad de nadie — es justo lo que protegía la inmutabilidad."""
+    repository = FakeStaffRepository()
+    member = await build_create_staff_member_use_case(repository).execute(
+        full_name="Marc Roig",
+        email="marc@ameliahub.com",
+        job_title="Backend",
+        department=None,
+        entity_code="hub",
+        role_code="empleado",
+        hire_date=date(2020, 1, 1),
+        vacation_days_override=None,
+        invited_by=_DEFAULT_INVITED_BY,
+    )
+    use_case = UpdateStaffMemberUseCase(repository)
+
+    updated = await use_case.execute(member.id, job_title="Senior Backend")
+
+    assert updated.hire_date == date(2020, 1, 1)
+    assert updated.vacation_days_per_year == 20
+
+
+@pytest.mark.asyncio
+async def test_a_manual_override_still_wins_over_the_new_hire_date():
+    """Corregir la fecha de alta de alguien con override manual NO le pisa el
+    override: `resolve_vacation_entitlement_days` da prioridad al override, y
+    ese orden no cambia porque ahora la fecha sea editable."""
+    repository = FakeStaffRepository()
+    member = await build_create_staff_member_use_case(repository).execute(
+        full_name="Marc Roig",
+        email="marc@ameliahub.com",
+        job_title="Backend",
+        department=None,
+        entity_code="hub",
+        role_code="empleado",
+        hire_date=None,
+        vacation_days_override=12,
+        invited_by=_DEFAULT_INVITED_BY,
+    )
+    use_case = UpdateStaffMemberUseCase(repository)
+
+    updated = await use_case.execute(member.id, hire_date=date(2020, 1, 1))
+
+    assert updated.hire_date == date(2020, 1, 1)
+    assert updated.vacation_days_per_year == 12

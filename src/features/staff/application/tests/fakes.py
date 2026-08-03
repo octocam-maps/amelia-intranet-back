@@ -210,6 +210,7 @@ class FakeStaffRepository:
         vacation_days_override,
         clear_vacation_days_override,
         status,
+        hire_date=None,
         changed_by=None,
     ) -> Optional[StaffMember]:
         existing = self.members.get(user_id)
@@ -246,14 +247,23 @@ class FakeStaffRepository:
         else:
             new_override = existing.vacation_days_override
 
-        override_touched = clear_vacation_days_override or vacation_days_override is not None
-        new_hire_date = existing.hire_date
+        # `hire_date`: COALESCE, igual que el repositorio real — `None` deja la
+        # que estaba, nunca la vacía.
+        new_hire_date = hire_date if hire_date is not None else existing.hire_date
+
+        # El saldo se recalcula si cambió algo de lo que depende: el override o
+        # la fecha de alta.
+        entitlement_touched = (
+            clear_vacation_days_override
+            or vacation_days_override is not None
+            or hire_date is not None
+        )
         year = _current_year()
         new_vacation_days_per_year = (
             resolve_vacation_entitlement_days(
                 hire_date=new_hire_date, vacation_days_override=new_override, year=year
             )
-            if override_touched
+            if entitlement_touched
             else existing.vacation_days_per_year
         )
 
@@ -270,6 +280,7 @@ class FakeStaffRepository:
             entity_code=entity_code,
             role_id=role_id if role_id is not None else existing.role_id,
             role_code=role_code,
+            hire_date=new_hire_date,
             vacation_days_override=new_override,
             vacation_days_per_year=new_vacation_days_per_year,
             status=status if status is not None else existing.status,

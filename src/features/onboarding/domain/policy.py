@@ -65,6 +65,36 @@ def is_exempt_from_sequential_gating(role: str) -> bool:
     responde 422 — o peor, uno cerrado que en realidad podía operar."""
     return role in _ROLES_EXEMPT_FROM_SEQUENTIAL_GATING
 
+
+# El ADMINISTRADOR tampoco está sujeto al RITMO del vídeo del paso 1 (decisión
+# del team-lead, 2026-08-03): puede adelantar y retroceder libremente.
+#
+# OTRO EJE, OTRO PREDICADO. `_ROLES_EXEMPT_FROM_SEQUENTIAL_GATING` gobierna el
+# orden ENTRE pasos; esto gobierna el ritmo DENTRO de uno. Hoy el conjunto de
+# roles coincide y fundirlos ahorraría tres líneas, pero dejaría de poderse
+# exentar a un rol de uno sin exentarlo del otro — y son decisiones de producto
+# independientes: "puede revisar los pasos en el orden que quiera" no implica
+# "puede saltarse el vídeo".
+#
+# POR QUÉ: la exención de orden no bastaba. El administrador entra al paso 1 a
+# revisar QUÉ vídeo ve la plantilla, no a verlo; obligarle a los 96 segundos en
+# tiempo real cada vez que quiere comprobar el contenido es el mismo bug que se
+# arregló el 2026-07-31, sin resolver.
+_ROLES_EXEMPT_FROM_VIDEO_PACING = frozenset({RoleCode.ADMINISTRADOR})
+
+
+def is_exempt_from_video_pacing(role: str) -> bool:
+    """Exime de las TRES validaciones de ritmo del vídeo (no retroceder, salto
+    máximo por reporte, y progreso acorde al tiempo real transcurrido).
+
+    Las tres juntas o ninguna: relajar solo una deja las otras dos rechazando
+    el mismo seek, que es exactamente el "paso abierto que responde 422" que
+    `is_exempt_from_sequential_gating` documenta como el fallo a evitar.
+
+    NO exime de `ensure_step_operable`: un paso ya `completed` sigue sin
+    reabrirse, tampoco para el administrador."""
+    return role in _ROLES_EXEMPT_FROM_VIDEO_PACING
+
 # Salto máximo (en puntos de `progress_pct`) que se admite entre dos reportes
 # consecutivos del vídeo del paso 1. Cualquier salto mayor —incluido el caso
 # explícito del requerimiento, 0 -> 100 de golpe— se rechaza como intento de

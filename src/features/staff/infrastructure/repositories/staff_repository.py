@@ -265,6 +265,7 @@ class PostgresStaffRepository(IStaffRepository):
         status: Optional[str],
         contract_type: Optional[str] = None,
         clear_contract_type: bool = False,
+        hire_date: Optional[date] = None,
         changed_by: Optional[str] = None,
     ) -> Optional[StaffMember]:
         async with self._db.acquire() as connection:
@@ -309,6 +310,7 @@ class PostgresStaffRepository(IStaffRepository):
                             WHEN $10 THEN NULL
                             ELSE COALESCE($11, contract_type)
                         END,
+                        hire_date = COALESCE($12, hire_date),
                         updated_at = CURRENT_TIMESTAMP
                     FROM (
                         SELECT role_id AS previous_role_id FROM users WHERE id = $1
@@ -328,6 +330,7 @@ class PostgresStaffRepository(IStaffRepository):
                     vacation_days_override,
                     clear_contract_type,
                     contract_type,
+                    hire_date,
                 )
                 if row is None:
                     return None
@@ -351,11 +354,23 @@ class PostgresStaffRepository(IStaffRepository):
                         changed_by,
                     )
 
-                # Solo se recalcula/reescribe el saldo cuando el override
-                # realmente cambió esta petición (se fijó o se vació) — una
-                # edición no relacionada (p. ej. solo el puesto) no debe
-                # tocar `absence_balances` de rebote.
-                if clear_vacation_days_override or vacation_days_override is not None:
+                # Solo se recalcula/reescribe el saldo cuando cambió algo de lo
+                # que DEPENDE el entitlement en esta misma petición: el override
+                # (fijado o vaciado) o la fecha de alta. Una edición no
+                # relacionada (p. ej. solo el puesto) no debe tocar
+                # `absence_balances` de rebote.
+                #
+                # `hire_date` entra aquí desde el 2026-08-03, y no es opcional:
+                # `get_or_create_balance` calcula el entitlement UNA VEZ, al
+                # crear la fila (su `ON CONFLICT` es un no-op deliberado). Sin
+                # este recálculo, rellenar la fecha de alta de quien la tenía
+                # vacía guardaría la fecha y dejaría el saldo en los 0 días con
+                # que nació — el PATCH respondería 200 sin arreglar nada.
+                if (
+                    clear_vacation_days_override
+                    or vacation_days_override is not None
+                    or hire_date is not None
+                ):
                     new_override = (
                         float(row["vacation_days_override"])
                         if row["vacation_days_override"] is not None

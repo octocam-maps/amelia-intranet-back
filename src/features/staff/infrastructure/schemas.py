@@ -87,6 +87,10 @@ class UpdateStaffMemberDTO(BaseModel):
     # patrón que `holidays.entity`) — `Optional[float] = None` por sí solo
     # no puede.
     vacation_days_override: Optional[float] = Field(None, ge=0)
+    # Editable desde el 2026-08-03 (antes solo se fijaba al crear). A
+    # diferencia del override, aquí `null` NO vacía: significa "no tocar". Ver
+    # `UpdateStaffMemberUseCase` para el porqué.
+    hire_date: Optional[date] = None
     is_active: Optional[bool] = None
 
 

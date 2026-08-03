@@ -594,3 +594,75 @@ async def test_update_staff_member_captures_the_previous_role_in_the_same_statem
     update_query = connection.fetchrow.call_args[0][0]
     assert "previous_role_id" in update_query
     assert "RETURNING" in update_query
+
+
+@pytest.mark.asyncio
+async def test_update_staff_member_setting_hire_date_recomputes_balance():
+    """La fecha de alta pasó a editable (2026-08-03). Este test cubre el aviso
+    que el propio SQL lleva escrito: un campo nuevo tiene que estar en los TRES
+    sitios (firma, `SET` y lista de parámetros). `contract_type` ya estuvo en la
+    firma sin estar en el `SET` y el PATCH respondía 200 sin guardar nada."""
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "role_id": "role-1",
+        "previous_role_id": "role-1",
+        # El RETURNING trae la fecha YA actualizada — sobre ella se recalcula.
+        "hire_date": date(2020, 1, 1),
+        "vacation_days_override": None,
+    }
+    pool = _FakePool(connection)
+    pool.fetchrow.return_value = _row()
+    repository = PostgresStaffRepository(pool)
+
+    await repository.update_staff_member(
+        "user-1",
+        job_title=None,
+        department_id=None,
+        entity_id=None,
+        role_id=None,
+        is_external=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=False,
+        status=None,
+        hire_date=date(2020, 1, 1),
+    )
+
+    update_query, *update_args = connection.fetchrow.call_args[0]
+    # En el SET, y como parámetro $12.
+    assert "hire_date = COALESCE($12, hire_date)" in update_query
+    assert update_args[11] == date(2020, 1, 1)
+    # Y el saldo se recalcula: 20 días desde 2020.
+    connection.execute.assert_awaited_once()
+    assert connection.execute.call_args[0][1:] == ("user-1", 20.0)
+
+
+@pytest.mark.asyncio
+async def test_update_staff_member_without_hire_date_does_not_touch_the_balance():
+    """Editar solo el puesto no puede reescribir `absence_balances` de rebote."""
+    connection = _FakeConnection()
+    connection.fetchrow.return_value = {
+        "id": "user-1",
+        "role_id": "role-1",
+        "previous_role_id": "role-1",
+        "hire_date": date(2020, 1, 1),
+        "vacation_days_override": None,
+    }
+    pool = _FakePool(connection)
+    pool.fetchrow.return_value = _row()
+    repository = PostgresStaffRepository(pool)
+
+    await repository.update_staff_member(
+        "user-1",
+        job_title="Nuevo puesto",
+        department_id=None,
+        entity_id=None,
+        role_id=None,
+        is_external=None,
+        vacation_days_override=None,
+        clear_vacation_days_override=False,
+        status=None,
+        hire_date=None,
+    )
+
+    connection.execute.assert_not_awaited()
