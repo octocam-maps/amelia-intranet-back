@@ -319,21 +319,36 @@ def create_absences_router() -> APIRouter:
     async def get_calendar_all(
         date_from: Optional[date] = Query(None),
         date_to: Optional[date] = Query(None),
+        user_id: str | None = Query(
+            None, description="Acota el calendario a un empleado; sin él, toda la plantilla"
+        ),
         current_user: dict = Depends(require_role(*ADMIN_SOCIO)),
         use_case: GetAbsenceCalendarUseCase = Depends(get_absence_calendar_use_case),
     ):
-        """Calendario general de RRHH: TODOS los empleados, acotado por
-        rango de fechas. RBAC real vía `require_role`, no solo un ítem
-        oculto del navbar (docs/permisos-roles.md § reglas). Sin cambio de
-        comportamiento por RF-A1: sigue exclusivo de Admin/Socio, sin
-        `user_id` — solo cambia la firma del use case (gana `requester_id`),
-        no la de esta ruta."""
+        """Calendario general de RRHH: por defecto TODOS los empleados,
+        acotado por rango de fechas. RBAC real vía `require_role`, no solo un
+        ítem oculto del navbar (docs/permisos-roles.md § reglas).
+
+        `user_id` es OPCIONAL y acota el resultado a un empleado — es el mismo
+        filtro que ya tenían los 2 exports (RF-A1), ahora también aquí porque
+        la pantalla del calendario general usa el selector para filtrar la
+        grilla, no solo el fichero exportado. Declararlo en la firma no es
+        cosmético: FastAPI descarta en silencio los query params que no están
+        declarados, así que sin este parámetro el `?user_id=` que manda el
+        frontend se ignoraba y la grilla seguía mostrando la plantilla
+        completa.
+
+        El scoping por rol NO se decide aquí: el `require_role` de esta ruta
+        solo deja pasar a Admin/Socio, y `GetAbsenceCalendarUseCase` es quien
+        resuelve qué `user_id` puede pedir cada rol (un Empleado que llegara
+        con el `user_id` de otro recibe 403, no un fichero recortado)."""
         resolved_from, resolved_to = _resolve_calendar_range(date_from, date_to)
         entries = await use_case.execute(
             requester_id=current_user["sub"],
             requester_role=current_user["role"],
             date_from=resolved_from,
             date_to=resolved_to,
+            user_id=user_id,
         )
         return calendar_entries_to_dto(entries)
 
