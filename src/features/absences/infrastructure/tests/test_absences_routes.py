@@ -257,6 +257,64 @@ def test_socio_can_view_general_calendar():
     assert body["entries"][0]["user_full_name"] == "Ana García"
 
 
+class _CapturingAbsenceCalendarUseCase:
+    """Guarda los kwargs con que la ruta invoca al use case — un fake que los
+    ignora no puede distinguir "el parámetro llegó" de "FastAPI lo descartó"."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    async def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        return []
+
+
+def test_general_calendar_forwards_user_id_to_use_case():
+    """El `user_id` de la query tiene que LLEGAR al use case.
+
+    Antes la firma de la ruta solo declaraba `date_from`/`date_to`: FastAPI
+    descarta en silencio los query params no declarados, así que el
+    `?user_id=` que manda la pantalla del calendario general se ignoraba y la
+    grilla seguía devolviendo la plantilla completa — el filtro parecía roto
+    sin que ningún error apareciera por ningún lado."""
+    use_case = _CapturingAbsenceCalendarUseCase()
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: use_case
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/all"
+                "?date_from=2026-07-01&date_to=2026-07-31&user_id=user-42",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert use_case.calls[0]["user_id"] == "user-42"
+
+
+def test_general_calendar_without_user_id_stays_global():
+    """Sin `user_id` el comportamiento no cambia: `None` -> toda la plantilla
+    (el use case resuelve el alcance por rol)."""
+    use_case = _CapturingAbsenceCalendarUseCase()
+    app.dependency_overrides[absences_dependencies.get_absence_calendar_use_case] = (
+        lambda: use_case
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/absences/calendar/all?date_from=2026-07-01&date_to=2026-07-31",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert use_case.calls[0]["user_id"] is None
+
+
 def test_externo_invitado_cannot_export_general_calendar_xlsx():
     try:
         with TestClient(app) as client:
