@@ -34,7 +34,14 @@ def _token_for(role: str) -> str:
 
 
 class _FakeListDepartmentsUseCase:
-    async def execute(self):
+    """Guarda el `user_id` recibido para que un test pueda comprobar que la ruta
+    lo saca del JWT y no de un parámetro de la petición."""
+
+    def __init__(self):
+        self.user_id_recibido = None
+
+    async def execute(self, *, user_id):
+        self.user_id_recibido = user_id
         return [
             Department(
                 id="dept-1", name="Recursos Humanos", entity_id="entity-hub", entity_code="hub"
@@ -107,3 +114,26 @@ def test_admin_can_list_departments():
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
+
+
+def test_the_user_id_comes_from_the_jwt_not_from_a_query_param():
+    """El filtro por entidad solo protege si el `user_id` lo pone el servidor.
+    Con un `?user_id=` cualquiera podría listar los departamentos de otra
+    sociedad cambiando un id en la URL."""
+    use_case = _FakeListDepartmentsUseCase()
+    app.dependency_overrides[departments_dependencies.get_list_departments_use_case] = (
+        lambda: use_case
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/departments?user_id=otro-usuario-cualquiera",
+                headers={"Authorization": f"Bearer {_token_for('empleado')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    # El id que llega al caso de uso es el del token, NUNCA el de la query.
+    assert use_case.user_id_recibido != "otro-usuario-cualquiera"
+    assert use_case.user_id_recibido is not None
