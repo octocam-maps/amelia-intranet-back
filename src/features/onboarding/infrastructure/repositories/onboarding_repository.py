@@ -503,9 +503,25 @@ class PostgresOnboardingRepository(IOnboardingRepository):
                 )
         return _row_to_progress(row) if row else None
 
-    async def department_exists(self, department_id: str) -> bool:
+    async def department_valid_for_user(
+        self, department_id: str, user_id: str
+    ) -> bool:
+        # El `OR ... IS NULL` es el fallback para un usuario sin entidad: la
+        # comparación `d.entity_id = (subconsulta)` daría NULL —no TRUE— y sin esa
+        # segunda condición no podría guardar NINGÚN departamento, quedándose sin
+        # poder completar el paso 4.
         row = await self._db.fetchrow(
-            "SELECT 1 FROM departments WHERE id = $1", department_id
+            """
+            SELECT 1
+            FROM departments d
+            WHERE d.id = $1
+              AND (
+                  d.entity_id = (SELECT entity_id FROM users WHERE id = $2)
+                  OR (SELECT entity_id FROM users WHERE id = $2) IS NULL
+              )
+            """,
+            department_id,
+            user_id,
         )
         return row is not None
 

@@ -195,11 +195,28 @@ class IOnboardingRepository(Protocol):
         reabrir)."""
         ...
 
-    async def department_exists(self, department_id: str) -> bool:
-        """Referencia real a `departments` (el desplegable del paso 5 es
-        solo UI) — el use case la consulta ANTES de escribir
-        `users.department_id`, para no dejar que una FK violation
-        genérica llegue como 500."""
+    async def department_valid_for_user(
+        self, department_id: str, user_id: str
+    ) -> bool:
+        """El departamento existe Y pertenece a la entidad del usuario.
+
+        Antes solo comprobaba que EXISTIERA (`department_exists`), y eso dejaba
+        pasar el departamento de otra sociedad: los mismos cinco departamentos
+        están repetidos en las cuatro entidades del grupo, así que alguien de
+        Amelia Hub podía quedar asignado al «Ingeniería» de Amelia Ops. Como el
+        organigrama cuelga de `users.department_id`, el dato quedaba incoherente
+        sin que nada avisara.
+
+        Hace falta aquí ADEMÁS del filtro del listado: el desplegable es solo UI
+        y enviar otro `department_id` a mano se salta cualquier candado del
+        cliente (regla del proyecto: ocultar ≠ proteger).
+
+        Se consulta ANTES de escribir `users.department_id` para no dejar que una
+        violación de FK genérica llegue como 500.
+
+        `True` si el usuario no tiene entidad (`users.entity_id IS NULL`): no
+        hay con qué comparar y bloquearlo lo dejaría sin poder completar el paso.
+        """
         ...
 
     async def find_user_full_name(self, user_id: str) -> Optional[str]:

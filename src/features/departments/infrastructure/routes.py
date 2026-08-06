@@ -30,7 +30,15 @@ def create_departments_router() -> APIRouter:
         current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: ListDepartmentsUseCase = Depends(get_list_departments_use_case),
     ):
-        departments = await use_case.execute()
+        """Los departamentos de la entidad de QUIEN PREGUNTA, no todos.
+
+        Los mismos cinco departamentos existen en las cuatro sociedades del grupo,
+        así que sin filtrar devolvía 20 filas y el selector del paso 4 mostraba
+        cuatro «Administración» indistinguibles.
+
+        El `user_id` sale del JWT y no se acepta por parámetro: con un
+        `?user_id=` cualquiera podría listar los departamentos de otra sociedad."""
+        departments = await use_case.execute(user_id=current_user["sub"])
         return departments_to_dto(departments)
 
     return router

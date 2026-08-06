@@ -42,7 +42,7 @@ class FakeOnboardingRepository:
         # user_id -> {full_name, email, avatar_url, role} — solo lo que
         # necesita `list_employee_progress_snapshots` (panel de admin).
         self.users: dict[str, dict] = users or {}
-        # Departamentos "existentes" para `department_exists` — el paso 5
+        # Departamentos "existentes" para `department_valid_for_user` — el paso 4
         # valida la referencia antes de escribirla.
         self.department_ids: set[str] = set(department_ids or set())
         # user_id simulados como "no existe/borrado" — para probar la rama
@@ -339,7 +339,13 @@ class FakeOnboardingRepository:
         self.progress[key] = updated
         return updated
 
-    async def department_exists(self, department_id: str) -> bool:
+    async def department_valid_for_user(
+        self, department_id: str, user_id: str
+    ) -> bool:
+        """El fake no modela entidades: `department_ids` son los departamentos que
+        SÍ valen para el usuario del test. Los casos de "departamento de otra
+        sociedad" se expresan pasando un id que no está en ese conjunto, que es
+        exactamente lo que el repositorio real devuelve como `False`."""
         return department_id in self.department_ids
 
     async def find_user_full_name(self, user_id: str) -> Optional[str]:

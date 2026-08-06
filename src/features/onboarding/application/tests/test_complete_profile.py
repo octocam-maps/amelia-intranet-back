@@ -217,3 +217,34 @@ async def test_external_guest_has_no_profile_step():
             step_id=PROFILE_STEP.id,
             profile=_valid_profile(),
         )
+
+
+@pytest.mark.asyncio
+async def test_rejects_a_department_from_another_company():
+    """El bug que esto cierra: los mismos cinco departamentos existen en las
+    cuatro sociedades del grupo, y antes solo se comprobaba que el id EXISTIERA.
+    Así, alguien de Amelia Hub podía quedar asignado al «Ingeniería» de Amelia
+    Ops — y como el organigrama cuelga de `users.department_id`, el dato quedaba
+    incoherente sin que nada avisara.
+
+    Hace falta validarlo aquí y no solo filtrar el desplegable: el selector es UI
+    y enviar otro `department_id` a mano se lo salta (ocultar ≠ proteger).
+
+    En el fake, `department_ids` son los que SÍ valen para este usuario; uno de
+    otra sociedad se expresa con un id fuera de ese conjunto, que es exactamente
+    lo que el repositorio real devuelve como `False`."""
+    repository = _repository_with_available_profile_step(
+        department_ids={"dept-de-mi-sociedad"}
+    )
+    use_case = CompleteProfileUseCase(repository)
+
+    with pytest.raises(InvalidDepartmentError, match="no pertenece a tu sociedad"):
+        await use_case.execute(
+            user_id="user-1",
+            role="empleado",
+            step_id=PROFILE_STEP.id,
+            profile=_valid_profile(department_id="dept-de-otra-sociedad"),
+        )
+
+    # Y no se escribió nada: el perfil no se guarda a medias.
+    assert repository.saved_profiles == {}

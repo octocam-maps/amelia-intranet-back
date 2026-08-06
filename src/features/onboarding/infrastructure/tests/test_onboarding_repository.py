@@ -270,25 +270,38 @@ async def test_create_document_upload_inserts_the_link_row():
 
 
 @pytest.mark.asyncio
-async def test_department_exists_returns_true_when_the_row_is_found():
+async def test_department_valid_for_user_checks_the_entity_too():
+    """Ya no basta con que el departamento EXISTA: tiene que ser de la sociedad
+    del usuario. Los mismos cinco departamentos están repetidos en las cuatro
+    entidades del grupo, así que la comprobación anterior dejaba pasar el de otra
+    sociedad y el organigrama (que cuelga de `users.department_id`) quedaba
+    incoherente sin que nada avisara."""
     pool = AsyncMock()
     pool.fetchrow.return_value = {"?column?": 1}
     repository = PostgresOnboardingRepository(pool)
 
-    assert await repository.department_exists("dept-1") is True
+    assert await repository.department_valid_for_user("dept-1", "user-1") is True
 
-    query, department_id = pool.fetchrow.await_args.args
-    assert "SELECT 1 FROM departments" in query
-    assert department_id == "dept-1"
+    query, department_id, user_id = pool.fetchrow.await_args.args
+    assert "FROM departments" in query
+    assert "d.id = $1" in query
+    # La entidad se compara contra la del usuario, no se asume.
+    assert "SELECT entity_id FROM users WHERE id = $2" in query
+    # `OR ... IS NULL`: fallback para el usuario sin sociedad asignada, que si no
+    # no podría guardar NINGÚN departamento ni completar el paso 4.
+    assert "IS NULL" in query
+    assert (department_id, user_id) == ("dept-1", "user-1")
 
 
 @pytest.mark.asyncio
-async def test_department_exists_returns_false_when_missing():
+async def test_department_valid_for_user_is_false_when_no_row_matches():
+    """Un solo `False` para los dos casos que la query resuelve igual: el
+    departamento no existe, o existe pero es de otra sociedad."""
     pool = AsyncMock()
     pool.fetchrow.return_value = None
     repository = PostgresOnboardingRepository(pool)
 
-    assert await repository.department_exists("missing-dept") is False
+    assert await repository.department_valid_for_user("otra-sociedad", "user-1") is False
 
 
 def _profile_completion() -> ProfileCompletionData:

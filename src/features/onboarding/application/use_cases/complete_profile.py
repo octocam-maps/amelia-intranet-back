@@ -77,8 +77,15 @@ class CompleteProfileUseCase:
         # regla no negociable del requerimiento §7.
         ensure_profile_data_complete(profile)
 
-        if not await self._repository.department_exists(profile.department_id):
-            raise InvalidDepartmentError("El departamento indicado no existe.")
+        # Valida que el departamento sea de la SOCIEDAD del usuario, no solo que
+        # exista: los mismos cinco departamentos están repetidos en las cuatro
+        # entidades del grupo, y el organigrama cuelga de `users.department_id`.
+        if not await self._repository.department_valid_for_user(
+            profile.department_id, user_id
+        ):
+            raise InvalidDepartmentError(
+                "El departamento indicado no existe o no pertenece a tu sociedad."
+            )
 
         saved = await self._repository.save_profile_completion(user_id, profile)
         if not saved:
