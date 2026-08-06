@@ -82,13 +82,16 @@ class GetMyOnboardingUseCase:
         for kind in _DOCUMENT_STEP_TYPES:
             if any(step.type == kind for step in applicable_steps):
                 documents = await self._repository.find_active_documents(kind)
-                acknowledged_ids = (
-                    await self._repository.list_acknowledged_document_ids(user_id, kind)
+                satisfied_ids = (
+                    await self._satisfied_document_ids(user_id, kind)
                     if documents
                     else set()
                 )
+                # `cascade` solo para los manuales: ahí el orden ES la regla. Los
+                # cuatro documentos a firmar del paso 5 se suben en cualquier
+                # orden (ver `resolve_step_documents`).
                 documents_by_kind[kind] = resolve_step_documents(
-                    documents, acknowledged_ids, role
+                    documents, satisfied_ids, role, cascade=(kind == "manual")
                 )
 
         # El estado se resuelve por ROL antes de salir: el administrador está
@@ -104,6 +107,19 @@ class GetMyOnboardingUseCase:
             for step in applicable_steps
             if step.id in progress_by_step_id
         ]
+
+    async def _satisfied_document_ids(self, user_id: str, kind: str) -> set[str]:
+        """Qué documentos de este `kind` tiene ya cumplidos el usuario.
+
+        "Cumplido" no significa lo mismo en los dos pasos y viven en tablas
+        distintas: el paso 3 se satisface CONFIRMANDO la lectura
+        (`document_acknowledgements`) y el paso 5 SUBIENDO el PDF firmado
+        (`onboarding_document_uploads`). Preguntar por la tabla equivocada dejaría
+        el paso 5 eternamente pendiente aunque los cuatro documentos estuvieran
+        subidos, porque nadie "confirma la lectura" de un documento que firma."""
+        if kind == "signature":
+            return await self._repository.list_uploaded_document_ids(user_id)
+        return await self._repository.list_acknowledged_document_ids(user_id, kind)
 
     async def _notify_pending_signature(
         self, user_id: str, applicable_steps: list[OnboardingStep]

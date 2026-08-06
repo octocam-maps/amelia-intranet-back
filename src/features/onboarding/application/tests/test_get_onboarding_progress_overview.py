@@ -5,7 +5,6 @@ progreso inicializado), con `status` derivado de sus filas de progreso y
 onboarding parcial).
 """
 
-from dataclasses import replace
 
 import pytest
 

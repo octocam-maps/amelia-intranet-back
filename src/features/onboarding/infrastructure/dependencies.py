@@ -9,6 +9,9 @@ from src.features.documents.infrastructure.dependencies import (
     get_upload_document_use_case,
 )
 from src.features.notifications.infrastructure.dependencies import get_notify_use_case
+from src.features.profile.infrastructure.repositories.profile_repository import (
+    PostgresProfileRepository,
+)
 from src.shared.database import get_database_pool
 
 from ..application.use_cases.acknowledge_manual import AcknowledgeManualUseCase
@@ -16,6 +19,9 @@ from ..application.use_cases.complete_profile import CompleteProfileUseCase
 from ..application.use_cases.get_my_onboarding import GetMyOnboardingUseCase
 from ..application.use_cases.get_onboarding_progress_overview import (
     GetOnboardingProgressOverviewUseCase,
+)
+from ..application.use_cases.get_signable_document_pdf import (
+    GetSignableDocumentPdfUseCase,
 )
 from ..application.use_cases.list_manuals_library import ListManualsLibraryUseCase
 from ..application.use_cases.list_onboarding_steps_admin import (
@@ -33,6 +39,12 @@ from .repositories.onboarding_repository import PostgresOnboardingRepository
 
 def _get_repository() -> PostgresOnboardingRepository:
     return PostgresOnboardingRepository(get_database_pool())
+
+
+def _get_profile_repository() -> PostgresProfileRepository:
+    """El repositorio de `profile`, para rellenar los documentos firmables del
+    paso 5 con los datos que la persona metió en el paso 4."""
+    return PostgresProfileRepository(get_database_pool())
 
 
 def get_my_onboarding_use_case() -> GetMyOnboardingUseCase:
@@ -55,6 +67,13 @@ def get_upload_signed_document_use_case() -> UploadSignedOnboardingDocumentUseCa
     return UploadSignedOnboardingDocumentUseCase(
         _get_repository(), get_upload_document_use_case(), get_notify_use_case()
     )
+
+
+def get_signable_document_pdf_use_case() -> GetSignableDocumentPdfUseCase:
+    # Cruza a `profile` por su REPOSITORIO (no por su caso de uso): lo que hace
+    # falta son los datos crudos del perfil para rellenar el PDF, no la ficha
+    # formateada que devuelve `GET /profile/me`.
+    return GetSignableDocumentPdfUseCase(_get_repository(), _get_profile_repository())
 
 
 def get_acknowledge_manual_use_case() -> AcknowledgeManualUseCase:

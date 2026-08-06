@@ -10,9 +10,11 @@ cortan antes, en el propio `require_role` — defensa en profundidad, no solo
 un ítem oculto del navbar.
 """
 
+import io
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.responses import StreamingResponse
 
 from src.shared.auth.dependencies import require_role
 from src.shared.auth.roles import ADMIN_ONLY, ALL_ROLES, INTERNAL_ROLES
@@ -23,6 +25,9 @@ from ..application.use_cases.complete_profile import CompleteProfileUseCase
 from ..application.use_cases.get_my_onboarding import GetMyOnboardingUseCase
 from ..application.use_cases.get_onboarding_progress_overview import (
     GetOnboardingProgressOverviewUseCase,
+)
+from ..application.use_cases.get_signable_document_pdf import (
+    GetSignableDocumentPdfUseCase,
 )
 from ..application.use_cases.list_onboarding_steps_admin import (
     ListOnboardingStepsForAdminUseCase,
@@ -42,6 +47,7 @@ from .dependencies import (
     get_my_onboarding_use_case,
     get_onboarding_progress_overview_use_case,
     get_reset_quiz_attempt_use_case,
+    get_signable_document_pdf_use_case,
     get_submit_quiz_use_case,
     get_update_onboarding_step_use_case,
     get_update_video_progress_use_case,
@@ -139,6 +145,7 @@ def create_onboarding_router() -> APIRouter:
     async def upload_signed_document(
         step_id: str,
         file: UploadFile = File(...),
+        document_id: Optional[str] = Form(None),
         current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
         use_case: UploadSignedOnboardingDocumentUseCase = Depends(
             get_upload_signed_document_use_case
@@ -148,7 +155,13 @@ def create_onboarding_router() -> APIRouter:
         (reemplaza a la firma nativa). `user_id` SIEMPRE sale del JWT — este
         endpoint no declara ningún campo de formulario para el dueño del
         documento, así que no hay canal para suplantar a otro usuario
-        (RGPD, regla no negociable)."""
+        (RGPD, regla no negociable).
+
+        `document_id` desde la migración 046, que sube el paso de uno a CUATRO
+        documentos: dice a cuál de ellos corresponde el archivo firmado. Opcional
+        por el mismo motivo que en `/acknowledge` — un cliente anterior a la 046
+        subía sin él, y con un único documento activo sigue siendo inequívoco. Con
+        varios y sin id, el caso de uso rechaza en vez de adivinar."""
         content = await file.read()
         upload = await use_case.execute(
             user_id=current_user["sub"],
@@ -157,8 +170,36 @@ def create_onboarding_router() -> APIRouter:
             filename=file.filename or "documento-firmado.pdf",
             content=content,
             mime_type=file.content_type or "",
+            document_id=document_id,
         )
         return document_upload_to_dto(upload, step_id)
+
+    @router.get("/documents/{document_id}/pdf")
+    async def download_signable_document(
+        document_id: str,
+        current_user: dict = Depends(require_role(*INTERNAL_ROLES)),
+        use_case: GetSignableDocumentPdfUseCase = Depends(
+            get_signable_document_pdf_use_case
+        ),
+    ):
+        """El documento del paso 5 rellenado con los datos del perfil de QUIEN LO
+        PIDE, listo para imprimir y firmar.
+
+        NO está en `/manuals` ni se publica en `public/`: estos PDF llevan dentro
+        nombre, DNI y puesto, así que se sirven solo al usuario autenticado y el
+        `user_id` sale del JWT. No hay parámetro para pedir el de otra persona.
+
+        `INTERNAL_ROLES` y no `ALL_ROLES`: el externo-invitado no tiene paso de
+        firma (onboarding parcial, `steps_applicable_to_role`), así que tampoco
+        tiene documentos que descargar de aquí."""
+        pdf, filename = await use_case.execute(
+            user_id=current_user["sub"], document_id=document_id
+        )
+        return StreamingResponse(
+            io.BytesIO(pdf),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @router.post("/steps/{step_id}/acknowledge", response_model=AcknowledgementDTO)
     async def acknowledge_manual(

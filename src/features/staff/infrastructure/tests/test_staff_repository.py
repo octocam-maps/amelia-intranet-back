@@ -194,7 +194,7 @@ async def test_create_staff_member_seeds_balance_from_automatic_calculation_when
         entity_id="entity-hub",
         role_id="role-empleado",
         is_external=False,
-        hire_date=date(2020, 1, 1),  # año completo -> 20 días calculados
+        hire_date=date(2020, 1, 1),  # año completo, tramo +5 años -> 25 días calculados
         vacation_days_override=None,
         invited_by="admin-1",
         expires_at=datetime(2026, 7, 24, tzinfo=timezone.utc),
@@ -205,7 +205,7 @@ async def test_create_staff_member_seeds_balance_from_automatic_calculation_when
     assert connection.execute.await_count == 3
     balance_query, *balance_args = connection.execute.call_args_list[0][0]
     assert "absence_balances" in balance_query
-    assert balance_args == ["user-1", 20.0]
+    assert balance_args == ["user-1", 25.0]
 
 
 @pytest.mark.asyncio
@@ -317,7 +317,7 @@ async def test_update_staff_member_clearing_override_recomputes_from_hire_date()
         # comprueba `test_update_staff_member_without_a_role_change_writes_no_history`.
         "role_id": "role-1",
         "previous_role_id": "role-1",
-        "hire_date": date(2020, 1, 1),  # calcularía 20
+        "hire_date": date(2020, 1, 1),  # calcularía 25 (tramo +5 años)
         "vacation_days_override": None,
     }
     pool = _FakePool(connection)
@@ -340,7 +340,7 @@ async def test_update_staff_member_clearing_override_recomputes_from_hire_date()
     assert update_args[7] is True  # clear_vacation_days_override
     connection.execute.assert_awaited_once()
     balance_args = connection.execute.call_args[0][1:]
-    assert balance_args == ("user-1", 20.0)
+    assert balance_args == ("user-1", 25.0)
 
 
 @pytest.mark.asyncio
@@ -353,7 +353,7 @@ async def test_update_staff_member_setting_a_new_override_recomputes_balance():
         # comprueba `test_update_staff_member_without_a_role_change_writes_no_history`.
         "role_id": "role-1",
         "previous_role_id": "role-1",
-        "hire_date": date(2020, 1, 1),  # calcularía 20, pero manda el override
+        "hire_date": date(2020, 1, 1),  # calcularía 25, pero manda el override
         "vacation_days_override": 15,
     }
     pool = _FakePool(connection)
@@ -632,9 +632,9 @@ async def test_update_staff_member_setting_hire_date_recomputes_balance():
     # En el SET, y como parámetro $12.
     assert "hire_date = COALESCE($12, hire_date)" in update_query
     assert update_args[11] == date(2020, 1, 1)
-    # Y el saldo se recalcula: 20 días desde 2020.
+    # Y el saldo se recalcula: 25 días desde 2020 (tramo +5 años).
     connection.execute.assert_awaited_once()
-    assert connection.execute.call_args[0][1:] == ("user-1", 20.0)
+    assert connection.execute.call_args[0][1:] == ("user-1", 25.0)
 
 
 @pytest.mark.asyncio

@@ -140,7 +140,7 @@ async def test_passing_vacation_days_override_none_clears_it_to_automatic():
         department=None,
         entity_code="hub",
         role_code="empleado",
-        hire_date=date(2020, 1, 1),  # calcularía 20
+        hire_date=date(2020, 1, 1),  # calcularía 25 (tramo +5 años)
         vacation_days_override=15,  # pero el admin lo fijó a 15
         invited_by=_DEFAULT_INVITED_BY,
     )
@@ -149,7 +149,7 @@ async def test_passing_vacation_days_override_none_clears_it_to_automatic():
     updated = await use_case.execute(member.id, vacation_days_override=None)
 
     assert updated.vacation_days_override is None
-    assert updated.vacation_days_per_year == 20  # vuelve al cálculo automático
+    assert updated.vacation_days_per_year == 25  # vuelve al cálculo automático
 
 
 @pytest.mark.asyncio
@@ -162,7 +162,7 @@ async def test_passing_a_new_vacation_days_override_value_overrides_the_calculat
         department=None,
         entity_code="hub",
         role_code="empleado",
-        hire_date=date(2020, 1, 1),  # calcularía 20
+        hire_date=date(2020, 1, 1),  # calcularía 25 (tramo +5 años)
         vacation_days_override=None,
         invited_by=_DEFAULT_INVITED_BY,
     )
@@ -343,7 +343,7 @@ async def test_setting_hire_date_recomputes_the_vacation_entitlement():
     updated = await use_case.execute(member.id, hire_date=date(2020, 1, 1))
 
     assert updated.hire_date == date(2020, 1, 1)
-    assert updated.vacation_days_per_year == 20
+    assert updated.vacation_days_per_year == 25
 
 
 @pytest.mark.asyncio
@@ -367,7 +367,7 @@ async def test_not_passing_hire_date_leaves_it_untouched():
     updated = await use_case.execute(member.id, job_title="Senior Backend")
 
     assert updated.hire_date == date(2020, 1, 1)
-    assert updated.vacation_days_per_year == 20
+    assert updated.vacation_days_per_year == 25
 
 
 @pytest.mark.asyncio

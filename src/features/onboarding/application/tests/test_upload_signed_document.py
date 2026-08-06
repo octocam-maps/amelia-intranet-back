@@ -26,8 +26,12 @@ from src.features.documents.application.tests.fakes import (
     FakeStaffRepository,
 )
 from src.features.documents.application.use_cases.upload_document import UploadDocumentUseCase
-from src.features.onboarding.domain.entities import OnboardingProgress
+from src.features.onboarding.domain.entities import (
+    OnboardingDocument,
+    OnboardingProgress,
+)
 from src.features.onboarding.domain.errors import (
+    OnboardingDocumentNotFoundError,
     StepLockedError,
     StepNotAvailableForRoleError,
     StepNotOperableError,
@@ -261,3 +265,259 @@ async def test_externo_invitado_cannot_operate_the_step_even_invoking_it_directl
             content=b"%PDF-1.4 contenido",
             mime_type="application/pdf",
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Migración 046: el paso pasa de UN documento a CUATRO. La regla nueva es que el
+# paso NO se cierra hasta que estén todos subidos — antes se cerraba con la
+# primera subida porque no había más que uno.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _three_signature_documents() -> list[OnboardingDocument]:
+    """Tres documentos activos con `display_order` distinto, como los cuatro que
+    siembra la 046. Tres bastan para probar la regla y mantienen el test legible."""
+    return [
+        OnboardingDocument(
+            id=f"doc-sig-{n}",
+            kind="signature",
+            title=f"Documento {n}",
+            version=1,
+            content_hash=f"{n}" * 64,
+            storage_ref=f"generated:doc-{n}",
+            is_active=True,
+            display_order=n,
+        )
+        for n in (1, 2, 3)
+    ]
+
+
+def _repository_with_three_signature_documents() -> FakeOnboardingRepository:
+    repository = _onboarding_repository_with_available_signature()
+    repository.documents = {d.id: d for d in _three_signature_documents()}
+    return repository
+
+
+@pytest.mark.asyncio
+async def test_step_stays_open_until_every_document_is_uploaded():
+    """Con tres documentos, las dos primeras subidas registran su enlace pero
+    dejan el paso ABIERTO. Antes de la 046 la primera lo cerraba, y con cuatro
+    documentos eso habría dado el onboarding por terminado con tres sin firmar."""
+    repository = _repository_with_three_signature_documents()
+    use_case = _use_case(onboarding_repository=repository)
+
+    for document_id in ("doc-sig-1", "doc-sig-2"):
+        await use_case.execute(
+            user_id="user-1",
+            role="empleado",
+            step_id=SIGNATURE_STEP.id,
+            filename="firmado.pdf",
+            content=b"%PDF-1.4 contenido",
+            mime_type="application/pdf",
+            document_id=document_id,
+        )
+        assert repository.progress[("user-1", SIGNATURE_STEP.id)].status == "available"
+
+    assert len(repository.document_uploads) == 2
+
+
+@pytest.mark.asyncio
+async def test_step_completes_with_the_last_document():
+    repository = _repository_with_three_signature_documents()
+    use_case = _use_case(onboarding_repository=repository)
+
+    for document_id in ("doc-sig-1", "doc-sig-2", "doc-sig-3"):
+        await use_case.execute(
+            user_id="user-1",
+            role="empleado",
+            step_id=SIGNATURE_STEP.id,
+            filename="firmado.pdf",
+            content=b"%PDF-1.4 contenido",
+            mime_type="application/pdf",
+            document_id=document_id,
+        )
+
+    assert repository.progress[("user-1", SIGNATURE_STEP.id)].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_documents_can_be_uploaded_in_any_order():
+    """El paso 5 NO tiene cascada: la persona se descarga los cuatro, los firma
+    de una sentada y los sube en el orden que quiera. Forzar el orden de los
+    manuales aquí solo generaría rechazos que no protegen nada."""
+    repository = _repository_with_three_signature_documents()
+    use_case = _use_case(onboarding_repository=repository)
+
+    for document_id in ("doc-sig-3", "doc-sig-1", "doc-sig-2"):
+        await use_case.execute(
+            user_id="user-1",
+            role="empleado",
+            step_id=SIGNATURE_STEP.id,
+            filename="firmado.pdf",
+            content=b"%PDF-1.4 contenido",
+            mime_type="application/pdf",
+            document_id=document_id,
+        )
+
+    assert repository.progress[("user-1", SIGNATURE_STEP.id)].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_missing_document_id_is_rejected_when_there_are_several():
+    """Adivinar sería peor que fallar: apuntar el consentimiento de imágenes
+    como si fuera el RGPD deja el paso cerrado con documentos cruzados y sin
+    forma de detectarlo."""
+    repository = _repository_with_three_signature_documents()
+    use_case = _use_case(onboarding_repository=repository)
+
+    with pytest.raises(OnboardingDocumentNotFoundError):
+        await use_case.execute(
+            user_id="user-1",
+            role="empleado",
+            step_id=SIGNATURE_STEP.id,
+            filename="firmado.pdf",
+            content=b"%PDF-1.4 contenido",
+            mime_type="application/pdf",
+        )
+
+    assert repository.document_uploads == []
+
+
+@pytest.mark.asyncio
+async def test_missing_document_id_still_works_with_a_single_document():
+    """Compatibilidad con el cliente anterior a la 046, que subía sin id: con un
+    único documento activo sigue siendo inequívoco."""
+    repository = _onboarding_repository_with_available_signature()
+    use_case = _use_case(onboarding_repository=repository)
+
+    upload = await use_case.execute(
+        user_id="user-1",
+        role="empleado",
+        step_id=SIGNATURE_STEP.id,
+        filename="firmado.pdf",
+        content=b"%PDF-1.4 contenido",
+        mime_type="application/pdf",
+    )
+
+    assert upload.onboarding_document_id == SIGNATURE_DOCUMENT.id
+
+
+@pytest.mark.asyncio
+async def test_document_id_from_another_step_is_rejected():
+    """Un id que no está entre los `signature` activos no es subible, aunque sea
+    un UUID válido — mismo criterio que la cascada de manuales."""
+    repository = _repository_with_three_signature_documents()
+    use_case = _use_case(onboarding_repository=repository)
+
+    with pytest.raises(OnboardingDocumentNotFoundError):
+        await use_case.execute(
+            user_id="user-1",
+            role="empleado",
+            step_id=SIGNATURE_STEP.id,
+            filename="firmado.pdf",
+            content=b"%PDF-1.4 contenido",
+            mime_type="application/pdf",
+            document_id="doc-manual-hincator",
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# El nombre del fichero EN DRIVE. `UploadDocumentUseCase` usa el `filename` que
+# se le pasa como nombre real en `{email}/Firmados/`, y con cuatro documentos el
+# nombre que trae el navegador deja la carpeta ilegible para RRHH.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_drive_filename_comes_from_the_document_not_from_the_browser():
+    """Los cuatro escaneos pueden llegar llamándose igual (`scan.pdf`): es lo que
+    hace un móvil o un escáner de oficina. Drive NO sobrescribe nombres repetidos,
+    los admite, así que sin esto la carpeta `Firmados` acaba con cuatro PDF
+    indistinguibles y RRHH no sabe cuál es cuál."""
+    storage = FakeDocumentStorage()
+    upload_document = UploadDocumentUseCase(
+        FakeDocumentRepository(), storage, FakeStaffRepository([_staff_member()]), 10
+    )
+    repository = _repository_with_three_signature_documents()
+    use_case = _use_case(
+        onboarding_repository=repository, upload_document_use_case=upload_document
+    )
+
+    for document_id in ("doc-sig-1", "doc-sig-2", "doc-sig-3"):
+        await use_case.execute(
+            user_id="user-1",
+            role="empleado",
+            step_id=SIGNATURE_STEP.id,
+            filename="scan.pdf",  # el mismo nombre en las tres subidas
+            content=b"%PDF-1.4 contenido",
+            mime_type="application/pdf",
+            document_id=document_id,
+        )
+
+    nombres = [call["filename"] for call in storage.upload_calls]
+    assert nombres == ["Documento 1.pdf", "Documento 2.pdf", "Documento 3.pdf"]
+    # Lo que de verdad importa: en Drive son distinguibles entre sí.
+    assert len(set(nombres)) == 3
+    assert "scan.pdf" not in nombres
+
+
+@pytest.mark.asyncio
+async def test_drive_filename_sanitises_slashes_from_the_title():
+    """Una barra en el título no debe llegar al nombre del fichero: en Drive no
+    crea jerarquía, pero se muestra escapada y confunde."""
+    storage = FakeDocumentStorage()
+    upload_document = UploadDocumentUseCase(
+        FakeDocumentRepository(), storage, FakeStaffRepository([_staff_member()]), 10
+    )
+    repository = _onboarding_repository_with_available_signature()
+    repository.documents = {
+        "doc-barra": OnboardingDocument(
+            id="doc-barra",
+            kind="signature",
+            title="RGPD / LOPDGDD",
+            version=1,
+            content_hash="ab" * 32,
+            storage_ref="generated:rgpd-informacion",
+            is_active=True,
+        )
+    }
+    use_case = _use_case(
+        onboarding_repository=repository, upload_document_use_case=upload_document
+    )
+
+    await use_case.execute(
+        user_id="user-1",
+        role="empleado",
+        step_id=SIGNATURE_STEP.id,
+        filename="scan.pdf",
+        content=b"%PDF-1.4 contenido",
+        mime_type="application/pdf",
+        document_id="doc-barra",
+    )
+
+    assert storage.upload_calls[0]["filename"] == "RGPD - LOPDGDD.pdf"
+
+
+@pytest.mark.asyncio
+async def test_signed_documents_land_in_the_signed_category():
+    """`category='signed'` es lo que los manda a la subcarpeta «Firmados» de Drive
+    (`CATEGORY_FOLDER_NAMES`), separados de nóminas y contratos."""
+    storage = FakeDocumentStorage()
+    document_repository = FakeDocumentRepository()
+    upload_document = UploadDocumentUseCase(
+        document_repository, storage, FakeStaffRepository([_staff_member()]), 10
+    )
+    use_case = _use_case(upload_document_use_case=upload_document)
+
+    await use_case.execute(
+        user_id="user-1",
+        role="empleado",
+        step_id=SIGNATURE_STEP.id,
+        filename="scan.pdf",
+        content=b"%PDF-1.4 contenido",
+        mime_type="application/pdf",
+    )
+
+    assert storage.category_folders
+    categorias = [c for cats in storage.category_folders.values() for c in cats]
+    assert categorias == ["signed"]

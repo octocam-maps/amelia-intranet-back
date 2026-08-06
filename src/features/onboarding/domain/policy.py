@@ -558,6 +558,26 @@ def ensure_manual_unlocked(
     return target
 
 
+def are_all_documents_satisfied(
+    documents: list[OnboardingDocument], satisfied_ids: set[str]
+) -> bool:
+    """¿Están TODOS los documentos activos del paso satisfechos por este usuario?
+
+    "Satisfecho" significa lo que corresponda al `kind`: confirmado
+    (`document_acknowledgements`) para los manuales del paso 3, subido firmado
+    (`onboarding_document_uploads`) para los del paso 5. La regla de cierre es la
+    misma para ambos y por eso vive en una sola función — el paso no se cierra
+    mientras quede uno pendiente.
+
+    Sin documentos configurados devuelve `False`: cerrar el paso porque no hay
+    nada que hacer dejaría pasar a alguien sin cumplir lo que el paso promete, y
+    el caso de uso ya trata "no hay documento" como error de configuración.
+    """
+    if not documents:
+        return False
+    return all(d.id in satisfied_ids for d in documents)
+
+
 def are_all_manuals_acknowledged(
     documents: list[OnboardingDocument], acknowledged_ids: set[str]
 ) -> bool:
@@ -565,28 +585,39 @@ def are_all_manuals_acknowledged(
     confirmados. Antes de la 040 el paso se cerraba con la primera confirmación,
     porque no había más que una.
 
-    Sin manuales configurados devuelve `False`: cerrar el paso porque no hay nada
-    que leer dejaría pasar a alguien sin haber leído lo que el paso promete, y el
-    caso de uso ya trata "no hay manual" como error de configuración.
+    Se mantiene como nombre propio del paso 3 —y delega en
+    `are_all_documents_satisfied`— porque es el vocabulario con el que la leen
+    sus casos de uso y sus tests; la regla en sí ya no es exclusiva de los
+    manuales desde que el paso 5 tiene cuatro documentos.
     """
-    if not documents:
-        return False
-    return all(d.id in acknowledged_ids for d in documents)
+    return are_all_documents_satisfied(documents, acknowledged_ids)
 
 
 def resolve_step_documents(
-    documents: list[OnboardingDocument], acknowledged_ids: set[str], role: str
+    documents: list[OnboardingDocument],
+    satisfied_ids: set[str],
+    role: str,
+    *,
+    cascade: bool = True,
 ) -> list[StepDocument]:
-    """Los documentos del paso en orden de lectura, cada uno con su estado en la
-    cascada para este usuario.
+    """Los documentos del paso en orden, cada uno con su estado para este usuario.
 
-    `locked` es "queda algo anterior sin confirmar", que es EXACTAMENTE la
-    condición que rechaza `ensure_manual_unlocked` — incluida la exención del
-    administrador, que aquí se consulta con el MISMO predicado. Se derivan de la
-    misma función de orden para que no puedan divergir: si el candado dijera una
-    cosa y el POST otra, el trabajador vería un botón habilitado que devuelve 422.
+    `cascade=True` (paso 3, manuales): `locked` es "queda algo anterior sin
+    confirmar", que es EXACTAMENTE la condición que rechaza
+    `ensure_manual_unlocked` — incluida la exención del administrador, que aquí
+    se consulta con el MISMO predicado. Se derivan de la misma función de orden
+    para que no puedan divergir: si el candado dijera una cosa y el POST otra, el
+    trabajador vería un botón habilitado que devuelve 422.
 
-    Un documento ya confirmado nunca sale `locked`, aunque falte uno anterior
+    `cascade=False` (paso 5, documentación firmada): NINGUNO sale `locked`.
+    Imponer un orden ahí sería artificial y molesto — la persona se descarga los
+    cuatro documentos, los imprime, los firma de una sentada y los vuelve a subir
+    en el orden que le venga. Lo que sigue cerrando el paso es que estén TODOS
+    (`are_all_documents_satisfied`), no el orden en que llegaron. Los manuales sí
+    van en cascada porque ahí el orden ES la regla: no se confirma la lectura de
+    uno sin haber leído los anteriores.
+
+    Un documento ya satisfecho nunca sale `locked`, aunque falte uno anterior
     (caso posible si RRHH reordena los manuales después de que alguien empiece):
     lo que ya se leyó, leído está.
     """
@@ -594,15 +625,14 @@ def resolve_step_documents(
     exempt = is_exempt_from_sequential_gating(role)
     result: list[StepDocument] = []
     for index, document in enumerate(ordered):
-        acknowledged = document.id in acknowledged_ids
+        satisfied = document.id in satisfied_ids
         locked = (
-            not acknowledged
+            cascade
+            and not satisfied
             and not exempt
-            and any(
-                previous.id not in acknowledged_ids for previous in ordered[:index]
-            )
+            and any(previous.id not in satisfied_ids for previous in ordered[:index])
         )
         result.append(
-            StepDocument(document=document, acknowledged=acknowledged, locked=locked)
+            StepDocument(document=document, acknowledged=satisfied, locked=locked)
         )
     return result

@@ -17,6 +17,12 @@ sendgrid>=6.11.0
 openpyxl>=3.1.0
 pillow>=10.0.0
 reportlab>=4.0.0
+# Se necesita para RELLENAR los PDF que entrega RRHH sin re-maquetarlos: el
+# documento original se usa como plantilla intacta y `merge_page` le fusiona
+# encima una capa de reportlab con los datos del perfil (ver
+# `onboarding/infrastructure/signable_documents.py`). reportlab sabe CREAR PDFs,
+# no leerlos, así que por sí solo no puede partir de un fichero existente.
+pypdf>=6.0.0
 
 # Testing
 pytest>=7.4.0
