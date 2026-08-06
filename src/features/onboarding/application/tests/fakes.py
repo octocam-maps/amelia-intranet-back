@@ -238,6 +238,15 @@ class FakeOnboardingRepository:
             and doc.kind == kind
         }
 
+    async def list_uploaded_document_ids(self, user_id: str) -> set[str]:
+        # Sin filtro por `kind`, igual que el repositorio real: esta lista solo la
+        # alimenta el paso de firma.
+        return {
+            u.onboarding_document_id
+            for u in self.document_uploads
+            if u.user_id == user_id
+        }
+
     async def create_document_upload(
         self, *, user_id: str, onboarding_document_id: str, employee_document_id: str
     ) -> OnboardingDocumentUpload:

@@ -147,6 +147,20 @@ class IOnboardingRepository(Protocol):
         `find_active_documents`."""
         ...
 
+    async def list_uploaded_document_ids(self, user_id: str) -> set[str]:
+        """Ids de documentos `signature` para los que este usuario YA subió su
+        PDF firmado (`onboarding_document_uploads`).
+
+        El equivalente del paso 5 a `list_acknowledged_document_ids` del paso 3:
+        allí "satisfecho" es haber confirmado la lectura, aquí es haber subido el
+        documento firmado. Hacen falta las dos porque son tablas distintas —
+        `document_acknowledgements` no sabe nada de subidas.
+
+        Sin parámetro `kind`: `onboarding_document_uploads` solo se alimenta desde
+        el paso de firma, así que filtrar por tipo no descartaría ninguna fila y
+        obligaría a un JOIN que no aporta."""
+        ...
+
     async def create_document_upload(
         self, *, user_id: str, onboarding_document_id: str, employee_document_id: str
     ) -> OnboardingDocumentUpload:

@@ -40,9 +40,34 @@ from ...domain.errors import (
     OnboardingStepNotFoundError,
     WrongStepTypeError,
 )
-from ...domain.policy import ensure_step_allowed_for_role, ensure_step_operable
+from ...domain.policy import (
+    are_all_documents_satisfied,
+    ensure_step_allowed_for_role,
+    ensure_step_operable,
+)
 from ...domain.ports import IOnboardingRepository
 from .notify_onboarding_completed import NotifyOnboardingCompletedUseCase
+
+
+def _drive_filename(title: str, fallback: str) -> str:
+    """Nombre del PDF firmado dentro de `{email}/Firmados/` en Drive.
+
+    Se deriva del título del documento para que la carpeta sea legible: quien la
+    abre (RRHH) tiene que poder decir de un vistazo qué documento es cada fichero,
+    y el nombre que trae el navegador no lo dice.
+
+    `fallback` es el nombre que subió el cliente, y se usa solo si el título no
+    da un nombre utilizable (vacío o de solo espacios). No se ignora del todo a
+    propósito: un parámetro que nunca se usa hace creer al siguiente que lea la
+    ruta que el nombre del cliente se respeta.
+
+    Solo se sanean `/` y `\\`: en Drive un nombre con barra no crea jerarquía pero
+    se muestra escapado y confunde. Los acentos y los espacios se conservan a
+    propósito — es un nombre para leerlo, no un identificador."""
+    safe = title.replace("/", "-").replace("\\", "-").strip()
+    if not safe:
+        return fallback
+    return f"{safe}.pdf"
 
 
 class UploadSignedOnboardingDocumentUseCase:
@@ -72,6 +97,7 @@ class UploadSignedOnboardingDocumentUseCase:
         filename: str,
         content: bytes,
         mime_type: str,
+        document_id: Optional[str] = None,
     ) -> OnboardingDocumentUpload:
         step = await self._repository.find_step_by_id(step_id)
         if step is None:
@@ -84,16 +110,32 @@ class UploadSignedOnboardingDocumentUseCase:
         current = await self._repository.find_progress(user_id, step_id)
         ensure_step_operable(current, role)
 
-        # `signature` es uno solo (no hay cascada de plantillas): se toma el
-        # primero de la lista, que con `display_order` + `version DESC` es el
-        # vigente. Comparte firma con los manuales para no tener dos formas de
-        # leer la misma tabla.
         signature_documents = await self._repository.find_active_documents("signature")
-        document = signature_documents[0] if signature_documents else None
-        if document is None:
+        if not signature_documents:
             raise OnboardingDocumentNotFoundError(
                 "Todavía no hay un documento de firma configurado."
             )
+
+        # `document_id` opcional por compatibilidad: hasta la migración 046 el paso
+        # tenía UN solo documento y el cliente no tenía nada que elegir, así que
+        # una llamada sin id sigue resolviéndose sola mientras haya exactamente
+        # uno. Con varios, adivinar sería peor que fallar — subir el consentimiento
+        # de imágenes y que el sistema lo apunte como el RGPD deja el paso cerrado
+        # con documentos cruzados y sin forma de detectarlo.
+        if document_id is None:
+            if len(signature_documents) > 1:
+                raise OnboardingDocumentNotFoundError(
+                    "Indica a qué documento corresponde el archivo firmado."
+                )
+            document = signature_documents[0]
+        else:
+            document = next(
+                (d for d in signature_documents if d.id == document_id), None
+            )
+            if document is None:
+                raise OnboardingDocumentNotFoundError(
+                    "Ese documento no forma parte de este paso."
+                )
 
         # Delega TODA la validación (categoría/MIME/tamaño), Drive y
         # `employee_documents` en el use case compartido — si lanza
@@ -106,7 +148,19 @@ class UploadSignedOnboardingDocumentUseCase:
             category="signed",
             title=document.title,
             period=None,
-            filename=filename,
+            # Nombre derivado del DOCUMENTO, no el que traiga el navegador.
+            #
+            # `UploadDocumentUseCase` usa este `filename` tal cual como nombre del
+            # fichero en Drive (`{email}/Firmados/{filename}`). Con un único
+            # documento daba igual, pero desde la 046 son CUATRO: si alguien sube
+            # sus cuatro escaneos llamados `scan.pdf`, la carpeta queda con cuatro
+            # PDF indistinguibles — y Drive no los sobrescribe, admite nombres
+            # repetidos, así que RRHH se encuentra cuatro ficheros ambiguos sin
+            # saber cuál es el RGPD y cuál el consentimiento de imágenes.
+            #
+            # En `employee_documents` sí se distinguen (por `title`), así que el
+            # problema solo se ve en Drive — que es justo donde lo mira RRHH.
+            filename=_drive_filename(document.title, filename),
             content=content,
             mime_type=mime_type,
         )
@@ -116,6 +170,18 @@ class UploadSignedOnboardingDocumentUseCase:
             onboarding_document_id=document.id,
             employee_document_id=uploaded.id,
         )
+
+        # El paso NO se cierra con la primera subida: desde la migración 046 son
+        # cuatro documentos y hay que subirlos todos. Es la misma regla que el paso
+        # 3 aplica a los manuales (`are_all_documents_satisfied`), y por eso es la
+        # misma función — antes de la 046 el paso se cerraba con la primera subida
+        # porque no había más que un documento.
+        #
+        # La consulta va DESPUÉS del INSERT a propósito, así que incluye el que se
+        # acaba de subir. El orden no importa: solo se pregunta si están todos.
+        uploaded_ids = await self._repository.list_uploaded_document_ids(user_id)
+        if not are_all_documents_satisfied(signature_documents, uploaded_ids):
+            return upload
 
         completed = await self._repository.mark_step_completed_if_operable(
             user_id, step_id, data={"employee_document_id": uploaded.id}

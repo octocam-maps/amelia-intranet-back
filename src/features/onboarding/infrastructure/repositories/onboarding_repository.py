@@ -369,6 +369,19 @@ class PostgresOnboardingRepository(IOnboardingRepository):
         )
         return {str(row["document_id"]) for row in rows}
 
+    async def list_uploaded_document_ids(self, user_id: str) -> set[str]:
+        # Sin JOIN a `onboarding_documents`: esta tabla solo la escribe el paso de
+        # firma, así que todas sus filas son ya de `kind='signature'`.
+        rows = await self._db.fetch(
+            """
+            SELECT onboarding_document_id
+            FROM onboarding_document_uploads
+            WHERE user_id = $1
+            """,
+            user_id,
+        )
+        return {str(row["onboarding_document_id"]) for row in rows}
+
     async def create_document_upload(
         self, *, user_id: str, onboarding_document_id: str, employee_document_id: str
     ) -> OnboardingDocumentUpload:
