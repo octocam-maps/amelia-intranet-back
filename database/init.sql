@@ -731,16 +731,82 @@ WHERE NOT EXISTS (
     WHERE kind = 'manual' AND storage_ref = '/manuales/manual-de-uso-intranet.pdf'
 );
 
--- Documento del paso 5 (la documentación laboral que se descarga, se firma y se
--- vuelve a subir). `content_hash` sigue siendo un PLACEHOLDER: RRHH no ha
--- entregado el PDF definitivo. `storage_ref` a NULL es lo que hace que la UI diga
--- "RRHH todavía no ha publicado este documento" en vez de ofrecer una descarga
--- rota.
-INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref)
-SELECT 'signature', 'Documentación laboral', 1,
-       'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', NULL
+-- Los dos manuales de lectura obligatoria que RRHH entregó el 2026-08-06
+-- [046 + 047]. Se publican los PDF ORIGINALES de RRHH, SIN re-maquetar (decisión
+-- del team-lead): `content_hash` es el SHA-256 de esos ficheros tal cual, no de
+-- una versión regenerada.
+INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref, display_order, requires_acknowledgement)
+SELECT 'manual', 'Protocolo de prevención del acoso', 1,
+       '9db4555a9f8b97e8b641c4256f4e2ec7cd308625b2b070d532b700282bcc7f74',
+       '/manuales/protocolo-acoso-amelia-2026.pdf', 4, TRUE
 WHERE NOT EXISTS (
-    SELECT 1 FROM onboarding_documents WHERE kind = 'signature' AND version = 1
+    SELECT 1 FROM onboarding_documents
+    WHERE kind = 'manual' AND storage_ref = '/manuales/protocolo-acoso-amelia-2026.pdf'
+);
+
+INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref, display_order, requires_acknowledgement)
+SELECT 'manual', 'Política Laboral 2026', 1,
+       'f9f7f13faa2bcffcd540dce34d6fb80f5c1318f139065846ab6aebae728d0de8',
+       '/manuales/politica-laboral-amelia-2026.pdf', 5, TRUE
+WHERE NOT EXISTS (
+    SELECT 1 FROM onboarding_documents
+    WHERE kind = 'manual' AND storage_ref = '/manuales/politica-laboral-amelia-2026.pdf'
+);
+
+-- Los CUATRO documentos del paso 5 (la documentación que se descarga, se firma y
+-- se vuelve a subir) [046]. Sustituyen al placeholder único que había aquí antes
+-- de que RRHH entregara los PDF definitivos.
+--
+-- `storage_ref = 'generated:<code>'` y no una ruta: NO son ficheros estáticos.
+-- Se generan por usuario, rellenados con los datos del perfil del paso 4, en
+-- `onboarding/infrastructure/signable_documents.py` — `<code>` es la clave de su
+-- diccionario `BUILDERS`. No van a `public/manuales/` como los manuales porque
+-- llevan dentro nombre, DNI y puesto: se sirven solo por
+-- `GET /onboarding/documents/{id}/pdf`, que resuelve el usuario desde el JWT.
+--
+-- `content_hash` es el hash de la REDACCIÓN (`template_hash`), no del fichero
+-- servido — cada persona recibe un PDF distinto, así que un hash por binario no
+-- identificaría ninguna versión.
+--
+-- `display_order` aquí es SOLO presentación: el paso 5 no tiene cascada
+-- (`resolve_step_documents(cascade=False)`). Lo que cierra el paso es que estén
+-- los cuatro, no el orden en que se suban.
+INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref, display_order)
+SELECT 'signature', 'Información sobre protección de datos personales', 1,
+       'c29d8b3a1c604b39dc6c3f6bd1e4e267e6b6c42c32f036d9e02b4cd0cefaa861',
+       'generated:rgpd-informacion', 1
+WHERE NOT EXISTS (
+    SELECT 1 FROM onboarding_documents WHERE storage_ref = 'generated:rgpd-informacion'
+);
+
+INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref, display_order)
+SELECT 'signature', 'Compromiso de confidencialidad y protección de datos', 1,
+       '7cff43a44020bca3922ff043c6e43c9a250061d8b5320567bbd7ff5403d7b958',
+       'generated:compromiso-confidencialidad', 2
+WHERE NOT EXISTS (
+    SELECT 1 FROM onboarding_documents
+    WHERE storage_ref = 'generated:compromiso-confidencialidad'
+);
+
+INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref, display_order)
+SELECT 'signature', 'Consentimiento para la cesión de imágenes y datos personales', 1,
+       'f6d90d3c4bb926c4344e731da65c1d043ebefba3522c5ec9b756974b75707862',
+       'generated:consentimiento-imagenes', 3
+WHERE NOT EXISTS (
+    SELECT 1 FROM onboarding_documents
+    WHERE storage_ref = 'generated:consentimiento-imagenes'
+);
+
+-- El CES es el formulario del servicio de prevención AJENO Som Prevenció, no un
+-- documento de Amelia: conserva su maquetación y su naranja corporativo porque es
+-- a ellos a quienes se remite firmado para su archivo.
+INSERT INTO onboarding_documents (kind, title, version, content_hash, storage_ref, display_order)
+SELECT 'signature', 'Consentimiento para el examen de salud', 1,
+       '3b7155f4f6f05fa22d384e3107619ba4bcf21ad1879fa6b21e33f67284b9a618',
+       'generated:reconocimiento-medico', 4
+WHERE NOT EXISTS (
+    SELECT 1 FROM onboarding_documents
+    WHERE storage_ref = 'generated:reconocimiento-medico'
 );
 
 -- Las 15 plantillas de correo [041 + 042 + 044], en TEXTO PLANO.
