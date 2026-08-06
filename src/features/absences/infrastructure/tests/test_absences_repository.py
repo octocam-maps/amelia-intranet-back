@@ -256,10 +256,14 @@ async def test_get_or_create_balance_returns_existing_row_without_inserting():
 
 @pytest.mark.asyncio
 async def test_get_or_create_balance_calculates_vacaciones_from_hire_date_when_no_override():
-    """Regresión del cálculo automático (RF §4.1.2, derogado): al crear la
-    fila de saldo por primera vez para "vacaciones", `entitled_days` sale de
+    """Regresión del cálculo automático: al crear la fila de saldo por primera
+    vez para "vacaciones", `entitled_days` sale de
     `calculate_vacation_entitlement_days(hire_date, year)` — NO del
-    `default_entitled_days` fijo (23) del tipo."""
+    `default_entitled_days` fijo (23) del tipo.
+
+    El alta de 2020 da 25 días en 2026 (tramo "+5 años" de la Política Laboral
+    2026), que es distinto del default del tipo: si el repositorio ignorara el
+    cálculo y cogiera el default, este test lo vería."""
     pool = AsyncMock()
     pool.fetchrow.side_effect = [
         None,  # SELECT * FROM absence_balances -> no existe todavía
@@ -270,7 +274,7 @@ async def test_get_or_create_balance_calculates_vacaciones_from_hire_date_when_n
             "user_id": "user-1",
             "absence_type_id": "type-vacaciones",
             "year": 2026,
-            "entitled_days": 20,
+            "entitled_days": 25,
             "used_days": 0,
             "pending_days": 0,
         },
@@ -279,10 +283,10 @@ async def test_get_or_create_balance_calculates_vacaciones_from_hire_date_when_n
 
     balance = await repository.get_or_create_balance("user-1", "type-vacaciones", 2026)
 
-    assert balance.entitled_days == 20.0
+    assert balance.entitled_days == 25.0
     insert_query, *insert_args = pool.fetchrow.call_args_list[-1][0]
     assert "INSERT INTO absence_balances" in insert_query
-    assert insert_args == ["user-1", "type-vacaciones", 2026, 20.0]
+    assert insert_args == ["user-1", "type-vacaciones", 2026, 25.0]
 
 
 @pytest.mark.asyncio
