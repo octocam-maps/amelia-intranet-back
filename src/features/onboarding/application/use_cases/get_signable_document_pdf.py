@@ -27,12 +27,12 @@ from src.features.profile.domain.ports import IProfileRepository
 from ...domain.errors import OnboardingDocumentNotFoundError
 from ...domain.ports import IOnboardingRepository
 from ...infrastructure.signable_documents import (
-    BUILDERS,
     FILENAMES,
     SignableDocumentData,
     build_signable_document_pdf,
     code_from_ref,
     is_generated_ref,
+    known_codes,
 )
 
 
@@ -74,8 +74,14 @@ class GetSignableDocumentPdfUseCase:
             )
 
         code = code_from_ref(document.storage_ref)
-        if code not in BUILDERS:
-            # La fila apunta a un generador que no existe: es un error de
+        # `known_codes()` y NO `BUILDERS`: un documento es servible si está en
+        # CUALQUIERA de los dos registros — overlay sobre el PDF de RRHH o
+        # generado desde cero. Comprobar solo `BUILDERS` rompió los cuatro
+        # documentos el día que todos pasaron a overlay y ese diccionario se quedó
+        # vacío: el endpoint respondía "está mal configurado" a peticiones
+        # perfectamente válidas.
+        if code not in known_codes():
+            # La fila apunta a un documento que no existe: es un error de
             # configuración (una migración que quedó a medias), no una petición
             # inválida del usuario.
             raise OnboardingDocumentNotFoundError(
