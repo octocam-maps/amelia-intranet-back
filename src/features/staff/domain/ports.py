@@ -109,6 +109,27 @@ class IStaffRepository(Protocol):
         (`get_or_create_balance`)."""
         ...
 
+    async def count_active_admins(self, *, excluding_user_id: Optional[str] = None) -> int:
+        """Administradores vivos y no suspendidos, sin contar a
+        `excluding_user_id`. Lo usa la baja definitiva para no dejar la
+        intranet sin nadie que pueda administrarla."""
+        ...
+
+    async def soft_delete_member(self, user_id: str) -> None:
+        """Baja definitiva: marca `users.deleted_at`, libera el email y BORRA
+        los datos personales de `user_profiles` que ya no hacen falta.
+
+        NO borra la fila de `users` ni ningún registro laboral: fichajes,
+        ausencias y documentos firmados quedan intactos y siguen apuntando a
+        este id — el registro de jornada es obligación de conservación durante
+        4 años (art. 34.9 ET), así que un `DELETE` real se lo llevaría por
+        `ON DELETE CASCADE`.
+
+        Se conserva `full_name` a propósito: sin él, el informe de RRHH de los
+        últimos 4 años mostraría filas sin dueño y dejaría de cumplir su
+        función."""
+        ...
+
     async def list_role_history(self, user_id: str) -> list[RoleChange]:
         """Transiciones de rol de una persona, de la más reciente a la más
         antigua (`user_role_history`, migración 039). Incluye la fila de alta,

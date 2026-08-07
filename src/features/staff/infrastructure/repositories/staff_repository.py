@@ -431,3 +431,84 @@ class PostgresStaffRepository(IStaffRepository):
             )
             for row in rows
         ]
+
+    # --- Baja definitiva (soft delete con anonimización) ---
+
+    async def count_active_admins(self, *, excluding_user_id: Optional[str] = None) -> int:
+        return await self._db.fetchval(
+            """
+            SELECT COUNT(*) FROM users u
+            JOIN roles r ON r.id = u.role_id
+            WHERE r.code = 'administrador'
+              AND u.deleted_at IS NULL
+              AND u.status = 'active'
+              AND ($1::uuid IS NULL OR u.id <> $1::uuid)
+            """,
+            excluding_user_id,
+        )
+
+    async def soft_delete_member(self, user_id: str) -> None:
+        # Las tres escrituras van en UNA transacción: un usuario marcado como
+        # borrado pero con su DNI e IBAN todavía en `user_profiles` sería
+        # justo el estado que esta operación existe para evitar, y nadie lo
+        # notaría porque la ficha ya no se puede abrir.
+        async with self._db.acquire() as connection:
+            async with connection.transaction():
+                # PRIMERO las invitaciones y con el email TODAVÍA original:
+                # `invitations` no tiene `user_id`, se relaciona por email, así
+                # que hacerlo después del renombrado no encontraría ninguna y
+                # el enlace pendiente seguiría dando de alta a quien acabamos
+                # de dar de baja.
+                await connection.execute(
+                    """
+                    UPDATE invitations SET status = 'revoked'
+                    WHERE status = 'pending'
+                      AND email = (SELECT email FROM users WHERE id = $1)
+                    """,
+                    user_id,
+                )
+
+                # El email se LIBERA renombrándolo, no se borra: `users.email`
+                # es NOT NULL y UNIQUE. El sufijo con el epoch permite dar de
+                # baja dos veces al mismo email (reingreso y nueva salida) sin
+                # colisionar consigo mismo.
+                await connection.execute(
+                    """
+                    UPDATE users
+                    SET deleted_at = CURRENT_TIMESTAMP,
+                        status     = 'suspended',
+                        email      = email || '.deleted.' ||
+                                     EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::bigint,
+                        -- `google_sub` a NULL o el login por Google seguiría
+                        -- reconociéndolo y crearía sesión contra una ficha
+                        -- borrada. Es UNIQUE, así que además bloquearía el
+                        -- alta futura de esa misma cuenta de Google.
+                        google_sub = NULL,
+                        avatar_url = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $1 AND deleted_at IS NULL
+                    """,
+                    user_id,
+                )
+
+                # Datos personales sin finalidad una vez la persona se va
+                # (RGPD, minimización). `city` y `company_phone` caen también:
+                # son datos de contacto, no registro laboral.
+                await connection.execute(
+                    """
+                    UPDATE user_profiles
+                    SET dni_nif = NULL,
+                        birth_date = NULL,
+                        phone = NULL,
+                        address = NULL,
+                        city = NULL,
+                        company_phone = NULL,
+                        emergency_contact_name = NULL,
+                        emergency_contact_phone = NULL,
+                        iban = NULL,
+                        social_security_number = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = $1
+                    """,
+                    user_id,
+                )

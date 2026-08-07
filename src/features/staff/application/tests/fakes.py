@@ -62,6 +62,9 @@ class FakeStaffRepository:
         self.invitations: list[RecordedInvitation] = []
         # Filas que el repositorio real escribiría en `user_role_history` (039).
         self.role_history: list[dict] = []
+        # Baja definitiva: ids marcados como borrados. La fila sigue en
+        # `members`, igual que en BD sigue en `users`.
+        self.deleted_member_ids: set[str] = set()
 
     def _filtered(self, *, entity_code: Optional[str], search: Optional[str]) -> list[StaffMember]:
         members = list(self.members.values())
@@ -89,6 +92,22 @@ class FakeStaffRepository:
 
     async def find_by_id(self, user_id: str) -> Optional[StaffMember]:
         return self.members.get(user_id)
+
+    async def count_active_admins(self, *, excluding_user_id: Optional[str] = None) -> int:
+        return sum(
+            1
+            for m in self.members.values()
+            if m.role_code == "administrador"
+            and m.status == "active"
+            and m.id != excluding_user_id
+            and m.id not in self.deleted_member_ids
+        )
+
+    async def soft_delete_member(self, user_id: str) -> None:
+        """Refleja lo que hace el adaptador real: la fila NO se borra, se
+        marca. Guardar los ids aparte —en vez de sacarlos de `members`— es lo
+        que permite comprobar en los tests que el histórico sigue ahí."""
+        self.deleted_member_ids.add(user_id)
 
     async def find_by_email(self, email: str) -> Optional[StaffMember]:
         for member in self.members.values():
