@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS roles (
     code       VARCHAR(30) NOT NULL UNIQUE
                  CHECK (code IN ('administrador', 'empleado', 'externo_invitado',
                                  'socio',      -- [024]
-                                 'becario')),  -- [038] todo salvo control horario
+                                 'becario',    -- [038] todo salvo control horario
+                                 'tecnico')),  -- [051] parte diario en vez de fichaje
     name       VARCHAR(80) NOT NULL,
     is_system  BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -54,11 +55,17 @@ CREATE TABLE IF NOT EXISTS departments (
     entity_id            UUID NOT NULL REFERENCES entities(id) ON DELETE RESTRICT,
     parent_department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
     name                 VARCHAR(120) NOT NULL,
+    -- [055] Los del catálogo viejo sin equivalencia (`Administración`,
+    -- `Ingeniería`) se DESACTIVAN en vez de borrarse: `users.department_id` es
+    -- `ON DELETE SET NULL` y borrarlos dejaría a su gente sin departamento en
+    -- silencio. Una base nueva no los tiene, así que aquí todos nacen activos.
+    is_active            BOOLEAN NOT NULL DEFAULT TRUE,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_departments_entity_name UNIQUE (entity_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_departments_entity_id ON departments(entity_id);
+CREATE INDEX IF NOT EXISTS idx_departments_is_active ON departments(is_active) WHERE is_active;
 
 -- Usuarios. Identidad delegada en Google OIDC → sin password.
 -- hire_date [015]: fecha de alta laboral, ligada al cálculo de vacaciones.
@@ -280,8 +287,11 @@ CREATE TABLE IF NOT EXISTS document_acknowledgements (
 -- RRHH core: control horario, ausencias, festivos (Fase 3 / Fase 6 R2)
 -- ----------------------------------------------------------------------------
 
--- EXCLUDE anti-solape [012]: dos tramos del mismo usuario/día no pueden
--- solaparse en el tiempo (un tramo abierto llega hasta 'infinity').
+-- EXCLUDE anti-solape [012, rehecho en 053]: dos tramos del mismo usuario no
+-- pueden solaparse en el tiempo (un tramo abierto llega hasta 'infinity').
+-- Ya NO se agrupa por `work_date`: desde [053] un tramo puede cruzar la
+-- medianoche (parte del técnico), y agrupar por fecha dejaba sin comparar dos
+-- tramos de días distintos con horas solapadas.
 CREATE TABLE IF NOT EXISTS time_clock_entries (
     id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -294,11 +304,59 @@ CREATE TABLE IF NOT EXISTS time_clock_entries (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT time_clock_entries_no_overlap EXCLUDE USING gist (
         user_id WITH =,
-        work_date WITH =,
         tstzrange(clock_in, COALESCE(clock_out, 'infinity'::timestamptz), '[)') WITH &&
-    )
+    ),
+    -- [052] Redundante con la PK, pero es lo que permite la FK compuesta de
+    -- `technician_daily_logs`: sin ella, las columnas copiadas allí podrían
+    -- desincronizarse de su tramo.
+    CONSTRAINT uq_time_clock_entries_id_user_date UNIQUE (id, user_id, work_date)
 );
 CREATE INDEX IF NOT EXISTS idx_time_clock_entries_user_date ON time_clock_entries(user_id, work_date);
+
+-- Parte diario del técnico [052]. Satélite 1:1 OPCIONAL de un tramo: el tramo
+-- sigue siendo un fichaje normal (y por tanto entra en el registro legal de
+-- jornada del art. 34.9 ET y en el informe XLSX de RRHH); esta tabla solo
+-- añade el detalle de campo, para no llenar `time_clock_entries` de columnas
+-- que son NULL para el resto de la plantilla.
+CREATE TABLE IF NOT EXISTS projects (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    code       VARCHAR(40) NOT NULL UNIQUE,
+    name       VARCHAR(160) NOT NULL,
+    is_active  BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_projects_is_active ON projects(is_active) WHERE is_active;
+
+CREATE TABLE IF NOT EXISTS technician_daily_logs (
+    entry_id         UUID PRIMARY KEY REFERENCES time_clock_entries(id) ON DELETE CASCADE,
+    user_id          UUID NOT NULL,
+    work_date        DATE NOT NULL,
+    project_id       UUID NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    work_location    VARCHAR(160) NOT NULL,
+    had_break        BOOLEAN NOT NULL,
+    break_minutes    INTEGER NOT NULL DEFAULT 0 CHECK (break_minutes >= 0),
+    -- Un solo campo, no booleano + lugar: "no hubo pernocta pero fue en
+    -- España" no debe poder escribirse.
+    overnight_stay   VARCHAR(12) NOT NULL DEFAULT 'ninguna'
+                       CHECK (overnight_stay IN ('ninguna', 'espana', 'extranjero')),
+    product_category VARCHAR(20) NOT NULL
+                       CHECK (product_category IN ('software', 'hardware')),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_technician_daily_logs_entry
+        FOREIGN KEY (entry_id, user_id, work_date)
+        REFERENCES time_clock_entries (id, user_id, work_date) ON DELETE CASCADE,
+    CONSTRAINT uq_technician_daily_logs_one_per_day UNIQUE (user_id, work_date),
+    CONSTRAINT chk_break_consistency
+        CHECK ((had_break AND break_minutes > 0) OR (NOT had_break AND break_minutes = 0))
+);
+CREATE INDEX IF NOT EXISTS idx_technician_daily_logs_user_date
+    ON technician_daily_logs(user_id, work_date);
+CREATE INDEX IF NOT EXISTS idx_technician_daily_logs_project
+    ON technician_daily_logs(project_id);
+CREATE INDEX IF NOT EXISTS idx_technician_daily_logs_overnight
+    ON technician_daily_logs(overnight_stay) WHERE overnight_stay <> 'ninguna';
 
 CREATE TABLE IF NOT EXISTS time_clock_breaks (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -573,7 +631,8 @@ INSERT INTO roles (code, name) VALUES
     ('empleado',         'Empleado'),
     ('externo_invitado', 'Externo-invitado'),
     ('socio',            'Socio'),
-    ('becario',          'Becario')
+    ('becario',          'Becario'),
+    ('tecnico',          'Técnico')
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO entities (code, name) VALUES
@@ -629,16 +688,29 @@ ON CONFLICT (code) DO NOTHING;
 -- nombra al dar de alta gente, así que tener el juego completo por entidad es lo
 -- que evita duplicados escritos a mano. Sin esto una base nueva arranca con
 -- entidades y CERO departamentos, y el alta de plantilla se queda sin opciones.
+-- Catálogo 2026 [055], pedido por RRHH. Los departamentos raíz:
 INSERT INTO departments (entity_id, name)
 SELECT e.id, d.name
 FROM entities e
 CROSS JOIN (VALUES
-    ('Administración'),
-    ('Comercial'),
-    ('Ingeniería'),
+    ('Marketing'),
     ('Operaciones'),
-    ('Producto')
+    ('Producto'),
+    ('I+D'),
+    ('Ventas')
 ) AS d(name)
+ON CONFLICT (entity_id, name) DO NOTHING;
+
+-- Y `Software`/`Hardware` colgando del `Producto` de SU MISMA entidad [055].
+-- Ojo: NO son la categoría de producto del parte del técnico
+-- (`technician_daily_logs.product_category`) — comparten nombre por
+-- casualidad y son ejes distintos: alguien del departamento de Hardware puede
+-- imputar una jornada a Software.
+INSERT INTO departments (entity_id, name, parent_department_id)
+SELECT parent.entity_id, child.name, parent.id
+FROM departments parent
+CROSS JOIN (VALUES ('Software'), ('Hardware')) AS child(name)
+WHERE parent.name = 'Producto'
 ON CONFLICT (entity_id, name) DO NOTHING;
 
 -- Los 5 pasos del onboarding [020], YA EN EL ORDEN VIGENTE de v1.1 [033]:
