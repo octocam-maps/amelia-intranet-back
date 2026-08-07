@@ -162,6 +162,29 @@ class PostgresDocumentRepository:
         )
         return [(str(row["id"]), row["email"], row["entity_name"]) for row in rows]
 
+    async def find_provisionable_users_with_email(
+        self,
+    ) -> list[tuple[str, str, Optional[str]]]:
+        # `('active','invited')` y no solo `'active'`: ver el puerto. El
+        # invitado es quien AÚN NO ha entrado nunca, no quien no pertenece a
+        # la empresa — su contrato existe antes de su primer día y necesita
+        # dónde archivarse. Con el filtro del sync, 32 de las 37 personas de
+        # la plantilla se quedaban sin carpeta, y dos de las cuatro entidades
+        # sin crear.
+        #
+        # Crear la carpeta NO envía ningún correo: el provisioning no toca
+        # `NotifyUseCase` y el cliente de Drive nunca llama a `permissions()`,
+        # que es lo que dispararía el aviso de Google.
+        rows = await self._db.fetch(
+            """
+            SELECT u.id, u.email, e.name AS entity_name
+            FROM users u
+            LEFT JOIN entities e ON e.id = u.entity_id
+            WHERE u.status IN ('active', 'invited') AND u.deleted_at IS NULL
+            """
+        )
+        return [(str(row["id"]), row["email"], row["entity_name"]) for row in rows]
+
     async def find_entity_name_for_user(self, user_id: str) -> Optional[str]:
         return await self._db.fetchval(
             """

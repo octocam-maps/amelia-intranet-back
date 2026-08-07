@@ -133,3 +133,39 @@ async def test_save_and_find_drive_folder_id():
 
     assert folder_id == "folder-abc"
     pool.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_the_sync_query_stays_limited_to_active_people():
+    """El sync indexa documentos y AVISA a su dueño por cada uno. Ampliarlo a
+    los `invited` mandaría correos a quien todavía no puede entrar."""
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresDocumentRepository(pool)
+
+    await repository.find_active_users_with_email()
+
+    query = pool.fetch.call_args[0][0]
+    assert "u.status = 'active'" in query
+    assert "invited" not in query
+    assert "deleted_at IS NULL" in query
+
+
+@pytest.mark.asyncio
+async def test_the_folder_batch_query_also_takes_the_invited():
+    """Son dos preguntas distintas sobre la misma tabla y por eso son dos
+    métodos. Este test existe para que unificarlos "porque son casi iguales"
+    rompa algo visible en vez de cambiar en silencio a quién se le crea
+    carpeta o a quién se le manda un correo."""
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresDocumentRepository(pool)
+
+    await repository.find_provisionable_users_with_email()
+
+    query = pool.fetch.call_args[0][0]
+    assert "'active'" in query and "'invited'" in query
+    # Los suspendidos siguen fuera: ya pasaron por activos, su carpeta existe.
+    assert "suspended" not in query
+    # El borrado lógico manda por encima de todo lo demás.
+    assert "deleted_at IS NULL" in query

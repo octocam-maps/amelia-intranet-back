@@ -38,6 +38,7 @@ class FakeDocumentRepository:
         documents: Optional[list[Document]] = None,
         *,
         active_users: Optional[list[tuple[str, str, Optional[str]]]] = None,
+        invited_users: Optional[list[tuple[str, str, Optional[str]]]] = None,
         entity_name_by_user: Optional[dict[str, str]] = None,
     ):
         self.documents: dict[str, Document] = {d.id: d for d in (documents or [])}
@@ -49,6 +50,13 @@ class FakeDocumentRepository:
         # ausente para no reescribir los tests que no van de entidades.
         self.active_users: list[tuple[str, str, Optional[str]]] = [
             (u if len(u) == 3 else (*u, None)) for u in (active_users or [])
+        ]
+        # Los `invited` los ve el batch de carpetas y NO el sync — son dos
+        # métodos distintos del puerto a propósito. Separarlos aquí es lo que
+        # permite que un test note si el batch se equivoca de consulta:
+        # con una sola lista, leer el método erróneo daría el mismo resultado.
+        self.invited_users: list[tuple[str, str, Optional[str]]] = [
+            (u if len(u) == 3 else (*u, None)) for u in (invited_users or [])
         ]
         self.entity_name_by_user: dict[str, str] = entity_name_by_user or {}
         self.sync_runs: dict[str, SyncRun] = {}
@@ -128,6 +136,11 @@ class FakeDocumentRepository:
 
     async def find_active_users_with_email(self) -> list[tuple[str, str, Optional[str]]]:
         return list(self.active_users)
+
+    async def find_provisionable_users_with_email(
+        self,
+    ) -> list[tuple[str, str, Optional[str]]]:
+        return list(self.active_users) + list(self.invited_users)
 
     async def find_entity_name_for_user(self, user_id: str) -> Optional[str]:
         return self.entity_name_by_user.get(user_id)
