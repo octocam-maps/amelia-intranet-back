@@ -11,7 +11,7 @@ siempre es un string plano, y las comparaciones (`==`, `in`) entre un
 (`src/shared/auth/dependencies.py:77`) sigue aceptando estas tuplas tal cual,
 sin tocar su firma.
 
-Los 5 roles son los del alcance actual del producto — el "Supervisor" que
+Los 6 roles son los del alcance actual del producto — el "Supervisor" que
 sugerían las referencias visuales NO entra, RRHH lo descartó.
 """
 
@@ -24,6 +24,7 @@ class RoleCode(str, Enum):  # noqa: UP042 — mixin deliberado, ver docstring
     EXTERNO_INVITADO = "externo_invitado"
     SOCIO = "socio"
     BECARIO = "becario"
+    TECNICO = "tecnico"
 
 
 ALL_ROLES = (
@@ -32,6 +33,7 @@ ALL_ROLES = (
     RoleCode.EXTERNO_INVITADO,
     RoleCode.SOCIO,
     RoleCode.BECARIO,
+    RoleCode.TECNICO,
 )
 
 # Onboarding completo (5 pasos) / features de uso interno — excluye al
@@ -42,11 +44,16 @@ ALL_ROLES = (
 # acceso por defecto — un olvido debe dejarle DENTRO, que es el comportamiento
 # pedido, no fuera en silencio. Lo único que se le niega es el fichaje, y eso
 # se expresa restringiendo ahí (`TIME_CLOCK_ROLES`), no ampliando aquí.
+#
+# `tecnico` SÍ entra [migración 051] por el mismo motivo: accede a todo lo que
+# ve un empleado. Lo único que cambia en él es CÓMO registra su jornada, y eso
+# se expresa más abajo, no recortando aquí.
 INTERNAL_ROLES = (
     RoleCode.ADMINISTRADOR,
     RoleCode.EMPLEADO,
     RoleCode.SOCIO,
     RoleCode.BECARIO,
+    RoleCode.TECNICO,
 )
 
 # Control horario (RF-A10): es `INTERNAL_ROLES` MENOS el becario. Existe como
@@ -56,19 +63,31 @@ INTERNAL_ROLES = (
 # conceptos distintos.
 #
 # El externo-invitado ya estaba fuera (docs/permisos-roles.md: Control horario
-# ❌ para externo). Un becario que no ficha tampoco debe recibir el recordatorio
-# diario de fichaje — ver `list_active_user_ids_excluding_roles` en
-# `notifications/infrastructure/repositories/notification_repository.py`.
+# ❌ para externo). El `tecnico` [migración 051] tampoco entra: no ficha por
+# tramos, cumplimenta un parte diario (`TECHNICIAN_ROLES`).
 TIME_CLOCK_ROLES = (RoleCode.ADMINISTRADOR, RoleCode.EMPLEADO, RoleCode.SOCIO)
 
-# El complemento de `TIME_CLOCK_ROLES`, DERIVADO en vez de escrito a mano: quien
-# no puede fichar tampoco debe recibir el recordatorio diario de fichaje
-# (RF-A4.3). Si mañana entra un rol y no se le da acceso al fichaje, queda
-# excluido del recordatorio automáticamente — dos listas paralelas escritas a
-# mano se habrían desincronizado en el primer despiste, y el síntoma habría sido
-# un email diario pidiéndole fichar a alguien que no tiene dónde hacerlo.
-ROLES_WITHOUT_TIME_CLOCK = tuple(
-    role for role in ALL_ROLES if role not in TIME_CLOCK_ROLES
+# Parte diario del técnico (requerimiento v1.2 §M1): proyecto, lugar, horario,
+# pausa, pernocta y categoría de producto, uno por día, con bolsa mensual de
+# 162 h. Guarda los endpoints de `/time-clock/technician-logs`.
+TECHNICIAN_ROLES = (RoleCode.TECNICO,)
+
+# Quién debe DEJAR CONSTANCIA DE SU JORNADA cada día, sea por el fichaje de
+# tramos o por el parte del técnico. No es lo mismo que `TIME_CLOCK_ROLES`, y
+# confundirlos tiene consecuencias: el recordatorio diario (RF-A4.3) se deriva
+# de este grupo, así que si se hubiera derivado del fichaje, el técnico —a quien
+# el parte le es OBLIGATORIO a diario— habría dejado de recibirlo en silencio.
+DAILY_TIME_LOG_ROLES = TIME_CLOCK_ROLES + TECHNICIAN_ROLES
+
+# El complemento de `DAILY_TIME_LOG_ROLES`, DERIVADO en vez de escrito a mano:
+# quien no tiene dónde registrar su jornada no debe recibir el recordatorio
+# diario (RF-A4.3). Si mañana entra un rol y no se le da ninguna forma de
+# registrar jornada, queda excluido del recordatorio automáticamente — dos
+# listas paralelas escritas a mano se habrían desincronizado en el primer
+# despiste, y el síntoma habría sido un email diario pidiéndole fichar a alguien
+# que no tiene dónde hacerlo.
+ROLES_WITHOUT_TIME_TRACKING = tuple(
+    role for role in ALL_ROLES if role not in DAILY_TIME_LOG_ROLES
 )
 
 ADMIN_ONLY = (RoleCode.ADMINISTRADOR,)

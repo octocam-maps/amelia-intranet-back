@@ -21,7 +21,7 @@ manualmente). Reglas de negocio:
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from src.shared.utils.timezone import today_in_madrid
+from src.shared.utils.timezone import MADRID_TZ, today_in_madrid
 
 from ...domain.entities import TimeClockEntry, TimeClockSource
 from ...domain.errors import (
@@ -79,10 +79,25 @@ class CreateTimeClockEntryUseCase:
 
 
 def _validate_range(work_date: date, clock_in: datetime, clock_out: Optional[datetime]) -> None:
-    if clock_in.date() != work_date:
+    """Las fechas se comparan en hora de MADRID, no en la del datetime recibido.
+
+    `clock_in` llega como instante absoluto y su `.date()` en crudo depende del
+    huso en que venga expresado: un cliente que envíe UTC (`toISOString()`)
+    manda las 00:30 de Madrid como las 23:30 del día ANTERIOR, y la comparación
+    rechazaba como "fuera de fecha" un fichaje perfectamente válido de
+    madrugada. El resto del feature ya razona en Madrid (`today_in_madrid()`
+    aquí mismo, `_fmt_time` en el informe XLSX), así que comparar en otro huso
+    era la incoherencia.
+
+    La regla de negocio NO cambia: el tramo sigue sin poder cruzar de un día a
+    otro — eso es lo que distingue este alta del parte del técnico, que sí
+    puede (`create_technician_daily_log.py`). Lo que cambia es en qué reloj se
+    mira el día.
+    """
+    if clock_in.astimezone(MADRID_TZ).date() != work_date:
         raise InvalidTimeRangeError("La hora de entrada debe caer dentro de la fecha del tramo.")
     if clock_out is not None:
-        if clock_out.date() != work_date:
+        if clock_out.astimezone(MADRID_TZ).date() != work_date:
             raise InvalidTimeRangeError("El tramo no puede cruzar de un día a otro.")
         if clock_out <= clock_in:
             raise InvalidTimeRangeError("La hora de salida debe ser posterior a la de entrada.")

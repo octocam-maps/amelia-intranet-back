@@ -10,12 +10,14 @@ from src.shared.auth.dependencies import require_role
 from src.shared.auth.roles import ADMIN_ONLY
 
 from ..application.use_cases.create_staff_member import CreateStaffMemberUseCase
+from ..application.use_cases.delete_staff_member import DeleteStaffMemberUseCase
 from ..application.use_cases.get_staff_role_history import GetStaffRoleHistoryUseCase
 from ..application.use_cases.list_staff import ListStaffUseCase
 from ..application.use_cases.update_staff_member import UpdateStaffMemberUseCase
 from .dependencies import (
     get_create_staff_member_use_case,
     get_list_staff_use_case,
+    get_delete_staff_member_use_case,
     get_staff_role_history_use_case,
     get_update_staff_member_use_case,
 )
@@ -107,6 +109,25 @@ def create_staff_router() -> APIRouter:
             kwargs["contract_type"] = dto.contract_type
         member = await use_case.execute(user_id, **kwargs)
         return member_to_dto(member)
+
+    @router.delete("/{user_id}", status_code=204)
+    async def delete_staff_member(
+        user_id: str,
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
+        use_case: DeleteStaffMemberUseCase = Depends(get_delete_staff_member_use_case),
+    ):
+        """Baja DEFINITIVA: borrado lógico con anonimización.
+
+        `DELETE` como verbo, pero la fila de `users` NO se borra. Fichajes,
+        ausencias y documentos firmados quedan intactos —el registro de
+        jornada se conserva 4 años (art. 34.9 ET)— y lo que desaparece son los
+        datos personales sin finalidad: DNI, IBAN, número de la Seguridad
+        Social, dirección, teléfonos y contacto de emergencia.
+
+        No confundir con `PATCH {is_active: false}`, que solo suspende el
+        acceso y es reversible sin pérdida.
+        """
+        await use_case.execute(user_id=user_id, requester_id=current_user["sub"])
 
     @router.get("/{user_id}/role-history", response_model=RoleChangeListDTO)
     async def list_staff_role_history(

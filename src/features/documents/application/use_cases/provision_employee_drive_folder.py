@@ -11,18 +11,30 @@ Caso de uso: provisionar la carpeta PADRE de Google Drive de un empleado
   para el backfill de empleados que ya existían antes de este hook, o cuyo
   hook falló en su momento (best-effort, re-ejecutable).
 
-Alcance: SOLO la carpeta PADRE del empleado. Las subcarpetas de categoría
-(Nóminas/Contratos/General/Otros/Firmados) siguen siendo 100% lazy — se
-crean en el primer upload de esa categoría (`UploadDocumentUseCase`,
-`get_or_create_category_folder`). Pre-crearlas aquí no es trivial (harían
-falta 5 llamadas más a Drive por empleado, incluso para categorías que esa
-persona podría no usar nunca, p. ej. `contract` para alguien sin contrato
-todavía) — se deja fuera de esta unidad, tal como decidió el equipo.
+Alcance (ampliado el 2026-08-06, decisión del team-lead): la carpeta del
+empleado va DENTRO de la de su entidad, y se pre-crean las cinco subcarpetas
+de categoría (Nóminas/Contratos/General/Otros/Firmados).
+
+Antes eran 100% lazy —se creaban en el primer upload de cada categoría— y el
+motivo escrito aquí era el coste: 5 llamadas más a Drive por empleado, incluso
+para categorías que esa persona podría no usar nunca. Se acepta ese coste
+porque el síntoma contrario era peor: RRHH abría la carpeta de alguien recién
+dado de alta, la veía vacía y no podía distinguirlo de un fallo del
+provisioning. Con ~40 personas, 200 llamadas de una vez son irrelevantes.
+
+El árbol resultante:
+
+    RAÍZ / <Entidad> / <email> / {Nóminas, Contratos, General, Otros, Firmados}
 """
 
+import logging
 from dataclasses import dataclass
+from typing import Optional
 
+from ...domain.models import CATEGORY_FOLDER_NAMES
 from ...domain.ports import IDocumentRepository, IDocumentStorage
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -40,11 +52,35 @@ class ProvisionEmployeeDriveFolderUseCase:
         self._repository = repository
         self._storage = storage
 
-    async def execute(self, *, user_id: str, email: str) -> ProvisionFolderResult:
+    async def execute(
+        self, *, user_id: str, email: str, entity_name: Optional[str] = None
+    ) -> ProvisionFolderResult:
         existing_folder_id = await self._repository.find_drive_folder_id(user_id)
         if existing_folder_id is not None:
             return ProvisionFolderResult(drive_folder_id=existing_folder_id, created=False)
 
-        folder_id = await self._storage.get_or_create_employee_folder(email)
+        # `entity_name` puede venir resuelto por quien llama (el batch lo trae
+        # en la misma consulta que los emails, para no hacer una por persona);
+        # si no, se resuelve aquí.
+        if entity_name is None:
+            entity_name = await self._repository.find_entity_name_for_user(user_id)
+
+        folder_id = await self._storage.get_or_create_employee_folder(
+            email, entity_name=entity_name
+        )
         await self._repository.save_drive_folder_id(user_id, folder_id)
+
+        # Las cinco subcarpetas, para que la carpeta no se vea vacía y
+        # RRHH pueda dejar un documento en su sitio desde el primer día.
+        # Best-effort: si Drive falla en una, la carpeta del empleado ya está
+        # creada y registrada, que es lo que importa — el primer upload de esa
+        # categoría la crearía igualmente (`get_or_create_category_folder`).
+        for category in CATEGORY_FOLDER_NAMES:
+            try:
+                await self._storage.get_or_create_category_folder(folder_id, category)
+            except Exception:
+                logger.exception(
+                    "No se pudo pre-crear la subcarpeta '%s' de user_id=%s", category, user_id
+                )
+
         return ProvisionFolderResult(drive_folder_id=folder_id, created=True)

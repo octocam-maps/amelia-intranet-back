@@ -8,7 +8,16 @@ from contextlib import AbstractAsyncContextManager
 from datetime import date, datetime
 from typing import Optional, Protocol
 
-from .entities import TimeClockBreak, TimeClockEntry, TimeClockEntryNote, TimeClockExportRow
+from .entities import (
+    OvernightStay,
+    ProductCategory,
+    Project,
+    TechnicianDailyLog,
+    TimeClockBreak,
+    TimeClockEntry,
+    TimeClockEntryNote,
+    TimeClockExportRow,
+)
 
 
 class ITimeClockRepository(Protocol):
@@ -195,4 +204,85 @@ class ITimeClockRepository(Protocol):
         """Orden cronológico ascendente (hilo de incidencias). Cada nota trae
         `author_full_name` resuelto vía JOIN a `users` — `None` si el autor
         fue eliminado (`ON DELETE SET NULL`)."""
+        ...
+
+    # --- Parte diario del técnico (requerimiento v1.2 §M1) ---
+
+    async def create_daily_log(
+        self,
+        *,
+        user_id: str,
+        work_date: date,
+        started_at: datetime,
+        ended_at: datetime,
+        project_id: str,
+        work_location: str,
+        had_break: bool,
+        break_minutes: int,
+        overnight_stay: OvernightStay,
+        product_category: ProductCategory,
+    ) -> TechnicianDailyLog:
+        """Escribe el tramo en `time_clock_entries` Y su satélite en
+        `technician_daily_logs`. Las dos escrituras van en UNA transacción:
+        un tramo sin su parte sería una jornada fantasma en el registro legal,
+        sin proyecto ni lugar, y nadie sabría de dónde salió."""
+        ...
+
+    async def find_daily_log(self, entry_id: str) -> Optional[TechnicianDailyLog]: ...
+
+    async def find_daily_log_for_date(
+        self, user_id: str, work_date: date
+    ) -> Optional[TechnicianDailyLog]:
+        """El parte de ese día, si existe. Lo consulta el alta para dar un
+        error legible ANTES de que salte `uq_technician_daily_logs_one_per_day`
+        — el constraint es la red de seguridad, no el mensaje al usuario."""
+        ...
+
+    async def list_daily_logs(
+        self, user_id: str, *, date_from: date, date_to: date
+    ) -> list[TechnicianDailyLog]:
+        """Partes del usuario en el rango, con `project_name` y `full_name`
+        resueltos por JOIN. Orden cronológico ascendente."""
+        ...
+
+    async def update_daily_log(
+        self,
+        entry_id: str,
+        *,
+        started_at: datetime,
+        ended_at: datetime,
+        project_id: str,
+        work_location: str,
+        had_break: bool,
+        break_minutes: int,
+        overnight_stay: OvernightStay,
+        product_category: ProductCategory,
+    ) -> TechnicianDailyLog:
+        """Actualiza tramo y satélite en una transacción. `work_date` NO se
+        edita: cambiarla movería el parte de mes y con él el cómputo de la
+        bolsa. Para eso se borra y se crea de nuevo."""
+        ...
+
+    async def delete_daily_log(self, entry_id: str) -> None:
+        """Borra el tramo padre; el `ON DELETE CASCADE` se lleva el satélite."""
+        ...
+
+    async def find_project(self, project_id: str) -> Optional[Project]: ...
+
+    async def list_active_projects(self) -> list[Project]: ...
+
+    async def sum_worked_minutes_by_month(self, user_id: str, year: int) -> dict[int, int]:
+        """Minutos efectivos (bruto menos pausa) por mes del año, indexados
+        por número de mes. Solo meses con partes: los que faltan son cero.
+
+        Alimenta el saldo anual de compensación, que se calcula al vuelo —
+        no hay tabla de saldos ni cierre de mes (decisión del team-lead del
+        2026-08-06)."""
+        ...
+
+    async def sum_compensation_absence_minutes(self, user_id: str, year: int) -> int:
+        """Minutos de descanso compensatorio YA DISFRUTADOS en el año:
+        solicitudes `approved` de tipo `descanso_horas_extra` (catálogo v1.1,
+        migración 032), contadas en días hábiles × `MINUTES_PER_COMPENSATION_
+        DAY`."""
         ...

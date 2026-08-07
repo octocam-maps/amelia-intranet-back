@@ -10,8 +10,10 @@ from src.shared.auth.roles import (
     ADMIN_ONLY,
     ADMIN_SOCIO,
     ALL_ROLES,
+    DAILY_TIME_LOG_ROLES,
     INTERNAL_ROLES,
-    ROLES_WITHOUT_TIME_CLOCK,
+    ROLES_WITHOUT_TIME_TRACKING,
+    TECHNICIAN_ROLES,
     TIME_CLOCK_ROLES,
     RoleCode,
 )
@@ -58,15 +60,49 @@ def test_time_clock_roles_is_a_subset_of_internal_roles():
     assert set(TIME_CLOCK_ROLES) <= set(INTERNAL_ROLES)
 
 
-def test_roles_without_time_clock_is_the_exact_complement():
-    """`ROLES_WITHOUT_TIME_CLOCK` se DERIVA y no se escribe a mano — este test
-    fija esa propiedad, que es la que evita el recordatorio diario de fichaje a
-    quien recibe un 403 al intentar fichar (RF-A4.3)."""
-    assert set(ROLES_WITHOUT_TIME_CLOCK) == set(ALL_ROLES) - set(TIME_CLOCK_ROLES)
-    assert set(ROLES_WITHOUT_TIME_CLOCK) == {
+def test_roles_without_time_tracking_is_the_exact_complement():
+    """`ROLES_WITHOUT_TIME_TRACKING` se DERIVA y no se escribe a mano — este
+    test fija esa propiedad, que es la que evita el recordatorio diario a quien
+    no tiene dónde registrar su jornada (RF-A4.3)."""
+    expected = set(ALL_ROLES) - set(DAILY_TIME_LOG_ROLES)
+    assert set(ROLES_WITHOUT_TIME_TRACKING) == expected
+    assert set(ROLES_WITHOUT_TIME_TRACKING) == {
         RoleCode.EXTERNO_INVITADO,
         RoleCode.BECARIO,
     }
+
+
+def test_tecnico_is_internal_and_therefore_inherits_every_feature():
+    """Migración 051: el técnico accede a todo lo que ve un empleado. Lo único
+    distinto es CÓMO registra su jornada."""
+    assert RoleCode.TECNICO in ALL_ROLES
+    assert RoleCode.TECNICO in INTERNAL_ROLES
+
+
+def test_tecnico_does_not_use_the_tramo_based_time_clock():
+    """El técnico cumplimenta un parte diario, no ficha por tramos: nada de
+    reloj en vivo ni de alta en lote."""
+    assert RoleCode.TECNICO not in TIME_CLOCK_ROLES
+    assert RoleCode.TECNICO in TECHNICIAN_ROLES
+
+
+def test_tecnico_still_gets_the_daily_reminder():
+    """LA regresión de la migración 051, y la razón de que
+    `DAILY_TIME_LOG_ROLES` exista como grupo propio.
+
+    El recordatorio diario se derivaba de `TIME_CLOCK_ROLES`. Como el técnico
+    NO ficha por tramos, sacarlo de ahí sin más lo habría dejado fuera del
+    recordatorio — justo a quien el parte le es OBLIGATORIO cada día. El fallo
+    habría sido silencioso: nadie echa de menos un email que nunca llegó."""
+    assert RoleCode.TECNICO in DAILY_TIME_LOG_ROLES
+    assert RoleCode.TECNICO not in ROLES_WITHOUT_TIME_TRACKING
+
+
+def test_daily_time_log_roles_is_a_subset_of_internal_roles():
+    """Registrar jornada es un recorte de «quién es de uso interno», igual que
+    lo es fichar: un rol que registre jornada sin acceder al resto del producto
+    sería incoherente con la matriz de permisos."""
+    assert set(DAILY_TIME_LOG_ROLES) <= set(INTERNAL_ROLES)
 
 
 def test_role_codes_compare_equal_to_plain_strings():

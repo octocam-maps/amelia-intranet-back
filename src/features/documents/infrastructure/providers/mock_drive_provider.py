@@ -44,8 +44,27 @@ class MockDocumentStorage:
     # estructura real de Drive (subcarpeta de categoría DENTRO de la
     # carpeta del empleado, ver `CATEGORY_FOLDER_NAMES`).
     _category_folders: ClassVar[dict[str, dict[str, str]]] = {}
+    # Reorganización por entidades: carpeta de cada sociedad y a cuál quedó
+    # asociada cada persona — lo que los tests comprueban.
+    _entity_folders: ClassVar[dict[str, str]] = {}
+    entity_by_email: ClassVar[dict[str, str]] = {}
 
-    async def get_or_create_employee_folder(self, email: str) -> str:
+    async def get_or_create_entity_folder(self, entity_name: str) -> str:
+        folder_id = self._entity_folders.get(entity_name)
+        if folder_id is None:
+            folder_id = f"mock-entity-{uuid.uuid4()}"
+            self._entity_folders[entity_name] = folder_id
+        return folder_id
+
+    async def get_or_create_employee_folder(
+        self, email: str, *, entity_name: Optional[str] = None
+    ) -> str:
+        # El mock no modela el árbol, solo la identidad de la carpeta: mover a
+        # una entidad CONSERVA el id, igual que en Drive real, así que basta
+        # con registrar bajo qué entidad quedó.
+        if entity_name is not None:
+            await self.get_or_create_entity_folder(entity_name)
+            self.entity_by_email[email] = entity_name
         folder_id = self._folders_by_email.get(email)
         if folder_id is None:
             folder_id = f"mock-folder-{uuid.uuid4()}"
@@ -53,7 +72,16 @@ class MockDocumentStorage:
             self._files_by_folder[folder_id] = {}
         return folder_id
 
-    async def find_employee_folder(self, email: str) -> Optional[str]:
+    async def find_entity_folder(self, entity_name: str) -> Optional[str]:
+        return self._entity_folders.get(entity_name)
+
+    async def find_employee_folder(
+        self, email: str, *, parent_id: Optional[str] = None
+    ) -> Optional[str]:
+        # El mock no modela padres: si se pide bajo una entidad, solo la
+        # devuelve cuando ya quedó asociada a ella.
+        if parent_id is not None and self.entity_by_email.get(email) is None:
+            return None
         return self._folders_by_email.get(email)
 
     async def get_or_create_category_folder(

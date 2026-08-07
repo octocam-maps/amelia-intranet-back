@@ -53,14 +53,65 @@ class GoogleDriveDocumentStorage:
             root_folder_id=root_folder_id,
         )
 
-    async def get_or_create_employee_folder(self, email: str) -> str:
-        folder_id = await asyncio.to_thread(self._client.find_folder_by_name, email)
+    async def get_or_create_entity_folder(self, entity_name: str) -> str:
+        folder_id = await asyncio.to_thread(self._client.find_folder_by_name, entity_name)
         if folder_id is not None:
             return folder_id
-        return await asyncio.to_thread(self._client.create_folder, email)
+        return await asyncio.to_thread(self._client.create_folder, entity_name)
 
-    async def find_employee_folder(self, email: str) -> Optional[str]:
-        return await asyncio.to_thread(self._client.find_folder_by_name, email)
+    async def get_or_create_employee_folder(
+        self, email: str, *, entity_name: Optional[str] = None
+    ) -> str:
+        """Carpeta del empleado dentro de la de su entidad.
+
+        `entity_name=None` la deja colgando de la raíz — es el caso del
+        externo-invitado, que no pertenece a ninguna sociedad del grupo.
+
+        Los tres casos, en este orden:
+          1. Ya está bajo su entidad -> se devuelve tal cual.
+          2. Existe SUELTA en la raíz (árbol plano anterior a la
+             reorganización) -> se MUEVE, conservando su id.
+          3. No existe -> se crea en su sitio.
+
+        El caso 2 es el que impide duplicar: crear una carpeta nueva dejaría
+        al backend subiendo a la vieja (tiene su id cacheado en
+        `users.drive_folder_id`) y a las personas mirando la nueva, vacía.
+        """
+        if entity_name is None:
+            folder_id = await asyncio.to_thread(self._client.find_folder_by_name, email)
+            if folder_id is not None:
+                return folder_id
+            return await asyncio.to_thread(self._client.create_folder, email)
+
+        entity_folder_id = await self.get_or_create_entity_folder(entity_name)
+
+        existing = await asyncio.to_thread(
+            self._client.find_folder_by_name, email, parent_id=entity_folder_id
+        )
+        if existing is not None:
+            return existing
+
+        # Herencia del árbol plano: la carpeta existe pero cuelga de la raíz.
+        flat = await asyncio.to_thread(self._client.find_folder_by_name, email)
+        if flat is not None:
+            await asyncio.to_thread(
+                self._client.move_folder, flat, new_parent_id=entity_folder_id
+            )
+            return flat
+
+        return await asyncio.to_thread(
+            self._client.create_folder, email, parent_id=entity_folder_id
+        )
+
+    async def find_entity_folder(self, entity_name: str) -> Optional[str]:
+        return await asyncio.to_thread(self._client.find_folder_by_name, entity_name)
+
+    async def find_employee_folder(
+        self, email: str, *, parent_id: Optional[str] = None
+    ) -> Optional[str]:
+        return await asyncio.to_thread(
+            self._client.find_folder_by_name, email, parent_id=parent_id
+        )
 
     async def get_or_create_category_folder(
         self, employee_folder_id: str, category: str

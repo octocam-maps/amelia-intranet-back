@@ -137,6 +137,94 @@ class TimeClockEntryNote:
     author_full_name: Optional[str] = None
 
 
+class OvernightStay(str, Enum):  # noqa: UP042 — mismo mixin que `TimeClockSource`
+    """Dónde pernoctó el técnico (requerimiento v1.2 §M1: «si ha habido
+    pernocta o no» y «en caso de pernocta, si ha sido en España o fuera»).
+
+    RRHH lo pide como DOS preguntas y la UI las hace en dos pasos, pero en el
+    modelo es UN solo campo a propósito: con un booleano `had_overnight_stay`
+    más un `location` aparte, el estado "no hubo pernocta pero fue en España"
+    sería representable, y alguien acabaría escribiéndolo. Aquí no se puede.
+    """
+
+    NINGUNA = "ninguna"
+    ESPANA = "espana"
+    EXTRANJERO = "extranjero"
+
+    @property
+    def counts_as_overnight(self) -> bool:
+        return self is not OvernightStay.NINGUNA
+
+
+class ProductCategory(str, Enum):  # noqa: UP042 — mismo mixin que `OvernightStay`
+    """Línea de producto a la que se imputa la jornada.
+
+    Es un eje DISTINTO del departamento, aunque desde el catálogo de 2026
+    existan también departamentos llamados Software y Hardware (colgando de
+    Producto): alguien del departamento de Hardware puede pasar una jornada
+    imputada a Software. Por eso se pregunta en cada parte y NUNCA se deriva
+    de `users.department_id`.
+    """
+
+    SOFTWARE = "software"
+    HARDWARE = "hardware"
+
+
+@dataclass(frozen=True)
+class Project:
+    """Proyecto al que se imputa un parte. Catálogo cerrado a propósito: con
+    texto libre, a los tres meses hay ocho formas de escribir "Guadix" y el
+    resumen mensual que pide RRHH no puede agrupar por nada."""
+
+    id: str
+    code: str
+    name: str
+    is_active: bool
+
+
+@dataclass(frozen=True)
+class TechnicianDailyLog:
+    """Parte diario de un técnico (requerimiento v1.2 §M1).
+
+    A diferencia del fichaje por tramos, aquí hay UNO por técnico y día
+    (`uq_technician_daily_logs_one_per_day`), la jornada PUEDE cruzar la
+    medianoche y la pausa se declara como un total de minutos en vez de como
+    tramos de `time_clock_breaks`.
+
+    El tramo padre en `time_clock_entries` sigue existiendo y es el que hace
+    que el técnico aparezca en el registro legal de jornada (art. 34.9 ET) y
+    en el informe XLSX de RRHH — esta entidad solo añade el detalle de campo.
+    """
+
+    entry_id: str
+    user_id: str
+    work_date: date
+    # `started_at`/`ended_at` son el `clock_in`/`clock_out` del tramo padre.
+    # Se exponen con otro nombre porque en el parte NO son "fichajes": son la
+    # hora de salida y la de llegada al parque/hotel que declara la persona.
+    started_at: datetime
+    ended_at: datetime
+    project_id: str
+    work_location: str
+    had_break: bool
+    break_minutes: int
+    overnight_stay: OvernightStay
+    product_category: ProductCategory
+    created_at: datetime
+    updated_at: datetime
+    # Resueltos por JOIN solo en los listados, mismo patrón que
+    # `TimeClockEntry.full_name`.
+    project_name: Optional[str] = None
+    full_name: Optional[str] = None
+
+    @property
+    def worked_minutes(self) -> int:
+        """Jornada efectiva: bruto menos pausa. Nunca es `Optional` —el parte
+        se guarda cerrado, con hora de fin— y NUNCA se acepta del cliente."""
+        gross = int((self.ended_at - self.started_at).total_seconds() // 60)
+        return gross - self.break_minutes
+
+
 @dataclass(frozen=True)
 class TimeClockBreak:
     """Una pausa DENTRO de un tramo abierto — modelo "en vivo" (botón

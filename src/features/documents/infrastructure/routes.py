@@ -32,12 +32,14 @@ from .dependencies import (
     get_upload_document_use_case,
 )
 from .mappers import (
+    bulk_folder_plan_to_dto,
     bulk_folder_provision_result_to_dto,
     document_to_dto,
     documents_to_dto,
     sync_run_to_dto,
 )
 from .schemas import (
+    BulkFolderPlanDTO,
     DocumentDTO,
     DocumentListDTO,
     DriveFolderProvisionRunDTO,
@@ -175,5 +177,24 @@ def create_documents_router() -> APIRouter:
         Exclusivo del admin, mismo criterio que `POST /documents/sync`."""
         result = await use_case.execute()
         return bulk_folder_provision_result_to_dto(result)
+
+    @router.get("/provision-folders/plan", response_model=BulkFolderPlanDTO)
+    async def plan_provision_folders(
+        current_user: dict = Depends(require_role(*ADMIN_ONLY)),
+        use_case: BulkProvisionDriveFoldersUseCase = Depends(
+            get_bulk_provision_drive_folders_use_case
+        ),
+    ):
+        """Pasada EN SECO del backfill: qué haría, sin tocar Drive.
+
+        `GET` y no `POST` a propósito: no escribe nada, ni en Drive ni en
+        `drive_sync_runs`. Es la comprobación previa a la primera ejecución
+        real sobre un Drive ya poblado, donde el batch MUEVE carpetas de sitio
+        y no hay deshacer.
+
+        Devuelve el veredicto por persona (`crear` / `mover` / `ya_en_su_sitio`
+        / `ya_registrada`) y `estimated_drive_writes`, que es lo que permite
+        anticipar un `rateLimitExceeded` en vez de descubrirlo a mitad."""
+        return bulk_folder_plan_to_dto(await use_case.plan())
 
     return router

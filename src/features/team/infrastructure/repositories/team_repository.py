@@ -82,6 +82,10 @@ class PostgresTeamRepository(ITeamRepository):
             JOIN users u ON u.id = r.user_id
             JOIN absence_types t ON t.id = r.absence_type_id
             WHERE r.status = 'approved'
+              -- Sin este filtro, quien acaba de ser dado de baja seguía
+              -- apareciendo en el calendario del equipo por sus ausencias
+              -- futuras ya aprobadas: la única pantalla donde reaparecía.
+              AND u.deleted_at IS NULL
               AND u.department_id = $1::uuid
               AND r.start_date <= $3 AND r.end_date >= $2
             ORDER BY r.start_date ASC

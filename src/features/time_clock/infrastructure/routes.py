@@ -9,51 +9,85 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from src.shared.auth.dependencies import require_role
-from src.shared.auth.roles import ADMIN_ONLY, TIME_CLOCK_ROLES, RoleCode
+from src.shared.auth.roles import ADMIN_ONLY, TECHNICIAN_ROLES, TIME_CLOCK_ROLES, RoleCode
 from src.shared.utils.timezone import today_in_madrid
+
+from ..domain.entities import OvernightStay, ProductCategory
+from ..domain.errors import TimeClockForbiddenError
 
 from ..application.use_cases.add_time_clock_entry_note import AddTimeClockEntryNoteUseCase
 from ..application.use_cases.clock_in import ClockInUseCase
 from ..application.use_cases.clock_out import ClockOutUseCase
+from ..application.use_cases.create_technician_daily_log import (
+    CreateTechnicianDailyLogUseCase,
+)
 from ..application.use_cases.create_time_clock_entries_batch import (
     CreateTimeClockEntriesBatchUseCase,
 )
 from ..application.use_cases.create_time_clock_entry import CreateTimeClockEntryUseCase
+from ..application.use_cases.delete_technician_daily_log import (
+    DeleteTechnicianDailyLogUseCase,
+)
 from ..application.use_cases.delete_time_clock_entry import DeleteTimeClockEntryUseCase
 from ..application.use_cases.end_break import EndBreakUseCase
 from ..application.use_cases.export_time_clock_entries import ExportTimeClockEntriesUseCase
+from ..application.use_cases.get_compensation_balance import GetCompensationBalanceUseCase
 from ..application.use_cases.get_live_status import GetLiveStatusUseCase
+from ..application.use_cases.list_projects import ListProjectsUseCase
+from ..application.use_cases.list_technician_daily_logs import (
+    ListTechnicianDailyLogsUseCase,
+)
 from ..application.use_cases.list_time_clock_entries import ListTimeClockEntriesUseCase
 from ..application.use_cases.list_time_clock_entry_notes import ListTimeClockEntryNotesUseCase
 from ..application.use_cases.start_break import StartBreakUseCase
+from ..application.use_cases.update_technician_daily_log import (
+    UpdateTechnicianDailyLogUseCase,
+)
 from ..application.use_cases.update_time_clock_entry import UpdateTimeClockEntryUseCase
 from .dependencies import (
     get_add_time_clock_entry_note_use_case,
     get_clock_in_use_case,
     get_clock_out_use_case,
+    get_compensation_balance_use_case,
+    get_create_technician_daily_log_use_case,
     get_create_time_clock_entries_batch_use_case,
     get_create_time_clock_entry_use_case,
+    get_delete_technician_daily_log_use_case,
     get_delete_time_clock_entry_use_case,
     get_end_break_use_case,
     get_export_time_clock_entries_use_case,
+    get_list_projects_use_case,
+    get_list_technician_daily_logs_use_case,
     get_list_time_clock_entries_use_case,
     get_list_time_clock_entry_notes_use_case,
     get_live_status_use_case,
     get_start_break_use_case,
+    get_update_technician_daily_log_use_case,
     get_update_time_clock_entry_use_case,
 )
 from .mappers import (
     batch_result_to_dto,
+    compensation_balance_to_dto,
+    daily_log_to_dto,
+    daily_logs_to_dto,
     entries_to_dto,
     entry_to_dto,
     live_status_to_dto,
     note_to_dto,
     notes_to_dto,
+    projects_to_dto,
 )
+from .technician_xlsx_export import build_technician_month_workbook, month_filename
 from .schemas import (
     AddTimeClockEntryNoteDTO,
+    CompensationBalanceDTO,
     CreateTimeClockEntriesBatchDTO,
     CreateTimeClockEntryDTO,
+    ProjectListDTO,
+    TechnicianDailyLogDTO,
+    TechnicianDailyLogInputDTO,
+    TechnicianDailyLogListDTO,
+    UpdateTechnicianDailyLogDTO,
     TimeClockCurrentStatusDTO,
     TimeClockEntriesBatchDTO,
     TimeClockEntryDTO,
@@ -415,5 +449,169 @@ def create_time_clock_router() -> APIRouter:
     ):
         await use_case.execute(user_id=current_user["sub"])
         return await _current_status(current_user["sub"], status_use_case)
+
+    # --- Parte diario del técnico (requerimiento v1.2 §M1) ---
+    #
+    # Guard propio: `TECHNICIAN_ROLES + ADMIN_ONLY`, NO `TIME_CLOCK_ROLES`.
+    # El técnico no ficha por tramos y el empleado no cumplimenta partes: son
+    # dos módulos distintos sobre la misma tabla, y copiar el `Depends` del
+    # vecino le daría a cada uno el del otro.
+
+    @router.post("/technician-logs", response_model=TechnicianDailyLogDTO, status_code=201)
+    async def create_technician_log(
+        dto: TechnicianDailyLogInputDTO,
+        current_user: dict = Depends(require_role(*TECHNICIAN_ROLES)),
+        use_case: CreateTechnicianDailyLogUseCase = Depends(
+            get_create_technician_daily_log_use_case
+        ),
+    ):
+        """Cumplimenta el parte del día — siempre para el propio técnico
+        autenticado: nadie rellena el parte de otro. El administrador corrige
+        (PATCH) y consulta, pero no crea partes ajenos."""
+        log = await use_case.execute(
+            user_id=current_user["sub"],
+            work_date=dto.work_date,
+            started_at=dto.started_at,
+            ended_at=dto.ended_at,
+            project_id=dto.project_id,
+            work_location=dto.work_location,
+            had_break=dto.had_break,
+            break_minutes=dto.break_minutes,
+            overnight_stay=OvernightStay(dto.overnight_stay),
+            product_category=ProductCategory(dto.product_category),
+        )
+        return daily_log_to_dto(log)
+
+    @router.get("/technician-logs", response_model=TechnicianDailyLogListDTO)
+    async def list_technician_logs(
+        year: int = Query(..., ge=2020, le=2100),
+        month: int = Query(..., ge=1, le=12),
+        user_id: Optional[str] = Query(
+            None, description="Solo el admin puede consultar a otro técnico"
+        ),
+        current_user: dict = Depends(require_role(*TECHNICIAN_ROLES, *ADMIN_ONLY)),
+        use_case: ListTechnicianDailyLogsUseCase = Depends(
+            get_list_technician_daily_logs_use_case
+        ),
+    ):
+        """Partes de un mes natural más su resumen (consumo, excedente,
+        compensación y pernoctas). El guard RGPD vive en el caso de uso."""
+        logs, summary = await use_case.execute(
+            requester_id=current_user["sub"],
+            requester_role=current_user["role"],
+            year=year,
+            month=month,
+            user_id=user_id,
+        )
+        return daily_logs_to_dto(logs, summary)
+
+    # Declarada ANTES que las rutas con `{entry_id}`: FastAPI resuelve por
+    # orden, y el día que alguien añada un `GET /technician-logs/{entry_id}`,
+    # "balance" se colaría como identificador si estuviera declarada después.
+    @router.get("/technician-logs/balance", response_model=CompensationBalanceDTO)
+    async def get_compensation_balance(
+        year: int = Query(..., ge=2020, le=2100),
+        user_id: Optional[str] = Query(
+            None, description="Solo el admin puede consultar a otro técnico"
+        ),
+        current_user: dict = Depends(require_role(*TECHNICIAN_ROLES, *ADMIN_ONLY)),
+        use_case: GetCompensationBalanceUseCase = Depends(get_compensation_balance_use_case),
+    ):
+        """Saldo ANUAL de descanso por horas extra. Se calcula al vuelo: no hay
+        tabla de saldos ni cierre de mes."""
+        target_user_id = user_id or current_user["sub"]
+        if current_user["role"] != RoleCode.ADMINISTRADOR and target_user_id != current_user["sub"]:
+            raise TimeClockForbiddenError("Solo puedes consultar tu propio saldo.")
+        balance = await use_case.execute(user_id=target_user_id, year=year)
+        return compensation_balance_to_dto(balance)
+
+    @router.get("/technician-logs/projects", response_model=ProjectListDTO)
+    async def list_projects(
+        _: dict = Depends(require_role(*TECHNICIAN_ROLES, *ADMIN_ONLY)),
+        use_case: ListProjectsUseCase = Depends(get_list_projects_use_case),
+    ):
+        """Catálogo para el desplegable «Proyecto» del parte. Solo los activos:
+        un proyecto cerrado sigue en la tabla porque los partes históricos lo
+        referencian, pero no debe ofrecerse para jornadas nuevas."""
+        return projects_to_dto(await use_case.execute())
+
+    @router.get("/technician-logs/export.xlsx")
+    async def export_technician_month(
+        year: int = Query(..., ge=2020, le=2100),
+        month: int = Query(..., ge=1, le=12),
+        user_id: Optional[str] = Query(
+            None, description="Solo el admin puede exportar el de otro técnico"
+        ),
+        current_user: dict = Depends(require_role(*TECHNICIAN_ROLES, *ADMIN_ONLY)),
+        use_case: ListTechnicianDailyLogsUseCase = Depends(
+            get_list_technician_daily_logs_use_case
+        ),
+    ):
+        """Resumen mensual en Excel: hoja «Detalle» con todos los partes y hoja
+        «Resumen» con horas extra, el ×1,45 como fórmula viva y los totales de
+        pernocta dentro y fuera de España."""
+        logs, summary = await use_case.execute(
+            requester_id=current_user["sub"],
+            requester_role=current_user["role"],
+            year=year,
+            month=month,
+            user_id=user_id,
+        )
+        # El nombre sale de los propios partes; si el mes está vacío no hay a
+        # quién nombrar y se cae al del solicitante.
+        technician_name = next(
+            (log.full_name for log in logs if log.full_name), current_user.get("name", "tecnico")
+        )
+        content = build_technician_month_workbook(
+            logs, summary, technician_name=technician_name
+        )
+        filename = month_filename(summary, technician_name)
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @router.patch("/technician-logs/{entry_id}", response_model=TechnicianDailyLogDTO)
+    async def update_technician_log(
+        entry_id: str,
+        dto: UpdateTechnicianDailyLogDTO,
+        current_user: dict = Depends(require_role(*TECHNICIAN_ROLES, *ADMIN_ONLY)),
+        use_case: UpdateTechnicianDailyLogUseCase = Depends(
+            get_update_technician_daily_log_use_case
+        ),
+    ):
+        """`work_date` del body se IGNORA: la fecha del parte no se edita,
+        porque movería la jornada de mes y con ella el cómputo de la bolsa."""
+        log = await use_case.execute(
+            entry_id=entry_id,
+            requester_id=current_user["sub"],
+            requester_role=current_user["role"],
+            started_at=dto.started_at,
+            ended_at=dto.ended_at,
+            project_id=dto.project_id,
+            work_location=dto.work_location,
+            had_break=dto.had_break,
+            break_minutes=dto.break_minutes,
+            overnight_stay=OvernightStay(dto.overnight_stay),
+            product_category=ProductCategory(dto.product_category),
+        )
+        return daily_log_to_dto(log)
+
+    @router.delete("/technician-logs/{entry_id}", status_code=204)
+    async def delete_technician_log(
+        entry_id: str,
+        current_user: dict = Depends(require_role(*TECHNICIAN_ROLES, *ADMIN_ONLY)),
+        use_case: DeleteTechnicianDailyLogUseCase = Depends(
+            get_delete_technician_daily_log_use_case
+        ),
+    ):
+        await use_case.execute(
+            entry_id=entry_id,
+            requester_id=current_user["sub"],
+            requester_role=current_user["role"],
+        )
 
     return router

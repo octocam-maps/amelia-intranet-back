@@ -137,6 +137,34 @@ class GoogleDriveClient:
         )
         return created["id"]
 
+    def move_folder(self, folder_id: str, *, new_parent_id: str) -> None:
+        """Recoloca una carpeta bajo otro padre CONSERVANDO su id.
+
+        Es la operación que hace segura la reorganización por entidades: en
+        Drive, mover no cambia el id, así que el `users.drive_folder_id` que
+        el backend tiene cacheado (migración 025) sigue siendo válido y los
+        documentos ya subidos no se mueven de sitio. La alternativa —crear la
+        carpeta nueva en su sitio— dejaría dos carpetas por persona: la vieja,
+        a la que el backend seguiría subiendo, y la nueva, vacía.
+
+        Se leen los padres actuales en vez de asumir uno: en Drive un fichero
+        puede tener varios, y `removeParents` con un id que no es padre real
+        falla.
+        """
+        current = (
+            self._service.files()
+            .get(fileId=folder_id, fields="parents", supportsAllDrives=True)
+            .execute()
+        )
+        previous_parents = ",".join(current.get("parents", []))
+        self._service.files().update(
+            fileId=folder_id,
+            addParents=new_parent_id,
+            removeParents=previous_parents,
+            fields="id, parents",
+            supportsAllDrives=True,
+        ).execute()
+
     def upload_file(
         self, *, folder_id: str, filename: str, content: bytes, mime_type: str
     ) -> tuple[str, str]:

@@ -19,6 +19,7 @@ from src.shared.database import get_database_pool
 from src.shared.email import get_email_sender
 
 from ..application.use_cases.create_staff_member import CreateStaffMemberUseCase
+from ..application.use_cases.delete_staff_member import DeleteStaffMemberUseCase
 from ..application.use_cases.get_staff_role_history import GetStaffRoleHistoryUseCase
 from ..application.use_cases.list_staff import ListStaffUseCase
 from ..application.use_cases.update_staff_member import UpdateStaffMemberUseCase
@@ -92,6 +93,10 @@ def get_create_staff_member_use_case() -> CreateStaffMemberUseCase:
 
 def get_update_staff_member_use_case() -> UpdateStaffMemberUseCase:
     return UpdateStaffMemberUseCase(_get_repository(), _get_session_revoker())
+
+
+def get_delete_staff_member_use_case() -> DeleteStaffMemberUseCase:
+    return DeleteStaffMemberUseCase(_get_repository(), _get_session_revoker())
 
 
 def get_staff_role_history_use_case() -> GetStaffRoleHistoryUseCase:

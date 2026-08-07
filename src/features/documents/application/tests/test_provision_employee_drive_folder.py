@@ -6,6 +6,8 @@ resuelve/crea la carpeta PADRE de Drive de un empleado y la cachea en
 `notify_document_created` compartido entre `UploadDocumentUseCase` y
 `SyncDocumentsUseCase`."""
 
+from typing import Optional
+
 import pytest
 
 from src.features.documents.application.tests.fakes import (
@@ -25,9 +27,13 @@ class _CountingStorage(FakeDocumentStorage):
     def __init__(self):
         super().__init__()
         self.get_or_create_calls = 0
+        self.last_entity_name: Optional[str] = None
 
-    async def get_or_create_employee_folder(self, email: str) -> str:
+    async def get_or_create_employee_folder(
+        self, email: str, *, entity_name: Optional[str] = None
+    ) -> str:
         self.get_or_create_calls += 1
+        self.last_entity_name = entity_name
         return await super().get_or_create_employee_folder(email)
 
 

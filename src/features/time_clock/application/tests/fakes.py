@@ -8,6 +8,10 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 from src.features.time_clock.domain.entities import (
+    OvernightStay,
+    ProductCategory,
+    Project,
+    TechnicianDailyLog,
     TimeClockBreak,
     TimeClockEntry,
     TimeClockEntryNote,
@@ -28,7 +32,17 @@ class FakeTimeClockRepository:
         phone_by_user: Optional[dict[str, str]] = None,
         holidays: Optional[list[tuple[date, str | None]]] = None,
         approved_absence_ranges: Optional[dict[str, list[tuple[date, date]]]] = None,
+        projects: Optional[list[Project]] = None,
+        compensation_consumed_minutes: Optional[dict[tuple[str, int], int]] = None,
     ):
+        # Parte diario del técnico (v1.2 §M1). `compensation_consumed_minutes`
+        # se indexa por (user_id, año) porque el saldo es ANUAL — el fake no
+        # tiene `absence_requests` detrás.
+        self.daily_logs: dict[str, TechnicianDailyLog] = {}
+        self.projects: dict[str, Project] = {p.id: p for p in (projects or [])}
+        self.compensation_consumed_minutes: dict[tuple[str, int], int] = (
+            compensation_consumed_minutes or {}
+        )
         self.entries = {e.id: e for e in (entries or [])}
         self.breaks: dict[str, TimeClockBreak] = {b.id: b for b in (breaks or [])}
         # Incidencias/comentarios (B-2b) — en memoria, sin tabla real detrás.
@@ -216,11 +230,16 @@ class FakeTimeClockRepository:
     async def find_overlapping_entry(
         self, user_id, work_date, clock_in, clock_out, *, exclude_entry_id=None
     ) -> Optional[TimeClockEntry]:
+        # NO se filtra por `work_date`: desde la migración 053 el EXCLUDE real
+        # tampoco lo hace, porque un parte de técnico puede cruzar la
+        # medianoche. Comparar solo dentro del mismo día dejaría pasar aquí un
+        # solape que Postgres sí rechaza — y el test daría verde sobre una
+        # regla que ya no existe.
         effective_end = clock_out or datetime.max.replace(tzinfo=clock_in.tzinfo)
         for entry in self.entries.values():
             if entry.id == exclude_entry_id:
                 continue
-            if entry.user_id != user_id or entry.work_date != work_date:
+            if entry.user_id != user_id:
                 continue
             other_end = entry.clock_out or datetime.max.replace(tzinfo=entry.clock_in.tzinfo)
             if entry.clock_in < effective_end and other_end > clock_in:
@@ -298,3 +317,129 @@ class FakeTimeClockRepository:
         matches = [n for n in self.notes.values() if n.entry_id == entry_id]
         matches.sort(key=lambda n: n.created_at)
         return matches
+
+    # --- Parte diario del técnico (requerimiento v1.2 §M1) ---
+
+    async def create_daily_log(
+        self,
+        *,
+        user_id: str,
+        work_date: date,
+        started_at: datetime,
+        ended_at: datetime,
+        project_id: str,
+        work_location: str,
+        had_break: bool,
+        break_minutes: int,
+        overnight_stay: OvernightStay,
+        product_category: ProductCategory,
+    ) -> TechnicianDailyLog:
+        entry_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        # El tramo padre también se crea, igual que en el adaptador real: es
+        # lo que hace que el parte cuente en el registro legal de jornada.
+        self.entries[entry_id] = TimeClockEntry(
+            id=entry_id,
+            user_id=user_id,
+            work_date=work_date,
+            clock_in=started_at,
+            clock_out=ended_at,
+            source="manual",
+            created_at=now,
+            updated_at=now,
+        )
+        log = TechnicianDailyLog(
+            entry_id=entry_id,
+            user_id=user_id,
+            work_date=work_date,
+            started_at=started_at,
+            ended_at=ended_at,
+            project_id=project_id,
+            work_location=work_location,
+            had_break=had_break,
+            break_minutes=break_minutes,
+            overnight_stay=overnight_stay,
+            product_category=product_category,
+            created_at=now,
+            updated_at=now,
+            project_name=self.projects.get(project_id, Project(project_id, "X", "X", True)).name,
+            full_name=self.full_names.get(user_id),
+        )
+        self.daily_logs[entry_id] = log
+        return log
+
+    async def find_daily_log(self, entry_id: str) -> Optional[TechnicianDailyLog]:
+        return self.daily_logs.get(entry_id)
+
+    async def find_daily_log_for_date(
+        self, user_id: str, work_date: date
+    ) -> Optional[TechnicianDailyLog]:
+        for log in self.daily_logs.values():
+            if log.user_id == user_id and log.work_date == work_date:
+                return log
+        return None
+
+    async def list_daily_logs(
+        self, user_id: str, *, date_from: date, date_to: date
+    ) -> list[TechnicianDailyLog]:
+        matches = [
+            log
+            for log in self.daily_logs.values()
+            if log.user_id == user_id and date_from <= log.work_date <= date_to
+        ]
+        matches.sort(key=lambda log: log.work_date)
+        return matches
+
+    async def update_daily_log(
+        self,
+        entry_id: str,
+        *,
+        started_at: datetime,
+        ended_at: datetime,
+        project_id: str,
+        work_location: str,
+        had_break: bool,
+        break_minutes: int,
+        overnight_stay: OvernightStay,
+        product_category: ProductCategory,
+    ) -> TechnicianDailyLog:
+        existing = self.daily_logs[entry_id]
+        updated = replace(
+            existing,
+            started_at=started_at,
+            ended_at=ended_at,
+            project_id=project_id,
+            work_location=work_location,
+            had_break=had_break,
+            break_minutes=break_minutes,
+            overnight_stay=overnight_stay,
+            product_category=product_category,
+        )
+        self.daily_logs[entry_id] = updated
+        self.entries[entry_id] = replace(
+            self.entries[entry_id], clock_in=started_at, clock_out=ended_at
+        )
+        return updated
+
+    async def delete_daily_log(self, entry_id: str) -> None:
+        self.daily_logs.pop(entry_id, None)
+        self.entries.pop(entry_id, None)
+
+    async def find_project(self, project_id: str) -> Optional[Project]:
+        return self.projects.get(project_id)
+
+    async def list_active_projects(self) -> list[Project]:
+        return [p for p in self.projects.values() if p.is_active]
+
+    async def sum_worked_minutes_by_month(self, user_id: str, year: int) -> dict[int, int]:
+        totals: dict[int, int] = {}
+        for log in self.daily_logs.values():
+            if log.user_id != user_id or log.work_date.year != year:
+                continue
+            totals[log.work_date.month] = (
+                totals.get(log.work_date.month, 0) + log.worked_minutes
+            )
+        return totals
+
+    async def sum_compensation_absence_minutes(self, user_id: str, year: int) -> int:
+        return self.compensation_consumed_minutes.get((user_id, year), 0)

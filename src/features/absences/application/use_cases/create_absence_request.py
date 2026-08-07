@@ -36,17 +36,37 @@ from ...domain.errors import (
     AbsenceRequestOverlapError,
     AbsenceTypeNotFoundError,
     InsufficientBalanceError,
+    InsufficientCompensationBalanceError,
     InvalidDateRangeError,
 )
-from ...domain.ports import IAbsenceRepository
+from ...domain.ports import IAbsenceRepository, ICompensationBalanceProvider
 
 _AUTO_APPROVAL_NOTE = "Autoaprobado: la solicitud fue creada por el administrador."
 
+# Tipo de ausencia con el que el técnico disfruta sus horas extra (catálogo
+# v1.1 de RRHH, migración 032). Su cupo NO vive en `absence_balances`, así que
+# se valida aparte — ver `ICompensationBalanceProvider`.
+COMPENSATION_ABSENCE_CODE = "descanso_horas_extra"
+
+# 8 h = 1 día (decisión del team-lead del 2026-08-06). Duplicado a propósito
+# de `time_clock.domain.policy.MINUTES_PER_COMPENSATION_DAY`: importarlo aquí
+# acoplaría `absences.application` al dominio de otro feature. Si cambia, hay
+# un test que compara ambos y falla.
+MINUTES_PER_COMPENSATION_DAY = 480
+
 
 class CreateAbsenceRequestUseCase:
-    def __init__(self, repository: IAbsenceRepository, notify: Optional[NotifyUseCase] = None):
+    def __init__(
+        self,
+        repository: IAbsenceRepository,
+        notify: Optional[NotifyUseCase] = None,
+        compensation_balance: Optional[ICompensationBalanceProvider] = None,
+    ):
         self._repository = repository
         self._notify = notify  # opcional — ver ReviewAbsenceRequestUseCase
+        # Opcional por el mismo motivo que `notify`: los tests que no tocan
+        # descanso compensatorio no tienen que construirlo.
+        self._compensation_balance = compensation_balance
 
     async def execute(
         self,
@@ -95,6 +115,13 @@ class CreateAbsenceRequestUseCase:
         is_self_approved = requester_role == RoleCode.ADMINISTRADOR
 
         year = start_date.year
+
+        # Descanso por horas extra: su cupo NO está en `absence_balances`
+        # (`affects_balance = FALSE`, para no descontar de vacaciones), así que
+        # sin esta comprobación se podrían pedir 40 días por 2 horas extra.
+        if absence_type.code == COMPENSATION_ABSENCE_CODE:
+            await self._validate_compensation_balance(user_id, year, days_count)
+
         if absence_type.affects_balance:
             # Se asegura la fila de saldo (upsert) y LUEGO se ajusta en un
             # único UPDATE condicionado al saldo disponible EN LA QUERY —
@@ -154,6 +181,26 @@ class CreateAbsenceRequestUseCase:
 
         return request
 
+    async def _validate_compensation_balance(
+        self, user_id: str, year: int, days_count: float
+    ) -> None:
+        if self._compensation_balance is None:
+            # Sin proveedor cableado no se puede saber el saldo. Se DENIEGA en
+            # vez de dejar pasar: un fallo de wiring no debe traducirse en
+            # descansos sin respaldo, que es lo que ocurriría con la política
+            # contraria y nadie se enteraría hasta el recuento anual.
+            raise InsufficientCompensationBalanceError(
+                "No se ha podido comprobar tu saldo de horas extra. Inténtalo más tarde."
+            )
+
+        available = await self._compensation_balance.available_minutes(user_id, year)
+        requested = int(days_count * MINUTES_PER_COMPENSATION_DAY)
+        if requested > available:
+            raise InsufficientCompensationBalanceError(
+                f"Tu saldo de compensación ({_format_hours(available)}) no cubre "
+                f"los {days_count:g} día(s) solicitados."
+            )
+
     async def _count_business_days(self, start_date: date, end_date: date) -> float:
         holidays = set(await self._repository.list_holiday_dates(start_date, end_date))
         count = 0
@@ -163,3 +210,9 @@ class CreateAbsenceRequestUseCase:
                 count += 1
             current += timedelta(days=1)
         return float(count)
+
+
+def _format_hours(minutes: int) -> str:
+    """"12h 30m" en vez de "750 minutos": el técnico piensa su saldo en horas,
+    igual que lo lee en la tarjeta del dashboard y en el Excel."""
+    return f"{minutes // 60}h {minutes % 60:02d}m"

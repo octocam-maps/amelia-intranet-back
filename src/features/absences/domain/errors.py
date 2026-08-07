@@ -44,3 +44,14 @@ class AbsenceRequestAlreadyReviewedError(ValidationError):
 class AbsenceForbiddenError(InsufficientPermissionsError):
     """Un empleado intenta leer/actuar sobre la solicitud de otro usuario, o
     un no-admin intenta abrir la bandeja/aprobar (docs/permisos-roles.md § Ausencias)."""
+
+
+class InsufficientCompensationBalanceError(ValidationError):
+    """El descanso por horas extra solicitado supera lo devengado y no
+    disfrutado (requerimiento v1.2 §M1).
+
+    Error propio y no `InsufficientBalanceError`: aquel habla del saldo de
+    `absence_balances` (vacaciones, asuntos propios) y este de un saldo que se
+    calcula al vuelo desde los partes del técnico. Compartir el error haría
+    que el mensaje de "saldo insuficiente" señalara a la contabilidad
+    equivocada."""

@@ -55,3 +55,28 @@ class DriveFolderProvisionRunDTO(BaseModel):
     skipped: int
     failed: int
     error_detail: Optional[str] = None
+
+
+class FolderPlanEntryDTO(BaseModel):
+    """Una línea de la pasada en seco. `action`: `crear` | `mover` |
+    `ya_en_su_sitio` | `ya_registrada`."""
+
+    user_id: str
+    email: str
+    entity_name: Optional[str]
+    action: str
+    missing_categories: list[str]
+
+
+class BulkFolderPlanDTO(BaseModel):
+    """Qué haría el provisioning, SIN haberlo hecho. `estimated_drive_writes`
+    es el dato que decide si lanzarlo de una vez: Drive limita las escrituras
+    y un corte a mitad deja el árbol incompleto."""
+
+    entries: list[FolderPlanEntryDTO]
+    entity_folders_to_create: list[str]
+    to_create: int
+    to_move: int
+    already_ok: int
+    category_folders_to_create: int
+    estimated_drive_writes: int

@@ -12,7 +12,11 @@ import pytest
 from src.features.notifications.infrastructure.repositories.notification_repository import (
     PostgresNotificationRepository,
 )
-from src.shared.auth.roles import ROLES_WITHOUT_TIME_CLOCK, TIME_CLOCK_ROLES
+from src.shared.auth.roles import (
+    DAILY_TIME_LOG_ROLES,
+    ROLES_WITHOUT_TIME_TRACKING,
+    RoleCode,
+)
 
 
 def _row(**overrides) -> dict:
@@ -272,10 +276,29 @@ async def test_list_user_ids_pending_clock_in_never_excludes_a_role_that_can_clo
     query = pool.fetch.call_args[0][0]
     excluded_clause = query.split("r.code NOT IN (")[1].split(")")[0]
 
-    for role in TIME_CLOCK_ROLES:
+    for role in DAILY_TIME_LOG_ROLES:
         assert f"'{role.value}'" not in excluded_clause
-    for role in ROLES_WITHOUT_TIME_CLOCK:
+    for role in ROLES_WITHOUT_TIME_TRACKING:
         assert f"'{role.value}'" in excluded_clause
+
+
+@pytest.mark.asyncio
+async def test_list_user_ids_pending_clock_in_still_reminds_the_technician():
+    """Regresión de la migración 051. El técnico NO ficha por tramos, así que
+    derivar la exclusión de `TIME_CLOCK_ROLES` —como se hacía antes— le habría
+    quitado el recordatorio diario justo a quien el parte le es obligatorio
+    cada día. El síntoma habría sido silencioso: nadie echa de menos un email
+    que nunca llegó."""
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresNotificationRepository(pool)
+
+    await repository.list_user_ids_pending_clock_in(date(2026, 7, 9))
+
+    query = pool.fetch.call_args[0][0]
+    excluded_clause = query.split("r.code NOT IN (")[1].split(")")[0]
+
+    assert f"'{RoleCode.TECNICO.value}'" not in excluded_clause
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,8 @@ empleado ACTIVO que todavía no la tenga cacheada, reusando el núcleo
 idempotente `ProvisionEmployeeDriveFolderUseCase`. Re-ejecutable (sirve de
 retry) y best-effort por empleado (mismo criterio que `SyncDocumentsUseCase`)."""
 
+from typing import Optional
+
 import pytest
 
 from src.features.documents.application.tests.fakes import (
@@ -66,10 +68,12 @@ async def test_one_employee_failure_does_not_abort_the_rest_and_is_reported():
     batch — se cuenta como fallido y se sigue."""
 
     class _BrokenStorage(FakeDocumentStorage):
-        async def get_or_create_employee_folder(self, email: str) -> str:
+        async def get_or_create_employee_folder(
+            self, email: str, *, entity_name: Optional[str] = None
+        ) -> str:
             if email == "broken@ameliahub.com":
                 raise RuntimeError("Drive no responde.")
-            return await super().get_or_create_employee_folder(email)
+            return await super().get_or_create_employee_folder(email, entity_name=entity_name)
 
     repository = FakeDocumentRepository(
         active_users=[
@@ -106,7 +110,9 @@ async def test_records_a_sync_run_with_success_status_when_nothing_fails():
 @pytest.mark.asyncio
 async def test_records_failed_status_when_every_employee_fails():
     class _AlwaysBrokenStorage(FakeDocumentStorage):
-        async def get_or_create_employee_folder(self, email: str) -> str:
+        async def get_or_create_employee_folder(
+            self, email: str, *, entity_name: Optional[str] = None
+        ) -> str:
             raise RuntimeError("Drive no responde.")
 
     repository = FakeDocumentRepository(

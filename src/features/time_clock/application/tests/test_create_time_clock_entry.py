@@ -217,3 +217,60 @@ async def test_manual_entry_always_persists_source_manual():
 
     assert entry.source == TimeClockSource.MANUAL
     assert repository.entries[entry.id].source == "manual"
+
+
+# --- La fecha del tramo se compara en hora de MADRID, no en la del datetime
+# recibido. Un cliente que envíe el instante en UTC (`toISOString()`) manda la
+# madrugada de Madrid como el día ANTERIOR. ---
+
+
+@pytest.mark.asyncio
+async def test_an_early_morning_entry_sent_in_utc_is_accepted():
+    """00:30 de Madrid en julio (+02:00) viaja como las 22:30 del día anterior
+    en UTC. Comparando la fecha en crudo se rechazaba un fichaje válido."""
+    repository = FakeTimeClockRepository()
+    use_case = _build_use_case(repository)
+
+    entry = await use_case.execute(
+        user_id="user-1",
+        work_date=_TODAY,
+        clock_in=datetime(2026, 7, 8, 22, 30, tzinfo=timezone.utc),
+        clock_out=datetime(2026, 7, 9, 6, 0, tzinfo=timezone.utc),
+    )
+
+    assert entry.work_date == _TODAY
+
+
+@pytest.mark.asyncio
+async def test_an_evening_entry_sent_in_utc_still_belongs_to_its_day():
+    """El turno de tarde es el caso que hacía peligroso arreglar esto a medias:
+    18:00-23:00 de Madrid son 16:00-21:00 UTC del MISMO día, y deben seguir
+    aceptándose."""
+    repository = FakeTimeClockRepository()
+    use_case = _build_use_case(repository)
+
+    entry = await use_case.execute(
+        user_id="user-1",
+        work_date=_TODAY,
+        clock_in=datetime(2026, 7, 9, 16, 0, tzinfo=timezone.utc),
+        clock_out=datetime(2026, 7, 9, 21, 0, tzinfo=timezone.utc),
+    )
+
+    assert entry.work_date == _TODAY
+
+
+@pytest.mark.asyncio
+async def test_the_entry_still_cannot_cross_to_the_next_day_in_madrid():
+    """La regla de negocio NO cambia con el arreglo: el tramo del alta manual
+    sigue sin poder cruzar de día. Eso es lo que lo distingue del parte del
+    técnico, que sí puede. 23:00 UTC son la 01:00 del día siguiente en Madrid."""
+    repository = FakeTimeClockRepository()
+    use_case = _build_use_case(repository)
+
+    with pytest.raises(InvalidTimeRangeError):
+        await use_case.execute(
+            user_id="user-1",
+            work_date=_TODAY,
+            clock_in=datetime(2026, 7, 9, 16, 0, tzinfo=timezone.utc),
+            clock_out=datetime(2026, 7, 9, 23, 0, tzinfo=timezone.utc),
+        )

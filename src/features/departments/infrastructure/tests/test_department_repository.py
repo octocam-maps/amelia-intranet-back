@@ -16,6 +16,10 @@ def _department_row(**overrides) -> dict:
         "name": "Recursos Humanos",
         "entity_id": "entity-hub",
         "entity_code": "hub",
+        # Catálogo 2026 [055]: la mayoría son raíz; solo Software y Hardware
+        # tienen padre.
+        "parent_department_id": None,
+        "parent_name": None,
     }
     row.update(overrides)
     return row
@@ -63,9 +67,50 @@ async def test_list_departments_filters_by_the_users_entity():
     # El `OR ... IS NULL` es el fallback del usuario sin entidad: sin él no vería
     # NINGÚN departamento y no podría completar el paso 4.
     assert "IS NULL" in query
-    # Agrupado por sociedad, que es lo que hace legible el caso ambiguo.
-    assert "ORDER BY e.code, d.name" in query
+    # [055] Los desactivados por el catálogo 2026 (`Administración`,
+    # `Ingeniería`) no se ofrecen para asignaciones nuevas.
+    assert "d.is_active" in query
+    # Agrupado por sociedad y, dentro, por rama: las hojas van pegadas a su
+    # padre (`Producto > Software`), no sueltas en el orden alfabético global.
+    assert "ORDER BY e.code, COALESCE(parent.name, d.name)" in query
     assert args == ["user-1"]
+
+
+@pytest.mark.asyncio
+async def test_child_departments_carry_their_parent_name():
+    """`Software` y `Hardware` cuelgan de `Producto` [055]. El nombre del padre
+    viene resuelto por JOIN para que el selector pueda agrupar sin cruzar la
+    lista consigo misma buscando por id."""
+    pool = AsyncMock()
+    pool.fetch.return_value = [
+        _department_row(
+            id="dept-sw",
+            name="Software",
+            parent_department_id="dept-producto",
+            parent_name="Producto",
+        )
+    ]
+    repository = PostgresDepartmentRepository(pool)
+
+    departments = await repository.list_departments_for_user("user-1")
+
+    assert departments[0].parent_name == "Producto"
+    assert departments[0].parent_department_id == "dept-producto"
+
+
+@pytest.mark.asyncio
+async def test_the_belongs_to_check_does_not_filter_by_is_active():
+    """Deliberado: quien ya está en un departamento desactivado por el catálogo
+    2026 debe poder seguir guardando su perfil. Filtrar aquí convertiría el
+    "desactivar" en el "borrar" que la migración 054 quiso evitar."""
+    pool = AsyncMock()
+    pool.fetchrow.return_value = {"?column?": 1}
+    repository = PostgresDepartmentRepository(pool)
+
+    await repository.department_belongs_to_user_entity("dept-1", "user-1")
+
+    query, *_ = pool.fetchrow.call_args[0]
+    assert "is_active" not in query
 
 
 @pytest.mark.asyncio
