@@ -1,9 +1,9 @@
 """DTOs de request/response (Pydantic) del feature `time_clock`."""
 
 from datetime import date, datetime, time
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 def _require_offset(value: Optional[datetime]) -> Optional[datetime]:
@@ -125,3 +125,105 @@ class TimeClockCurrentStatusDTO(BaseModel):
     open_entry: Optional[OpenTimeClockEntryDTO]
     week_worked_minutes: int
     expected_weekly_minutes: int
+
+
+# --- Parte diario del técnico (requerimiento v1.2 §M1) ---
+
+
+class TechnicianDailyLogInputDTO(BaseModel):
+    """Campos que RRHH pidió literalmente. `worked_minutes` NO está aquí a
+    propósito: es un cálculo del backend y aceptarlo del cliente permitiría
+    declarar 4 horas en una jornada de 12 — justo el dato del que cuelga toda
+    la bolsa de 162 h."""
+
+    work_date: date
+    started_at: datetime
+    ended_at: datetime
+    project_id: str
+    work_location: str = Field(min_length=2, max_length=160)
+    had_break: bool
+    break_minutes: int = Field(default=0, ge=0)
+    # La UI pregunta en dos pasos (¿hubo pernocta? → ¿España o fuera?) y mapea
+    # a este único valor: así "no hubo pernocta pero fue en España" no existe.
+    overnight_stay: Literal["ninguna", "espana", "extranjero"] = "ninguna"
+    product_category: Literal["software", "hardware"]
+
+    @field_validator("started_at", "ended_at")
+    @classmethod
+    def _validate_offset(cls, value: datetime) -> datetime:
+        # Mismo TZ-1 que el resto del feature. Aquí es todavía más importante:
+        # sin offset, una jornada que termina "a las 01:30" es irresoluble
+        # entre el día que empieza y el siguiente.
+        return _require_offset(value)
+
+    @field_validator("work_location")
+    @classmethod
+    def _strip_location(cls, value: str) -> str:
+        stripped = value.strip()
+        if len(stripped) < 2:
+            raise ValueError("Indica el lugar de trabajo.")
+        return stripped
+
+
+class UpdateTechnicianDailyLogDTO(TechnicianDailyLogInputDTO):
+    """`work_date` se hereda pero el caso de uso la IGNORA: cambiarla movería
+    el parte de mes y con él el cómputo de la bolsa. Para eso se borra y se
+    crea de nuevo."""
+
+
+class TechnicianDailyLogDTO(BaseModel):
+    entry_id: str
+    user_id: str
+    full_name: Optional[str] = None
+    work_date: date
+    started_at: datetime
+    ended_at: datetime
+    project_id: str
+    project_name: Optional[str] = None
+    work_location: str
+    had_break: bool
+    break_minutes: int
+    overnight_stay: str
+    product_category: str
+    worked_minutes: int
+
+
+class TechnicianMonthSummaryDTO(BaseModel):
+    year: int
+    month: int
+    budget_minutes: int
+    worked_minutes: int
+    remaining_minutes: int
+    overtime_minutes: int
+    compensation_minutes: int
+    overnight_stays_spain: int
+    overnight_stays_abroad: int
+    overnight_stays_total: int
+    is_closed: bool
+
+
+class TechnicianDailyLogListDTO(BaseModel):
+    logs: list[TechnicianDailyLogDTO]
+    summary: TechnicianMonthSummaryDTO
+
+
+class CompensationBalanceDTO(BaseModel):
+    """Saldo ANUAL. `pending_minutes` es lo que devengaría el mes en curso si
+    terminara hoy — se envía aparte para que la UI pueda mostrarlo sin
+    contarlo como disponible."""
+
+    year: int
+    accrued_minutes: int
+    consumed_minutes: int
+    available_minutes: int
+    pending_minutes: int
+
+
+class ProjectDTO(BaseModel):
+    id: str
+    code: str
+    name: str
+
+
+class ProjectListDTO(BaseModel):
+    projects: list[ProjectDTO]

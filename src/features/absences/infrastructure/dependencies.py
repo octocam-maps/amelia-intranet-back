@@ -1,6 +1,12 @@
 """Wiring de FastAPI: construye los casos de uso con sus adaptadores concretos."""
 
 from src.features.notifications.infrastructure.dependencies import get_notify_use_case
+from src.features.time_clock.application.use_cases.get_compensation_balance import (
+    GetCompensationBalanceUseCase,
+)
+from src.features.time_clock.infrastructure.repositories.time_clock_repository import (
+    PostgresTimeClockRepository,
+)
 from src.shared.database import get_database_pool
 
 from ..application.use_cases.create_absence_request import CreateAbsenceRequestUseCase
@@ -12,6 +18,7 @@ from ..application.use_cases.list_absence_types import ListAbsenceTypesUseCase
 from ..application.use_cases.list_all_absence_types import ListAllAbsenceTypesUseCase
 from ..application.use_cases.review_absence_request import ReviewAbsenceRequestUseCase
 from ..application.use_cases.update_absence_type import UpdateAbsenceTypeUseCase
+from ..domain.ports import ICompensationBalanceProvider
 from .repositories.absence_repository import PostgresAbsenceRepository
 
 
@@ -52,8 +59,32 @@ def get_absence_calendar_use_case() -> GetAbsenceCalendarUseCase:
     return GetAbsenceCalendarUseCase(_get_repository())
 
 
+class _CompensationBalanceAdapter:
+    """Adapta `GetCompensationBalanceUseCase` (feature `time_clock`) al puerto
+    `ICompensationBalanceProvider` que consume `absences.application` — mismo
+    patrón de recomposición entre features que `_DriveFolderProvisionerAdapter`
+    en `staff/infrastructure/dependencies.py`."""
+
+    def __init__(self, use_case: GetCompensationBalanceUseCase):
+        self._use_case = use_case
+
+    async def available_minutes(self, user_id: str, year: int) -> int:
+        balance = await self._use_case.execute(user_id=user_id, year=year)
+        return balance.available_minutes
+
+
+def _get_compensation_balance_provider() -> ICompensationBalanceProvider:
+    return _CompensationBalanceAdapter(
+        GetCompensationBalanceUseCase(PostgresTimeClockRepository(get_database_pool()))
+    )
+
+
 def get_create_absence_request_use_case() -> CreateAbsenceRequestUseCase:
-    return CreateAbsenceRequestUseCase(_get_repository(), get_notify_use_case())
+    return CreateAbsenceRequestUseCase(
+        _get_repository(),
+        get_notify_use_case(),
+        _get_compensation_balance_provider(),
+    )
 
 
 def get_list_absence_requests_use_case() -> ListAbsenceRequestsUseCase:

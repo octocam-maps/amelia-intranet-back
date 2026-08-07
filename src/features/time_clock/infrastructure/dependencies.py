@@ -9,14 +9,28 @@ from ..application.use_cases.clock_out import ClockOutUseCase
 from ..application.use_cases.create_time_clock_entries_batch import (
     CreateTimeClockEntriesBatchUseCase,
 )
+from ..application.use_cases.create_technician_daily_log import (
+    CreateTechnicianDailyLogUseCase,
+)
 from ..application.use_cases.create_time_clock_entry import CreateTimeClockEntryUseCase
+from ..application.use_cases.delete_technician_daily_log import (
+    DeleteTechnicianDailyLogUseCase,
+)
 from ..application.use_cases.delete_time_clock_entry import DeleteTimeClockEntryUseCase
 from ..application.use_cases.end_break import EndBreakUseCase
 from ..application.use_cases.export_time_clock_entries import ExportTimeClockEntriesUseCase
+from ..application.use_cases.get_compensation_balance import GetCompensationBalanceUseCase
 from ..application.use_cases.get_live_status import GetLiveStatusUseCase
+from ..application.use_cases.list_projects import ListProjectsUseCase
+from ..application.use_cases.list_technician_daily_logs import (
+    ListTechnicianDailyLogsUseCase,
+)
 from ..application.use_cases.list_time_clock_entries import ListTimeClockEntriesUseCase
 from ..application.use_cases.list_time_clock_entry_notes import ListTimeClockEntryNotesUseCase
 from ..application.use_cases.start_break import StartBreakUseCase
+from ..application.use_cases.update_technician_daily_log import (
+    UpdateTechnicianDailyLogUseCase,
+)
 from ..application.use_cases.update_time_clock_entry import UpdateTimeClockEntryUseCase
 from .repositories.time_clock_repository import PostgresTimeClockRepository
 
@@ -87,3 +101,35 @@ def get_add_time_clock_entry_note_use_case() -> AddTimeClockEntryNoteUseCase:
 
 def get_list_time_clock_entry_notes_use_case() -> ListTimeClockEntryNotesUseCase:
     return ListTimeClockEntryNotesUseCase(_get_repository())
+
+
+# --- Parte diario del técnico (requerimiento v1.2 §M1) ---
+
+
+def get_create_technician_daily_log_use_case() -> CreateTechnicianDailyLogUseCase:
+    settings = get_settings()
+    # Misma ventana temporal que el alta manual: el parte también es
+    # autodeclarado, así que hereda el límite de LOGIC-2.
+    return CreateTechnicianDailyLogUseCase(
+        _get_repository(), settings.time_clock_manual_entry_max_past_days
+    )
+
+
+def get_update_technician_daily_log_use_case() -> UpdateTechnicianDailyLogUseCase:
+    return UpdateTechnicianDailyLogUseCase(_get_repository())
+
+
+def get_delete_technician_daily_log_use_case() -> DeleteTechnicianDailyLogUseCase:
+    return DeleteTechnicianDailyLogUseCase(_get_repository())
+
+
+def get_list_technician_daily_logs_use_case() -> ListTechnicianDailyLogsUseCase:
+    return ListTechnicianDailyLogsUseCase(_get_repository())
+
+
+def get_compensation_balance_use_case() -> GetCompensationBalanceUseCase:
+    return GetCompensationBalanceUseCase(_get_repository())
+
+
+def get_list_projects_use_case() -> ListProjectsUseCase:
+    return ListProjectsUseCase(_get_repository())

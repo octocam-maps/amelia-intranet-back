@@ -78,3 +78,30 @@ class TimeClockBreakAlreadyOpenError(ValidationError):
 
 class TimeClockNoOpenBreakError(ValidationError):
     """No hay ninguna pausa abierta que reanudar."""
+
+
+# --- Parte diario del técnico (requerimiento v1.2 §M1) ---
+
+
+class TechnicianDailyLogNotFoundError(NotFoundError):
+    """No existe un parte diario con ese id."""
+
+
+class DuplicateDailyLogError(ValidationError):
+    """Ya hay un parte para ese técnico y día. «Se creará un registro diario»:
+    uno, no varios tramos como en el fichaje estándar. Se edita el que hay."""
+
+
+class InvalidBreakError(ValidationError):
+    """La pausa declarada es incoherente: minutos informados habiendo marcado
+    que no hubo pausa, `had_break` sin minutos, o una pausa que se come la
+    jornada entera."""
+
+
+class ProjectNotFoundError(NotFoundError):
+    """El proyecto no existe o está inactivo."""
+
+
+class InsufficientCompensationBalanceError(ValidationError):
+    """El descanso compensatorio solicitado supera el saldo de horas extra
+    devengado y no disfrutado."""

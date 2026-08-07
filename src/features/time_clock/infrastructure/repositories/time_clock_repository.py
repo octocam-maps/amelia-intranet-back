@@ -11,12 +11,23 @@ import asyncpg
 
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
-from ...domain.entities import TimeClockBreak, TimeClockEntry, TimeClockEntryNote, TimeClockExportRow
+from ...domain.entities import (
+    OvernightStay,
+    ProductCategory,
+    Project,
+    TechnicianDailyLog,
+    TimeClockBreak,
+    TimeClockEntry,
+    TimeClockEntryNote,
+    TimeClockExportRow,
+)
 from ...domain.errors import (
+    DuplicateDailyLogError,
     TimeClockAlreadyClockedInError,
     TimeClockBreakAlreadyOpenError,
     TimeClockOverlapError,
 )
+from ...domain.policy import MINUTES_PER_COMPENSATION_DAY
 from ...domain.ports import ITimeClockRepository
 
 _ENTRY_SELECT = """
@@ -39,6 +50,22 @@ _ENTRY_LIST_SELECT = """
 """
 
 _BREAK_SELECT = "SELECT id, entry_id, break_start, break_end FROM time_clock_breaks"
+
+# Parte diario del técnico: el satélite junto con las horas de su tramo padre
+# y los nombres ya resueltos (proyecto y persona). `JOIN` normal en los tres
+# casos — `entry_id` y `project_id` son NOT NULL con FK, y el FK de `user_id`
+# es `ON DELETE CASCADE`, así que no hay filas huérfanas posibles.
+_DAILY_LOG_SELECT = """
+    SELECT d.entry_id, d.user_id, d.work_date, d.project_id, d.work_location,
+           d.had_break, d.break_minutes, d.overnight_stay, d.product_category,
+           d.created_at, d.updated_at,
+           e.clock_in AS started_at, e.clock_out AS ended_at,
+           p.name AS project_name, u.full_name
+    FROM technician_daily_logs d
+    JOIN time_clock_entries e ON e.id = d.entry_id
+    JOIN projects p ON p.id = d.project_id
+    JOIN users u ON u.id = d.user_id
+"""
 
 # Incidencias/comentarios sobre un tramo (B-2b): LEFT JOIN (no JOIN) a
 # `users` porque `author_id` admite NULL (`ON DELETE SET NULL`) — una
@@ -166,6 +193,35 @@ def _row_to_note(row) -> TimeClockEntryNote:
         body=row["body"],
         created_at=row["created_at"],
         author_full_name=row["author_full_name"],
+    )
+
+
+def _row_to_daily_log(row) -> TechnicianDailyLog:
+    return TechnicianDailyLog(
+        entry_id=str(row["entry_id"]),
+        user_id=str(row["user_id"]),
+        work_date=row["work_date"],
+        started_at=row["started_at"],
+        ended_at=row["ended_at"],
+        project_id=str(row["project_id"]),
+        work_location=row["work_location"],
+        had_break=row["had_break"],
+        break_minutes=row["break_minutes"],
+        overnight_stay=OvernightStay(row["overnight_stay"]),
+        product_category=ProductCategory(row["product_category"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        project_name=row["project_name"],
+        full_name=row["full_name"],
+    )
+
+
+def _row_to_project(row) -> Project:
+    return Project(
+        id=str(row["id"]),
+        code=row["code"],
+        name=row["name"],
+        is_active=row["is_active"],
     )
 
 
@@ -568,3 +624,239 @@ class PostgresTimeClockRepository(ITimeClockRepository):
     async def list_notes_for_entry(self, entry_id: str) -> list[TimeClockEntryNote]:
         rows = await self._db.fetch(_NOTE_LIST_SELECT, entry_id)
         return [_row_to_note(row) for row in rows]
+
+    # --- Parte diario del técnico (requerimiento v1.2 §M1) ---
+
+    async def create_daily_log(
+        self,
+        *,
+        user_id: str,
+        work_date: date,
+        started_at: datetime,
+        ended_at: datetime,
+        project_id: str,
+        work_location: str,
+        had_break: bool,
+        break_minutes: int,
+        overnight_stay: OvernightStay,
+        product_category: ProductCategory,
+    ) -> TechnicianDailyLog:
+        # Las DOS escrituras en una sola transacción: un tramo sin su parte
+        # sería una jornada fantasma en el registro legal —sin proyecto ni
+        # lugar— y nadie sabría de dónde salió.
+        async with self._db.acquire() as connection:
+            async with connection.transaction():
+                try:
+                    entry = await connection.fetchrow(
+                        """
+                        INSERT INTO time_clock_entries
+                            (user_id, work_date, clock_in, clock_out, source)
+                        VALUES ($1, $2, $3, $4, 'manual')
+                        RETURNING id, created_at, updated_at
+                        """,
+                        user_id,
+                        work_date,
+                        started_at,
+                        ended_at,
+                    )
+                except asyncpg.exceptions.ExclusionViolationError as exc:
+                    raise TimeClockOverlapError(
+                        "Ese horario se solapa con otra jornada ya registrada."
+                    ) from exc
+
+                entry_id = str(entry["id"])
+                try:
+                    await connection.execute(
+                        """
+                        INSERT INTO technician_daily_logs
+                            (entry_id, user_id, work_date, project_id, work_location,
+                             had_break, break_minutes, overnight_stay, product_category)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        """,
+                        entry_id,
+                        user_id,
+                        work_date,
+                        project_id,
+                        work_location,
+                        had_break,
+                        break_minutes,
+                        overnight_stay.value,
+                        product_category.value,
+                    )
+                except asyncpg.exceptions.UniqueViolationError as exc:
+                    # `uq_technician_daily_logs_one_per_day` bajo concurrencia:
+                    # el use case ya lo comprueba, pero eso es check-then-act y
+                    # el constraint es la fuente de verdad real.
+                    raise DuplicateDailyLogError(
+                        "Ya existe un parte para ese día. Edítalo en lugar de crear otro."
+                    ) from exc
+
+        created = await self.find_daily_log(entry_id)
+        assert created is not None  # noqa: S101 — recién insertado en esta transacción
+        return created
+
+    async def find_daily_log(self, entry_id: str) -> Optional[TechnicianDailyLog]:
+        row = await self._db.fetchrow(f"{_DAILY_LOG_SELECT} WHERE d.entry_id = $1", entry_id)
+        return _row_to_daily_log(row) if row else None
+
+    async def find_daily_log_for_date(
+        self, user_id: str, work_date: date
+    ) -> Optional[TechnicianDailyLog]:
+        row = await self._db.fetchrow(
+            f"{_DAILY_LOG_SELECT} WHERE d.user_id = $1 AND d.work_date = $2",
+            user_id,
+            work_date,
+        )
+        return _row_to_daily_log(row) if row else None
+
+    async def list_daily_logs(
+        self, user_id: str, *, date_from: date, date_to: date
+    ) -> list[TechnicianDailyLog]:
+        rows = await self._db.fetch(
+            f"""
+            {_DAILY_LOG_SELECT}
+            WHERE d.user_id = $1 AND d.work_date BETWEEN $2 AND $3
+            ORDER BY d.work_date ASC
+            """,
+            user_id,
+            date_from,
+            date_to,
+        )
+        return [_row_to_daily_log(row) for row in rows]
+
+    async def update_daily_log(
+        self,
+        entry_id: str,
+        *,
+        started_at: datetime,
+        ended_at: datetime,
+        project_id: str,
+        work_location: str,
+        had_break: bool,
+        break_minutes: int,
+        overnight_stay: OvernightStay,
+        product_category: ProductCategory,
+    ) -> TechnicianDailyLog:
+        async with self._db.acquire() as connection:
+            async with connection.transaction():
+                try:
+                    await connection.execute(
+                        """
+                        UPDATE time_clock_entries
+                        SET clock_in = $2, clock_out = $3, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = $1
+                        """,
+                        entry_id,
+                        started_at,
+                        ended_at,
+                    )
+                except asyncpg.exceptions.ExclusionViolationError as exc:
+                    raise TimeClockOverlapError(
+                        "Ese horario se solapa con otra jornada ya registrada."
+                    ) from exc
+
+                await connection.execute(
+                    """
+                    UPDATE technician_daily_logs
+                    SET project_id = $2, work_location = $3, had_break = $4,
+                        break_minutes = $5, overnight_stay = $6, product_category = $7,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE entry_id = $1
+                    """,
+                    entry_id,
+                    project_id,
+                    work_location,
+                    had_break,
+                    break_minutes,
+                    overnight_stay.value,
+                    product_category.value,
+                )
+
+        updated = await self.find_daily_log(entry_id)
+        assert updated is not None  # noqa: S101 — acaba de actualizarse
+        return updated
+
+    async def delete_daily_log(self, entry_id: str) -> None:
+        # Solo el tramo padre: el `ON DELETE CASCADE` del satélite se lleva el
+        # detalle de campo.
+        await self._db.execute("DELETE FROM time_clock_entries WHERE id = $1", entry_id)
+
+    async def find_project(self, project_id: str) -> Optional[Project]:
+        row = await self._db.fetchrow(
+            "SELECT id, code, name, is_active FROM projects WHERE id = $1", project_id
+        )
+        return _row_to_project(row) if row else None
+
+    async def list_active_projects(self) -> list[Project]:
+        rows = await self._db.fetch(
+            "SELECT id, code, name, is_active FROM projects WHERE is_active ORDER BY name ASC"
+        )
+        return [_row_to_project(row) for row in rows]
+
+    async def sum_worked_minutes_by_month(self, user_id: str, year: int) -> dict[int, int]:
+        # La resta de la pausa va DENTRO del SUM, no después: restar el total
+        # de pausas al total bruto daría el mismo número aquí, pero deja de
+        # darlo en cuanto haya que agrupar por otra cosa. Se calcula igual que
+        # `TechnicianDailyLog.worked_minutes` para que la tabla del mes y este
+        # agregado no puedan discrepar.
+        rows = await self._db.fetch(
+            """
+            SELECT EXTRACT(MONTH FROM d.work_date)::int AS month,
+                   COALESCE(SUM(
+                       EXTRACT(EPOCH FROM (e.clock_out - e.clock_in)) / 60 - d.break_minutes
+                   ), 0)::int AS minutes
+            FROM technician_daily_logs d
+            JOIN time_clock_entries e ON e.id = d.entry_id
+            WHERE d.user_id = $1
+              AND EXTRACT(YEAR FROM d.work_date) = $2
+              AND e.clock_out IS NOT NULL
+            GROUP BY 1
+            """,
+            user_id,
+            year,
+        )
+        return {row["month"]: row["minutes"] for row in rows}
+
+    async def sum_compensation_absence_minutes(self, user_id: str, year: int) -> int:
+        # Días HÁBILES, no naturales: se descuentan sábados, domingos y
+        # festivos, igual que hace el cómputo del resto de ausencias. Contar
+        # días naturales le cobraría al técnico el fin de semana que cae dentro
+        # de su descanso.
+        # El alias de `generate_series` se llama `gs(the_day)` y NO `day`, y
+        # cada referencia va CALIFICADA. No es estilo: `holidays` tiene una
+        # columna llamada `day`, y un `day` sin calificar dentro del EXISTS se
+        # resuelve al scope más interno —`h.day`—, convirtiendo la condición en
+        # `h.day = h.day`, siempre cierta. Con eso, en cuanto existiera UN solo
+        # festivo en la tabla, TODOS los días se contaban como festivo y el
+        # saldo disfrutado salía 0: el guard de `descanso_horas_extra` habría
+        # dejado pedir descansos sin respaldo sin que nada fallara.
+        row = await self._db.fetchrow(
+            """
+            SELECT COALESCE(SUM(
+                (SELECT COUNT(*)
+                 FROM generate_series(
+                     GREATEST(a.start_date, make_date($2, 1, 1)),
+                     LEAST(a.end_date, make_date($2, 12, 31)),
+                     INTERVAL '1 day'
+                 ) AS gs(the_day)
+                 WHERE EXTRACT(ISODOW FROM gs.the_day) < 6
+                   AND NOT EXISTS (
+                       SELECT 1 FROM holidays h
+                       WHERE h.day = gs.the_day::date
+                         AND (h.entity_id IS NULL OR h.entity_id = (
+                             SELECT entity_id FROM users WHERE id = a.user_id
+                         ))
+                   ))
+            ), 0)::int AS days
+            FROM absence_requests a
+            JOIN absence_types t ON t.id = a.absence_type_id
+            WHERE a.user_id = $1
+              AND a.status = 'approved'
+              AND t.code = 'descanso_horas_extra'
+              AND a.start_date <= make_date($2, 12, 31)
+              AND a.end_date   >= make_date($2, 1, 1)
+            """,
+            user_id,
+            year,
+        )
+        return int(row["days"]) * MINUTES_PER_COMPENSATION_DAY

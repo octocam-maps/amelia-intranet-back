@@ -218,3 +218,25 @@ class IAbsenceRepository(Protocol):
         `AbsenceRequestOverlapError` para la granularidad pendiente de
         confirmar con RRHH."""
         ...
+
+
+class ICompensationBalanceProvider(Protocol):
+    """Puerto mínimo hacia el saldo de descanso por horas extra del técnico
+    (feature `time_clock`, `GetCompensationBalanceUseCase`).
+
+    Existe porque `descanso_horas_extra` tiene `affects_balance = FALSE`: NO
+    descuenta de `absence_balances` —no debe robar días de vacaciones— y por
+    tanto la validación de saldo que hace `CreateAbsenceRequestUseCase` para
+    el resto de tipos no le aplica. Sin este puerto, ese tipo de ausencia se
+    puede pedir sin límite: 40 días de descanso por 2 horas extra.
+
+    Forma estructural análoga a `IDriveFolderProvisioner` en `staff`:
+    `absences.domain` NO importa `time_clock.domain`/`.application` — el
+    adaptador real se compone en `absences/infrastructure/dependencies.py`,
+    que sí puede combinar dos features.
+    """
+
+    async def available_minutes(self, user_id: str, year: int) -> int:
+        """Minutos de descanso devengados y NO disfrutados. Solo cuenta meses
+        ya terminados: el excedente del mes en curso todavía puede cambiar."""
+        ...
