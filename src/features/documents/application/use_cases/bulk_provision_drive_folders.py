@@ -1,8 +1,9 @@
 """
 Caso de uso: batch de backfill de carpetas de Drive (decisión de producto
-"hook en alta + batch de backfill"). Recorre los empleados ACTIVOS
-(`find_active_users_with_email`, mismo método que usa `SyncDocumentsUseCase`)
-y provisiona la carpeta de cada uno reusando el núcleo idempotente
+"hook en alta + batch de backfill"). Recorre los empleados activos **y los
+invitados** (`find_provisionable_users_with_email`, distinto del que usa
+`SyncDocumentsUseCase` — ver su docstring en el puerto) y provisiona la
+carpeta de cada uno reusando el núcleo idempotente
 `ProvisionEmployeeDriveFolderUseCase` — cubre:
 
 - Empleados dados de alta ANTES de que existiera el hook de
@@ -56,7 +57,7 @@ class BulkProvisionDriveFoldersUseCase:
         tandas: Drive limita las escrituras y un `rateLimitExceeded` a mitad
         del batch deja el árbol a medias.
         """
-        active_users = await self._repository.find_active_users_with_email()
+        active_users = await self._repository.find_provisionable_users_with_email()
 
         entity_folders: dict[str, Optional[str]] = {}
         entities_to_create: list[str] = []
@@ -132,7 +133,7 @@ class BulkProvisionDriveFoldersUseCase:
     async def execute(self) -> BulkFolderProvisionResult:
         sync_run = await self._repository.create_sync_run()
 
-        active_users = await self._repository.find_active_users_with_email()
+        active_users = await self._repository.find_provisionable_users_with_email()
         created = 0
         skipped = 0
         failed = 0

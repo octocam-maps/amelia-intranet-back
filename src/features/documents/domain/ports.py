@@ -78,6 +78,28 @@ class IDocumentRepository(Protocol):
         entidad."""
         ...
 
+    async def find_provisionable_users_with_email(
+        self,
+    ) -> list[tuple[str, str, Optional[str]]]:
+        """Igual que `find_active_users_with_email`, pero incluyendo también
+        a los `invited`. Lo usa SOLO el batch de carpetas.
+
+        Son dos preguntas distintas y por eso son dos métodos. El sync indexa
+        documentos para que su dueño los vea, y a quien todavía no ha entrado
+        nunca no le sirve de nada. Crear una carpeta VACÍA, en cambio, sí: un
+        `invited` es alguien a quien RRHH ya dio de alta y cuyo contrato suele
+        existir antes del primer día, así que necesita un sitio donde
+        archivarlo.
+
+        Reusar aquí el método del sync obligaba a elegir entre dejar sin
+        carpeta a 32 de 37 personas o cambiar de paso qué documentos se
+        indexan y a quién se avisa. Duplicar la consulta sale más barato que
+        acoplar las dos decisiones.
+
+        `suspended` queda fuera: quien tiene el acceso revocado ya pasó por
+        activo, así que su carpeta —si le hace falta— ya existe."""
+        ...
+
     async def find_entity_name_for_user(self, user_id: str) -> Optional[str]:
         """Nombre de la sociedad a la que pertenece (`entities.name`), o
         `None` si no tiene ninguna. Es lo que decide bajo qué carpeta de
