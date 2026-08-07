@@ -8,7 +8,13 @@ que el resto de puertos del proyecto.
 
 from typing import Optional, Protocol
 
-from .models import Document, DriveFileMetadata, SyncRun, UploadedFile
+from .models import (
+    Document,
+    DriveFileMetadata,
+    PendingFolderWork,
+    SyncRun,
+    UploadedFile,
+)
 
 
 class DriveFileNotFoundError(Exception):
@@ -63,9 +69,72 @@ class IDocumentRepository(Protocol):
         """Lee el `users.drive_folder_id` cacheado (migración 025)."""
         ...
 
-    async def save_drive_folder_id(self, user_id: str, drive_folder_id: str) -> None:
+    async def save_drive_folder_id(
+        self,
+        user_id: str,
+        drive_folder_id: str,
+        *,
+        entity_id: Optional[str] = None,
+    ) -> None:
         """Cachea el id de la subcarpeta resuelta la primera vez, para no
-        volver a buscarla por nombre en cada subida/descarga."""
+        volver a buscarla por nombre en cada subida/descarga.
+
+        `entity_id` registra BAJO QUÉ sociedad quedó colocada [055]. Es lo que
+        permite detectar después, sin preguntar a Drive, que alguien cambió de
+        sociedad y su carpeta se quedó en la anterior."""
+        ...
+
+    async def find_entity_drive_folder_id(self, entity_id: str) -> Optional[str]:
+        """`entities.drive_folder_id` [055] — gemelo del de `users`.
+
+        Antes de existir esta columna, el id se resolvía preguntando a Drive
+        por nombre en cada persona y se cacheaba en memoria del proveedor. Ese
+        caché ocultaba el coste pero no el problema: dos peticiones simultáneas
+        tienen dos cachés y crean dos carpetas homónimas, que Drive acepta sin
+        rechistar."""
+        ...
+
+    async def save_entity_drive_folder_id(
+        self, entity_id: str, drive_folder_id: str
+    ) -> None:
+        ...
+
+    async def find_pending_folder_work(
+        self, *, limit: Optional[int] = None
+    ) -> list[PendingFolderWork]:
+        """Quién necesita trabajo de carpeta ahora mismo: no la tiene, o la
+        tiene bajo la sociedad equivocada.
+
+        ES LA ÚNICA DEFINICIÓN de «pendiente» del feature. La usan el plan, el
+        lote y el contador de restantes; si divergieran, la barra de progreso
+        podría no llegar nunca a cero.
+
+        `limit` acota el lote. Que el trabajo se pida troceado es lo que hace
+        que la petición no pueda expirar: el volcado entero eran ~500 llamadas
+        a Drive dentro de un solo HTTP, y el proxy lo cortaba a mitad."""
+        ...
+
+    async def count_provisionable_users(self) -> int:
+        """Cuánta gente entra en el volcado en total (activos + invitados, sin
+        bajas). Es el denominador de «12 de 37»: sin él la UI solo puede decir
+        «quedan 25», que no permite saber si va por el principio o por el
+        final."""
+        ...
+
+    async def count_pending_folder_work(self) -> int:
+        """Cuántas quedan, con el MISMO predicado que `find_pending_folder_work`.
+
+        Se calcula, no se lleva en un contador: un contador puede desincronizarse
+        del estado real, y entonces la UI dice «faltan 3» para siempre."""
+        ...
+
+    def provisioning_lock(self):
+        """Gestor de contexto asíncrono que cede `True` si se obtuvo el cerrojo
+        de volcado, `False` si ya hay otro en curso.
+
+        Existe porque dos administradores pulsando a la vez crearían carpetas
+        duplicadas: cada petición resuelve por su cuenta si la carpeta de una
+        sociedad existe, y ninguna ve lo que está haciendo la otra."""
         ...
 
     async def find_active_users_with_email(self) -> list[tuple[str, str, Optional[str]]]:
@@ -78,32 +147,16 @@ class IDocumentRepository(Protocol):
         entidad."""
         ...
 
-    async def find_provisionable_users_with_email(
-        self,
-    ) -> list[tuple[str, str, Optional[str]]]:
-        """Igual que `find_active_users_with_email`, pero incluyendo también
-        a los `invited`. Lo usa SOLO el batch de carpetas.
+    async def find_entity_for_user(
+        self, user_id: str
+    ) -> tuple[Optional[str], Optional[str]]:
+        """`(entity_id, entity_name)` de la sociedad a la que pertenece, o
+        `(None, None)` si no tiene ninguna. Decide bajo qué carpeta de entidad
+        va la suya en Drive.
 
-        Son dos preguntas distintas y por eso son dos métodos. El sync indexa
-        documentos para que su dueño los vea, y a quien todavía no ha entrado
-        nunca no le sirve de nada. Crear una carpeta VACÍA, en cambio, sí: un
-        `invited` es alguien a quien RRHH ya dio de alta y cuyo contrato suele
-        existir antes del primer día, así que necesita un sitio donde
-        archivarlo.
-
-        Reusar aquí el método del sync obligaba a elegir entre dejar sin
-        carpeta a 32 de 37 personas o cambiar de paso qué documentos se
-        indexan y a quién se avisa. Duplicar la consulta sale más barato que
-        acoplar las dos decisiones.
-
-        `suspended` queda fuera: quien tiene el acceso revocado ya pasó por
-        activo, así que su carpeta —si le hace falta— ya existe."""
-        ...
-
-    async def find_entity_name_for_user(self, user_id: str) -> Optional[str]:
-        """Nombre de la sociedad a la que pertenece (`entities.name`), o
-        `None` si no tiene ninguna. Es lo que decide bajo qué carpeta de
-        entidad va la suya en Drive."""
+        Devuelve también el `id` y no solo el nombre porque `entities.drive_folder_id`
+        [055] se lee y se escribe por id — con el nombre habría que volver a la
+        base a traducirlo."""
         ...
 
     async def create_sync_run(self) -> SyncRun:
@@ -131,11 +184,17 @@ class IDocumentStorage(Protocol):
         ...
 
     async def get_or_create_employee_folder(
-        self, email: str, *, entity_name: Optional[str] = None
+        self, email: str, *, entity_folder_id: Optional[str] = None
     ) -> str:
-        """Id de la carpeta del empleado (nombre = `email`) DENTRO de la de
-        su entidad, creándola si no existe. Con `entity_name=None` cuelga de
-        la raíz — el externo-invitado no pertenece a ninguna sociedad.
+        """Id de la carpeta del empleado (nombre = `email`) DENTRO de
+        `entity_folder_id`, creándola si no existe. Con `None` cuelga de la
+        raíz — el externo-invitado no pertenece a ninguna sociedad.
+
+        Recibe el id del padre YA RESUELTO, no el nombre de la sociedad: esa
+        resolución vive en `application/entity_folders.py` porque necesita la
+        base de datos, y el almacenamiento no la conoce. Mientras el puerto
+        aceptaba un nombre, cada llamada acababa preguntando a Drive dónde
+        estaba la carpeta de la sociedad.
 
         Si la carpeta ya existía suelta en la raíz (árbol plano anterior a la
         reorganización), se MUEVE conservando su id en vez de crear una
@@ -160,6 +219,31 @@ class IDocumentStorage(Protocol):
         entidad); sin él busca en la raíz, que es donde están las del árbol
         plano anterior a la reorganización. La pasada en seco necesita
         distinguir esos dos sitios para decidir entre "mover" y "crear"."""
+        ...
+
+    async def find_folder_parent_id(self, folder_id: str) -> Optional[str]:
+        """Bajo qué carpeta cuelga `folder_id` HOY, según el almacenamiento.
+
+        `None` significa LA RAÍZ, igual que en `get_or_create_employee_folder`
+        y en `move_folder`. Esa convención tiene que ser la misma en los tres o
+        el caso de uso no puede comparar «dónde está» con «dónde debería
+        estar»: devolver aquí el id real de la raíz haría que una carpeta ya
+        colocada pareciera fuera de sitio en cada pasada.
+
+        Solo se consulta para quien la base marca como pendiente de
+        recolocación, que son pocos. Es lo que permite que el backfill de
+        `users.drive_folder_entity_id` [055] sea optimista sin riesgo: si la
+        suposición era errónea, aquí se ve y no se mueve nada de más."""
+        ...
+
+    async def move_folder(self, folder_id: str, *, new_parent_id: Optional[str]) -> None:
+        """Recoloca una carpeta CONSERVANDO su id y su contenido.
+        `new_parent_id=None` la lleva a la raíz.
+
+        Que el id no cambie es la razón de mover en vez de crear en el sitio
+        nuevo: `users.drive_folder_id` sigue siendo válido y las nóminas ya
+        subidas viajan con la carpeta. Crear una nueva dejaría al backend
+        subiendo a la vieja y a la persona mirando la nueva, vacía."""
         ...
 
     async def get_or_create_category_folder(

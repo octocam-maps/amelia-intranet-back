@@ -23,6 +23,7 @@ from src.features.staff.domain.ports import IStaffRepository
 from ...domain.models import DOCUMENT_CATEGORIES, Document
 from ...domain.ports import IDocumentRepository, IDocumentStorage
 from ..document_notifications import notify_document_created
+from ..entity_folders import resolve_entity_folder_id
 from ..errors import (
     DocumentOwnerNotFoundError,
     DocumentTooLargeError,
@@ -104,11 +105,19 @@ class UploadDocumentUseCase:
             # las del provisioning. Sin esto, subir un documento a alguien sin
             # carpeta la crearía suelta en la raíz y reintroduciría el árbol
             # plano por la puerta de atrás.
-            entity_name = await self._repository.find_entity_name_for_user(user_id)
-            folder_id = await self._storage.get_or_create_employee_folder(
-                staff_member.email, entity_name=entity_name
+            entity_id, entity_name = await self._repository.find_entity_for_user(user_id)
+            entity_folder_id = await resolve_entity_folder_id(
+                self._repository,
+                self._storage,
+                entity_id=entity_id,
+                entity_name=entity_name,
             )
-            await self._repository.save_drive_folder_id(user_id, folder_id)
+            folder_id = await self._storage.get_or_create_employee_folder(
+                staff_member.email, entity_folder_id=entity_folder_id
+            )
+            await self._repository.save_drive_folder_id(
+                user_id, folder_id, entity_id=entity_id
+            )
 
         category_folder_id = await self._storage.get_or_create_category_folder(
             folder_id, category

@@ -48,6 +48,8 @@ class MockDocumentStorage:
     # asociada cada persona — lo que los tests comprueban.
     _entity_folders: ClassVar[dict[str, str]] = {}
     entity_by_email: ClassVar[dict[str, str]] = {}
+    # De qué carpeta cuelga cada una — lo que permite recolocar.
+    _parent_by_folder: ClassVar[dict[str, Optional[str]]] = {}
 
     async def get_or_create_entity_folder(self, entity_name: str) -> str:
         folder_id = self._entity_folders.get(entity_name)
@@ -57,20 +59,26 @@ class MockDocumentStorage:
         return folder_id
 
     async def get_or_create_employee_folder(
-        self, email: str, *, entity_name: Optional[str] = None
+        self, email: str, *, entity_folder_id: Optional[str] = None
     ) -> str:
-        # El mock no modela el árbol, solo la identidad de la carpeta: mover a
-        # una entidad CONSERVA el id, igual que en Drive real, así que basta
-        # con registrar bajo qué entidad quedó.
-        if entity_name is not None:
-            await self.get_or_create_entity_folder(entity_name)
-            self.entity_by_email[email] = entity_name
+        # El mock no modela el árbol, solo la identidad de la carpeta: mover
+        # CONSERVA el id, igual que en Drive real, así que basta con registrar
+        # de qué padre cuelga.
         folder_id = self._folders_by_email.get(email)
         if folder_id is None:
             folder_id = f"mock-folder-{uuid.uuid4()}"
             self._folders_by_email[email] = folder_id
             self._files_by_folder[folder_id] = {}
+        self._parent_by_folder[folder_id] = entity_folder_id
+        if entity_folder_id is not None:
+            self.entity_by_email[email] = entity_folder_id
         return folder_id
+
+    async def find_folder_parent_id(self, folder_id: str) -> Optional[str]:
+        return self._parent_by_folder.get(folder_id)
+
+    async def move_folder(self, folder_id: str, *, new_parent_id: Optional[str]) -> None:
+        self._parent_by_folder[folder_id] = new_parent_id
 
     async def find_entity_folder(self, entity_name: str) -> Optional[str]:
         return self._entity_folders.get(entity_name)

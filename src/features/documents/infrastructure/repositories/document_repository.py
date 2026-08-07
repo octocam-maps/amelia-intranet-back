@@ -10,11 +10,19 @@ la UI. Todas las consultas de lectura excluyen `deleted_at IS NOT NULL`
 (soft-delete, nunca se borra la fila física).
 """
 
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
-from ...domain.models import Document, SyncRun
+from ...domain.models import Document, PendingFolderWork, SyncRun
+
+# Clave del advisory lock del volcado de carpetas. Es un espacio de nombres
+# global en Postgres, así que el número tiene que ser único en todo el
+# proyecto: si otro trabajo eligiera el mismo, se bloquearían entre sí sin
+# ninguna relación aparente. Se anota aquí para que el siguiente que necesite
+# uno vea que este está cogido.
+_PROVISIONING_LOCK_KEY = 550_001
 
 
 def _row_to_document(row) -> Document:
@@ -137,10 +145,124 @@ class PostgresDocumentRepository:
             "SELECT drive_folder_id FROM users WHERE id = $1", user_id
         )
 
-    async def save_drive_folder_id(self, user_id: str, drive_folder_id: str) -> None:
+    async def save_drive_folder_id(
+        self,
+        user_id: str,
+        drive_folder_id: str,
+        *,
+        entity_id: Optional[str] = None,
+    ) -> None:
+        # `drive_folder_entity_id` [055] deja constancia de bajo qué sociedad
+        # quedó la carpeta. Sin ese dato, un cambio de sociedad es indetectable
+        # sin preguntar a Drive por cada persona de la plantilla.
         await self._db.execute(
-            "UPDATE users SET drive_folder_id = $2 WHERE id = $1", user_id, drive_folder_id
+            """
+            UPDATE users
+               SET drive_folder_id = $2,
+                   drive_folder_entity_id = $3
+             WHERE id = $1
+            """,
+            user_id,
+            drive_folder_id,
+            entity_id,
         )
+
+    async def find_entity_drive_folder_id(self, entity_id: str) -> Optional[str]:
+        return await self._db.fetchval(
+            "SELECT drive_folder_id FROM entities WHERE id = $1", entity_id
+        )
+
+    async def save_entity_drive_folder_id(
+        self, entity_id: str, drive_folder_id: str
+    ) -> None:
+        await self._db.execute(
+            "UPDATE entities SET drive_folder_id = $2 WHERE id = $1",
+            entity_id,
+            drive_folder_id,
+        )
+
+    # Única definición de "pendiente" del feature. La comparten
+    # `find_pending_folder_work` y `count_pending_folder_work`: si divergieran,
+    # la barra de progreso podría no llegar nunca a cero.
+    #
+    # `IS DISTINCT FROM` y no `<>`: con NULL a ambos lados —el externo-invitado,
+    # que no tiene sociedad— `<>` evalúa a NULL, la fila no entra, y esa persona
+    # se quedaría fuera del volcado para siempre sin que nada lo delatara.
+    _PENDING_FOLDER_WORK_WHERE = """
+        WHERE u.status IN ('active', 'invited')
+          AND u.deleted_at IS NULL
+          AND (u.drive_folder_id IS NULL
+               OR u.drive_folder_entity_id IS DISTINCT FROM u.entity_id)
+    """
+
+    async def find_pending_folder_work(
+        self, *, limit: Optional[int] = None
+    ) -> list[PendingFolderWork]:
+        rows = await self._db.fetch(
+            f"""
+            SELECT u.id, u.email, u.entity_id, e.name AS entity_name, u.drive_folder_id
+            FROM users u
+            LEFT JOIN entities e ON e.id = u.entity_id
+            {self._PENDING_FOLDER_WORK_WHERE}
+            -- Orden estable: sin él, dos lotes seguidos podrían devolver a la
+            -- misma gente y el progreso se estancaría sin motivo aparente.
+            ORDER BY u.email
+            LIMIT $1
+            """,
+            limit,
+        )
+        return [
+            PendingFolderWork(
+                user_id=str(row["id"]),
+                email=row["email"],
+                entity_id=str(row["entity_id"]) if row["entity_id"] else None,
+                entity_name=row["entity_name"],
+                drive_folder_id=row["drive_folder_id"],
+            )
+            for row in rows
+        ]
+
+    async def count_provisionable_users(self) -> int:
+        return await self._db.fetchval(
+            """
+            SELECT COUNT(*) FROM users u
+            WHERE u.status IN ('active', 'invited') AND u.deleted_at IS NULL
+            """
+        )
+
+    async def count_pending_folder_work(self) -> int:
+        return await self._db.fetchval(
+            f"""
+            SELECT COUNT(*) FROM users u
+            {self._PENDING_FOLDER_WORK_WHERE}
+            """
+        )
+
+    @asynccontextmanager
+    async def provisioning_lock(self):
+        """Advisory lock de sesión: cede `True` si se obtuvo, `False` si ya hay
+        otro volcado en curso.
+
+        De SESIÓN y no de transacción porque el lote dura varios segundos
+        haciendo llamadas a Drive, y mantener una transacción abierta todo ese
+        rato retendría también un slot del pool con una transacción viva.
+
+        Se libera en `finally`, y si el proceso muere sin llegar ahí lo suelta
+        Postgres al cerrarse la conexión — no hay cerrojos huérfanos que
+        limpiar a mano, que es justo lo que tendría una tabla de "estoy
+        ejecutando".
+        """
+        async with self._db.acquire() as connection:
+            acquired = await connection.fetchval(
+                "SELECT pg_try_advisory_lock($1)", _PROVISIONING_LOCK_KEY
+            )
+            try:
+                yield acquired
+            finally:
+                if acquired:
+                    await connection.fetchval(
+                        "SELECT pg_advisory_unlock($1)", _PROVISIONING_LOCK_KEY
+                    )
 
     async def find_active_users_with_email(self) -> list[tuple[str, str, Optional[str]]]:
         # El sync (WU-D) itera SOLO sobre empleados activos — nunca sobre
@@ -162,38 +284,18 @@ class PostgresDocumentRepository:
         )
         return [(str(row["id"]), row["email"], row["entity_name"]) for row in rows]
 
-    async def find_provisionable_users_with_email(
-        self,
-    ) -> list[tuple[str, str, Optional[str]]]:
-        # `('active','invited')` y no solo `'active'`: ver el puerto. El
-        # invitado es quien AÚN NO ha entrado nunca, no quien no pertenece a
-        # la empresa — su contrato existe antes de su primer día y necesita
-        # dónde archivarse. Con el filtro del sync, 32 de las 37 personas de
-        # la plantilla se quedaban sin carpeta, y dos de las cuatro entidades
-        # sin crear.
-        #
-        # Crear la carpeta NO envía ningún correo: el provisioning no toca
-        # `NotifyUseCase` y el cliente de Drive nunca llama a `permissions()`,
-        # que es lo que dispararía el aviso de Google.
-        rows = await self._db.fetch(
+    async def find_entity_for_user(
+        self, user_id: str
+    ) -> tuple[Optional[str], Optional[str]]:
+        row = await self._db.fetchrow(
             """
-            SELECT u.id, u.email, e.name AS entity_name
-            FROM users u
-            LEFT JOIN entities e ON e.id = u.entity_id
-            WHERE u.status IN ('active', 'invited') AND u.deleted_at IS NULL
-            """
-        )
-        return [(str(row["id"]), row["email"], row["entity_name"]) for row in rows]
-
-    async def find_entity_name_for_user(self, user_id: str) -> Optional[str]:
-        return await self._db.fetchval(
-            """
-            SELECT e.name FROM users u
+            SELECT e.id, e.name FROM users u
             JOIN entities e ON e.id = u.entity_id
             WHERE u.id = $1
             """,
             user_id,
         )
+        return (str(row["id"]), row["name"]) if row else (None, None)
 
     async def create_sync_run(self) -> SyncRun:
         row = await self._db.fetchrow("INSERT INTO drive_sync_runs DEFAULT VALUES RETURNING *")

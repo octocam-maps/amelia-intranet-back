@@ -161,7 +161,7 @@ async def test_the_folder_batch_query_also_takes_the_invited():
     pool.fetch.return_value = []
     repository = PostgresDocumentRepository(pool)
 
-    await repository.find_provisionable_users_with_email()
+    await repository.find_pending_folder_work()
 
     query = pool.fetch.call_args[0][0]
     assert "'active'" in query and "'invited'" in query
@@ -169,3 +169,38 @@ async def test_the_folder_batch_query_also_takes_the_invited():
     assert "suspended" not in query
     # El borrado lógico manda por encima de todo lo demás.
     assert "deleted_at IS NULL" in query
+
+
+@pytest.mark.asyncio
+async def test_el_predicado_de_pendientes_detecta_el_cambio_de_sociedad():
+    """`IS DISTINCT FROM` y no `<>`. Con `<>`, comparar NULL con NULL —el
+    externo-invitado, que no tiene sociedad— da NULL, la fila no entra, y esa
+    persona se queda fuera del volcado para siempre sin que nada lo delate."""
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    repository = PostgresDocumentRepository(pool)
+
+    await repository.find_pending_folder_work()
+
+    query = pool.fetch.call_args[0][0]
+    assert "drive_folder_id IS NULL" in query
+    assert "drive_folder_entity_id IS DISTINCT FROM u.entity_id" in query
+
+
+@pytest.mark.asyncio
+async def test_contar_y_listar_pendientes_usan_el_mismo_predicado():
+    """Si divergieran, la barra de progreso podría no llegar nunca a cero: el
+    lote coge a unos y el contador mide a otros."""
+    pool = AsyncMock()
+    pool.fetch.return_value = []
+    pool.fetchval.return_value = 0
+    repository = PostgresDocumentRepository(pool)
+
+    await repository.find_pending_folder_work()
+    await repository.count_pending_folder_work()
+
+    del_listado = pool.fetch.call_args[0][0]
+    del_contador = pool.fetchval.call_args[0][0]
+    predicado = PostgresDocumentRepository._PENDING_FOLDER_WORK_WHERE
+    assert predicado in del_listado
+    assert predicado in del_contador

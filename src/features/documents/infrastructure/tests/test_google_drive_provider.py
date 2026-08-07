@@ -47,7 +47,16 @@ class _FakeGoogleDriveClient:
         self.created_folders.append(name)
         return folder_id
 
-    def move_folder(self, folder_id, *, new_parent_id):
+    def find_folder_parent_id(self, folder_id):
+        """Devuelve `None` para la raíz, igual que el cliente real: en este
+        doble la raíz se representa con `parent_id=None`, así que la búsqueda
+        inversa ya da la convención correcta sin caso especial."""
+        for (parent, _name), fid in self.folders.items():
+            if fid == folder_id:
+                return parent
+        return None
+
+    def move_folder(self, folder_id, *, new_parent_id=None):
         self.moved.append((folder_id, new_parent_id))
         # Reproduce el efecto real: deja de estar en la raíz y pasa a colgar
         # del nuevo padre, CONSERVANDO su id.
@@ -346,11 +355,11 @@ async def test_the_employee_folder_is_created_inside_its_entity():
     client = _FakeGoogleDriveClient()
     storage = _build_storage(client)
 
+    entity_id = await storage.get_or_create_entity_folder("Amelia Hub")
     folder_id = await storage.get_or_create_employee_folder(
-        "ana@ameliahub.com", entity_name="Amelia Hub"
+        "ana@ameliahub.com", entity_folder_id=entity_id
     )
 
-    entity_id = client.folders[(None, "Amelia Hub")]
     assert client.folders[(entity_id, "ana@ameliahub.com")] == folder_id
 
 
@@ -369,8 +378,9 @@ async def test_an_existing_flat_folder_is_MOVED_not_duplicated():
     client.created_folders.clear()
     storage = _build_storage(client)
 
+    entity_id = await storage.get_or_create_entity_folder("Amelia Hub")
     folder_id = await storage.get_or_create_employee_folder(
-        "ana@ameliahub.com", entity_name="Amelia Hub"
+        "ana@ameliahub.com", entity_folder_id=entity_id
     )
 
     assert folder_id == plana, "el id DEBE conservarse: `drive_folder_id` apunta a él"
@@ -386,11 +396,12 @@ async def test_a_folder_already_in_place_is_not_moved_again():
     client = _FakeGoogleDriveClient()
     storage = _build_storage(client)
 
+    entity_id = await storage.get_or_create_entity_folder("Amelia Hub")
     first = await storage.get_or_create_employee_folder(
-        "ana@ameliahub.com", entity_name="Amelia Hub"
+        "ana@ameliahub.com", entity_folder_id=entity_id
     )
     second = await storage.get_or_create_employee_folder(
-        "ana@ameliahub.com", entity_name="Amelia Hub"
+        "ana@ameliahub.com", entity_folder_id=entity_id
     )
 
     assert first == second
@@ -409,60 +420,53 @@ async def test_without_an_entity_the_folder_stays_at_the_root():
     assert client.moved == []
 
 
+# --- La raíz se representa como None en todo el puerto -----------------------
+
+
 @pytest.mark.asyncio
-async def test_the_entity_folder_is_reused_across_employees():
-    """Dos personas de la misma sociedad comparten carpeta de entidad; crear
-    una por empleado la duplicaría."""
+async def test_una_carpeta_en_la_raiz_declara_padre_None():
+    """`None` significa "la raíz" en `get_or_create_employee_folder` y en
+    `move_folder`; leer tiene que hablar el mismo idioma.
+
+    Si aquí se devolviera el id real de la unidad compartida, el volcado
+    compararía ese id contra el `None` que significa raíz, concluiría que la
+    carpeta está fuera de sitio, y la movería a donde ya está — en cada pasada
+    y para siempre."""
     client = _FakeGoogleDriveClient()
     storage = _build_storage(client)
+    folder_id = await storage.get_or_create_employee_folder("externo@gmail.com")
 
-    await storage.get_or_create_employee_folder("ana@ameliahub.com", entity_name="Amelia Hub")
-    await storage.get_or_create_employee_folder("luis@ameliahub.com", entity_name="Amelia Hub")
-
-    assert client.created_folders.count("Amelia Hub") == 1
-
-
-# --- Memo de la carpeta de entidad y seguridad bajo concurrencia -----------
+    assert await storage.find_folder_parent_id(folder_id) is None
 
 
 @pytest.mark.asyncio
-async def test_the_entity_folder_is_only_looked_up_once():
-    """Son cuatro sociedades para toda la plantilla, y el volcado resuelve la
-    entidad por persona. Sin memo, 37 empleados son 37 consultas a Drive para
-    obtener siempre la misma respuesta."""
+async def test_mover_con_padre_None_devuelve_la_carpeta_a_la_raiz():
+    """El caso de quien PIERDE su sociedad. Sin esto su carpeta se quedaba bajo
+    la sociedad anterior mientras la base decía que estaba en la raíz."""
     client = _FakeGoogleDriveClient()
-    client.lookups = []
-    original = client.find_folder_by_name
-
-    def _contando(name, *, parent_id=None):
-        client.lookups.append((parent_id, name))
-        return original(name, parent_id=parent_id)
-
-    client.find_folder_by_name = _contando
     storage = _build_storage(client)
+    entity_id = await storage.get_or_create_entity_folder("Amelia Hub")
+    folder_id = await storage.get_or_create_employee_folder(
+        "ana@ameliahub.com", entity_folder_id=entity_id
+    )
+    assert await storage.find_folder_parent_id(folder_id) == entity_id
 
-    for i in range(10):
-        await storage.get_or_create_employee_folder(f"p{i}@ameliahub.com", entity_name="Amelia Hub")
+    await storage.move_folder(folder_id, new_parent_id=None)
 
-    assert [l for l in client.lookups if l == (None, "Amelia Hub")] == [(None, "Amelia Hub")]
+    assert await storage.find_folder_parent_id(folder_id) is None
 
 
-@pytest.mark.asyncio
-async def test_concurrent_callers_do_not_duplicate_the_entity_folder():
-    """El batch provisiona en paralelo. Drive NO impone unicidad por nombre:
-    dos corrutinas que fallan el memo a la vez crean dos carpetas «Amelia Hub»
-    sin que nada dé error, y media plantilla acaba colgando de cada una."""
-
-    class _SlowClient(_FakeGoogleDriveClient):
-        def find_folder_by_name(self, name, *, parent_id=None):
-            # `asyncio.to_thread` hace que la búsqueda ceda el control de
-            # verdad; esto reproduce esa ventana de forma determinista.
-            time.sleep(0.01)
-            return super().find_folder_by_name(name, parent_id=parent_id)
-
-    client = _SlowClient()
-    storage = _build_storage(client)
-
-    await asyncio.gather(*(storage.get_or_create_entity_folder("Amelia Hub") for _ in range(8)))
-
-    assert client.created_folders.count("Amelia Hub") == 1
+# --- Dónde dejó de estar la protección de la carpeta de entidad --------------
+#
+# Aquí hubo un memo con cerrojo que evitaba crear dos veces la carpeta de una
+# sociedad. Se retiró en el rediseño por lotes: protegía DENTRO de una petición
+# y el problema estaba ENTRE peticiones —cada una tenía su propio memo—, así
+# que daba una sensación de seguridad que no existía.
+#
+# Ahora el id vive en `entities.drive_folder_id` [055] y el volcado se serializa
+# con un advisory lock. Los tests de eso están donde ahora vive la garantía:
+# `application/tests/test_folder_batches.py` y
+# `infrastructure/tests/test_document_repository.py`.
+#
+# La seguridad entre HILOS del cliente HTTP sigue cubierta en
+# `test_google_drive_client.py`, que es de quien depende.

@@ -23,6 +23,14 @@ def _decode_jsonb(value: str) -> Any:
     return json.loads(value)
 
 
+# Conexiones del pool, compartidas por TODA la aplicación. Se expone como
+# constante para que quien lance trabajo concurrente pueda comprobar que no se
+# come el pool entero — lo hace
+# `documents...bulk_provision_drive_folders.MAX_CONCURRENT_PROVISIONS`, que
+# tiene un test comparándose con este número.
+POOL_MAX_SIZE = 10
+
+
 async def _init_connection(conn: asyncpg.Connection) -> None:
     await conn.set_type_codec(
         "jsonb",
@@ -64,7 +72,7 @@ class DatabasePool:
         self._pool = await asyncpg.create_pool(
             connection_string,
             min_size=1,
-            max_size=10,
+            max_size=POOL_MAX_SIZE,
             command_timeout=60,
             init=_init_connection,
         )

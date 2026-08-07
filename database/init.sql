@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS entities (
     code       VARCHAR(20) NOT NULL UNIQUE
                  CHECK (code IN ('hub', 'lab', 'ops', 'hincator')),  -- 'hincator' [036]
     name       VARCHAR(120) NOT NULL,
+    -- [055] Carpeta de la sociedad en Drive, gemela de `users.drive_folder_id`.
+    -- Antes se resolvía por nombre en cada persona y se cacheaba en memoria:
+    -- dos peticiones simultáneas creaban dos carpetas homónimas, porque Drive
+    -- no impone unicidad por nombre y nadie veía un error.
+    drive_folder_id VARCHAR(120),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -86,6 +91,11 @@ CREATE TABLE IF NOT EXISTS users (
                      CHECK (status IN ('invited', 'active', 'suspended')),
     is_external    BOOLEAN NOT NULL DEFAULT FALSE,
     drive_folder_id        VARCHAR(120),    -- [025] carpeta personal en Drive
+    -- [055] Bajo QUÉ sociedad se creó esa carpeta. Permite detectar en SQL, sin
+    -- preguntar a Drive, a quién hay que recolocar tras un cambio de sociedad:
+    -- el provisioning corta al ver `drive_folder_id`, así que sin esta columna
+    -- la carpeta se quedaba bajo la entidad antigua para siempre y en silencio.
+    drive_folder_entity_id UUID REFERENCES entities(id),
     vacation_days_override NUMERIC(5,1),    -- [027] NULL = cálculo automático por hire_date
     -- [037] NULL dice "no lo sabemos"; un default diría "es de jornada
     -- completa", que puede ser falso. Independiente de `role_id`: un becario

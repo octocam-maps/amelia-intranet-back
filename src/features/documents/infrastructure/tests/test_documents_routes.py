@@ -530,24 +530,16 @@ def test_externo_invitado_cannot_trigger_sync():
 
 class _FakeBulkProvisionDriveFoldersUseCase:
     def __init__(self, result=None, error: Optional[Exception] = None):
-        from src.features.documents.application.results import BulkFolderProvisionResult
+        from src.features.documents.application.results import FolderBatchResult
 
-        self._result = result or BulkFolderProvisionResult(
-            sync_run=SyncRun(
-                id="sync-run-1",
-                started_at=datetime.now(timezone.utc),
-                finished_at=datetime.now(timezone.utc),
-                status="success",
-                files_synced=2,
-                error_detail=None,
-            ),
-            created=2,
-            skipped=1,
-            failed=0,
+        self._result = result or FolderBatchResult(
+            processed=10, created=8, relocated=2, failed=0, remaining=15
         )
         self._error = error
+        self.limit_recibido = None
 
-    async def execute(self, **kwargs):
+    async def execute(self, *, limit=None, **kwargs):
+        self.limit_recibido = limit
         if self._error is not None:
             raise self._error
         return self._result
@@ -568,11 +560,58 @@ def test_admin_can_trigger_provision_folders():
 
     assert response.status_code == 200
     body = response.json()
-    assert body["id"] == "sync-run-1"
-    assert body["status"] == "success"
-    assert body["created"] == 2
-    assert body["skipped"] == 1
-    assert body["failed"] == 0
+    assert body["processed"] == 10
+    assert body["created"] == 8
+    assert body["relocated"] == 2
+    # `remaining` es lo que gobierna el bucle del cliente: sin él, la UI no
+    # sabría si tiene que volver a llamar.
+    assert body["remaining"] == 15
+
+
+def test_un_segundo_volcado_simultaneo_devuelve_409():
+    """Y no un 500. El cliente distingue «espera, ya hay uno en marcha» de «se
+    ha roto algo», y con un 500 mostraría lo segundo y asustaría sin motivo."""
+    from src.features.documents.application.use_cases.bulk_provision_drive_folders import (
+        ProvisioningBusyError,
+    )
+
+    app.dependency_overrides[
+        documents_dependencies.get_bulk_provision_drive_folders_use_case
+    ] = lambda: _FakeBulkProvisionDriveFoldersUseCase(
+        error=ProvisioningBusyError("Ya hay un volcado de carpetas en curso.")
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/documents/provision-folders",
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert "en curso" in response.json()["detail"]
+
+
+def test_el_limite_del_lote_viaja_hasta_el_caso_de_uso():
+    """Es la UI quien conoce su tolerancia de espera, así que `limit` es del
+    cliente. Si se quedara por el camino, el lote usaría siempre el default y
+    el troceado dejaría de ser ajustable."""
+    caso = _FakeBulkProvisionDriveFoldersUseCase()
+    app.dependency_overrides[
+        documents_dependencies.get_bulk_provision_drive_folders_use_case
+    ] = lambda: caso
+    try:
+        with TestClient(app) as client:
+            client.post(
+                "/documents/provision-folders",
+                json={"limit": 25},
+                headers={"Authorization": f"Bearer {_token_for('administrador')}"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert caso.limit_recibido == 25
 
 
 def test_empleado_cannot_trigger_provision_folders():
