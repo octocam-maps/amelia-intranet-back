@@ -13,6 +13,7 @@ semántica de Unidad compartida (`supportsAllDrives`, y en `list`
 """
 
 import json
+import threading
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -362,3 +363,61 @@ def test_list_files_in_folder_pagina_hasta_agotar_next_page_token():
     files = client.list_files_in_folder("folder-abc")
 
     assert {f["id"] for f in files} == {"file-1", "file-2"}
+
+
+# --- Seguridad entre hilos ---------------------------------------------------
+#
+# El provider envuelve cada llamada en `asyncio.to_thread`, y desde que el
+# volcado provisiona en paralelo hay varios hilos usando el cliente a la vez.
+# El `http` de `googleapiclient` NO es seguro entre hilos: mantiene UNA
+# conexión TLS y compartirla revienta con `SSLError: record layer failure` o
+# `TimeoutError: read operation timed out`. Ambos se vieron en producción.
+
+
+def _client_with_credentials() -> GoogleDriveClient:
+    """Credenciales de mentira: `AuthorizedHttp` solo las usa al hacer una
+    petición de verdad, y aquí no se hace ninguna."""
+    service, _ = _service_with_mock_sequence([({"status": "200"}, json.dumps({}))])
+    return GoogleDriveClient(
+        object(), root_folder_id=_ROOT_FOLDER_ID, service=service
+    )
+
+
+def test_cada_hilo_recibe_su_propio_http():
+    client = _client_with_credentials()
+    obtenidos = []
+    barrera = threading.Barrier(4)
+
+    def _pedir():
+        # La barrera fuerza a los cuatro hilos a coincidir: sin ella podrían
+        # ejecutarse en serie y el test pasaría con un `http` compartido.
+        barrera.wait()
+        obtenidos.append(client._http())
+
+    hilos = [threading.Thread(target=_pedir) for _ in range(4)]
+    for h in hilos:
+        h.start()
+    for h in hilos:
+        h.join()
+
+    assert len({id(h) for h in obtenidos}) == 4
+
+
+def test_el_mismo_hilo_reutiliza_su_http():
+    """Uno por hilo, no uno por llamada: abrir una conexión TLS nueva en cada
+    una de las ~500 llamadas del volcado costaría más que el paralelismo que
+    se quería ganar."""
+    client = _client_with_credentials()
+
+    assert client._http() is client._http()
+
+
+def test_sin_credenciales_no_se_toca_el_http_de_la_peticion():
+    """Es el seam de test: con un `service` inyectado sobre
+    `HttpMockSequence`, `execute(http=None)` cae al `http` de la propia
+    petición. Devolver aquí cualquier otra cosa rompería todos los tests que
+    inspeccionan `request_sequence`."""
+    service, _ = _service_with_mock_sequence([({"status": "200"}, json.dumps({}))])
+    client = GoogleDriveClient(None, root_folder_id=_ROOT_FOLDER_ID, service=service)
+
+    assert client._http() is None
