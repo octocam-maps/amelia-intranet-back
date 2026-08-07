@@ -20,3 +20,8 @@ class Department:
     name: str
     entity_id: str
     entity_code: Optional[str]
+    # Catálogo 2026 (migración 054): `Software` y `Hardware` cuelgan de
+    # `Producto`. El selector los agrupa bajo su padre en vez de mostrar
+    # siete opciones planas donde tres son en realidad una rama.
+    parent_department_id: Optional[str] = None
+    parent_name: Optional[str] = None

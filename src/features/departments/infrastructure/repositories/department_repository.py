@@ -21,18 +21,40 @@ from ...domain.ports import IDepartmentRepository
 # `ORDER BY e.code, d.name` agrupa por sociedad. Solo se nota en el caso del
 # usuario sin entidad —el único que sigue viendo las 20 filas—, que es justo
 # cuando más falta hace.
+#
+# `d.is_active` [migración 054]: los departamentos del catálogo viejo sin
+# equivalencia (`Administración`, `Ingeniería`) siguen en la tabla —hay gente
+# asignada a ellos— pero no deben ofrecerse para asignaciones NUEVAS.
+#
+# `ORDER BY` por rama y no solo por nombre: el selector agrupa las hojas bajo
+# su padre (`Producto > Software`), y ordenar plano por nombre las separaría
+# de él. `COALESCE(parent.name, d.name)` ordena cada hoja por el nombre de su
+# rama, y el `parent.name IS NOT NULL` de segundo criterio deja al padre por
+# delante de sus hijos dentro del grupo.
 _SELECT_DEPARTMENTS_FOR_USER = """
-    SELECT d.id, d.name, d.entity_id, e.code AS entity_code
+    SELECT d.id, d.name, d.entity_id, e.code AS entity_code,
+           d.parent_department_id, parent.name AS parent_name
     FROM departments d
     LEFT JOIN entities e ON e.id = d.entity_id
-    WHERE d.entity_id = (SELECT entity_id FROM users WHERE id = $1)
-       OR (SELECT entity_id FROM users WHERE id = $1) IS NULL
-    ORDER BY e.code, d.name
+    LEFT JOIN departments parent ON parent.id = d.parent_department_id
+    WHERE d.is_active
+      AND (
+          d.entity_id = (SELECT entity_id FROM users WHERE id = $1)
+          OR (SELECT entity_id FROM users WHERE id = $1) IS NULL
+      )
+    ORDER BY e.code, COALESCE(parent.name, d.name), parent.name IS NOT NULL, d.name
 """
 
 # Mismo criterio de fallback que arriba, y por el mismo motivo: sin el `OR`, un
 # usuario sin entidad no podría guardar NINGÚN departamento y se quedaría sin
 # poder completar el paso 4.
+#
+# NO filtra por `is_active`, a diferencia del selector, y es deliberado: quien
+# ya está asignado a un departamento desactivado por el catálogo 2026
+# (`Administración`, `Ingeniería`) debe poder seguir guardando su perfil sin
+# que se le exija cambiar de departamento de paso. Ocultarlo de la lista de
+# opciones NUEVAS es una cosa; invalidar el valor que ya tiene es otra, y
+# convertiría el desactivar en el borrar que esta migración quiso evitar.
 _DEPARTMENT_BELONGS_TO_USER_ENTITY = """
     SELECT 1
     FROM departments d
@@ -45,11 +67,14 @@ _DEPARTMENT_BELONGS_TO_USER_ENTITY = """
 
 
 def _row_to_department(row) -> Department:
+    parent_id = row["parent_department_id"]
     return Department(
         id=str(row["id"]),
         name=row["name"],
         entity_id=str(row["entity_id"]),
         entity_code=row["entity_code"],
+        parent_department_id=str(parent_id) if parent_id is not None else None,
+        parent_name=row["parent_name"],
     )
 
 

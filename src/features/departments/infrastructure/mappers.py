@@ -10,6 +10,8 @@ def department_to_dto(department: Department) -> DepartmentDTO:
         name=department.name,
         entity_id=department.entity_id,
         entity_code=department.entity_code,
+        parent_department_id=department.parent_department_id,
+        parent_name=department.parent_name,
     )
 
 
