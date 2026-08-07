@@ -24,8 +24,11 @@ módulo.
 
 import io
 import json
+import threading
 from typing import Any, Optional
 
+import google_auth_httplib2
+import httplib2
 from google.oauth2 import service_account
 from googleapiclient.discovery import Resource, build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
@@ -81,6 +84,7 @@ class GoogleDriveClient:
         service: Optional[Resource] = None,
     ):
         self._root_folder_id = root_folder_id
+        self._credentials = credentials
         # `service=` es el seam de test (WU-B): permite inyectar un `Resource`
         # construido sobre `HttpMockSequence` sin tocar credenciales reales
         # ni red. `cache_discovery=False` evita que el SDK intente escribir
@@ -88,6 +92,38 @@ class GoogleDriveClient:
         self._service = service or build(
             "drive", "v3", credentials=credentials, cache_discovery=False
         )
+        self._thread_local = threading.local()
+
+    def _http(self) -> Optional[httplib2.Http]:
+        """Un `http` POR HILO, porque el de `googleapiclient` NO es seguro
+        entre hilos.
+
+        El `Resource` que devuelve `build()` lleva un único `httplib2.Http`
+        dentro, y ese objeto mantiene UNA conexión TLS reutilizada. El
+        provider envuelve cada llamada en `asyncio.to_thread`, así que en
+        cuanto el batch provisiona en paralelo hay varios hilos leyendo y
+        escribiendo sobre el mismo socket: los bytes de una respuesta se
+        mezclan con los de otra y OpenSSL aborta con
+        `SSLError: record layer failure`, o el hilo se queda esperando una
+        respuesta que ya se llevó otro y muere por `read operation timed out`.
+
+        Ambos errores se vieron en producción al desplegar el paralelismo, y
+        ninguno señala a la causa: parecen problemas de red de Google.
+
+        Devuelve `None` cuando no hay credenciales — es el caso del seam de
+        test, donde el `service` inyectado trae su propio `HttpMockSequence`.
+        `HttpRequest.execute(http=None)` cae al `http` de la propia petición,
+        así que pasar `None` es exactamente no tocar nada.
+        """
+        if self._credentials is None:
+            return None
+        http = getattr(self._thread_local, "http", None)
+        if http is None:
+            http = google_auth_httplib2.AuthorizedHttp(
+                self._credentials, http=httplib2.Http()
+            )
+            self._thread_local.http = http
+        return http
 
     def find_folder_by_name(
         self, name: str, *, parent_id: Optional[str] = None
@@ -114,7 +150,7 @@ class GoogleDriveClient:
                 corpora="drive",
                 driveId=self._root_folder_id,
             )
-            .execute()
+            .execute(http=self._http())
         )
         files = response.get("files", [])
         return files[0]["id"] if files else None
@@ -133,7 +169,7 @@ class GoogleDriveClient:
         created = (
             self._service.files()
             .create(body=metadata, fields="id", supportsAllDrives=True)
-            .execute()
+            .execute(http=self._http())
         )
         return created["id"]
 
@@ -154,7 +190,7 @@ class GoogleDriveClient:
         current = (
             self._service.files()
             .get(fileId=folder_id, fields="parents", supportsAllDrives=True)
-            .execute()
+            .execute(http=self._http())
         )
         previous_parents = ",".join(current.get("parents", []))
         self._service.files().update(
@@ -163,7 +199,7 @@ class GoogleDriveClient:
             removeParents=previous_parents,
             fields="id, parents",
             supportsAllDrives=True,
-        ).execute()
+        ).execute(http=self._http())
 
     def upload_file(
         self, *, folder_id: str, filename: str, content: bytes, mime_type: str
@@ -184,7 +220,7 @@ class GoogleDriveClient:
                 fields="id, md5Checksum",
                 supportsAllDrives=True,
             )
-            .execute()
+            .execute(http=self._http())
         )
         return created["id"], created.get("md5Checksum", "")
 
@@ -196,6 +232,14 @@ class GoogleDriveClient:
         request = self._service.files().get_media(
             fileId=drive_file_id, supportsAllDrives=True
         )
+        # `MediaIoBaseDownload` no acepta `http=` al descargar: se queda con
+        # el de la petición. Se lo cambiamos aquí para que la descarga use
+        # también el `http` de ESTE hilo — ver `_http`. Sin esto, dos
+        # descargas simultáneas comparten socket con el mismo resultado que
+        # tuvo el volcado en paralelo.
+        http = self._http()
+        if http is not None:
+            request.http = http
         buffer = io.BytesIO()
         downloader = MediaIoBaseDownload(buffer, request)
         done = False
@@ -222,7 +266,7 @@ class GoogleDriveClient:
                     driveId=self._root_folder_id,
                     pageToken=page_token,
                 )
-                .execute()
+                .execute(http=self._http())
             )
             files.extend(response.get("files", []))
             page_token = response.get("nextPageToken")
