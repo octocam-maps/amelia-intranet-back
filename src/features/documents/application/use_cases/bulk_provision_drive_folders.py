@@ -1,244 +1,218 @@
 """
-Caso de uso: batch de backfill de carpetas de Drive (decisión de producto
-"hook en alta + batch de backfill"). Recorre los empleados activos **y los
-invitados** (`find_provisionable_users_with_email`, distinto del que usa
-`SyncDocumentsUseCase` — ver su docstring en el puerto) y provisiona la
-carpeta de cada uno reusando el núcleo idempotente
-`ProvisionEmployeeDriveFolderUseCase` — cubre:
+Volcado de carpetas de Drive, POR LOTES.
 
-- Empleados dados de alta ANTES de que existiera el hook de
-  `CreateStaffMemberUseCase`.
-- Empleados cuyo hook falló en su momento (Drive caído, credenciales, etc.)
-  — best-effort, así que el batch es su mecanismo de retry.
-- Usuarios auto-provisionados/aceptados por invitación en el primer login
-  (`LoginWithGoogleUseCase.create_user_from_invitation` /
-  `create_auto_provisioned_user`): esos altas NO disparan el hook (decisión
-  de alcance de esta unidad, ver docstring de `LoginWithGoogleUseCase` —
-  enganchar ahí complicaría el layering de `auth.application`, que hoy no
-  conoce ningún puerto de `documents`/`staff`); quedan cubiertos por este
-  batch o por el primer upload manual.
+`POST /documents/provision-folders` procesa como mucho `limit` personas
+pendientes y devuelve cuántas quedan; la UI repite hasta cero. Protegido con
+`require_role("administrador")` en la capa de FastAPI, mismo criterio que
+`SyncDocumentsUseCase` — no se repite el chequeo aquí.
 
-Disparado por `POST /documents/provision-folders`, protegido con
-`require_role("administrador")` en la capa de FastAPI (mismo criterio que
-`SyncDocumentsUseCase`) — no repite el chequeo de rol aquí.
+## Por qué por lotes y no de una vez
 
-Idempotente y re-ejecutable (sirve de retry): un empleado que ya tiene
-`drive_folder_id` cacheado se cuenta como "omitido", nunca vuelve a llamar a
-Drive (`ProvisionEmployeeDriveFolderUseCase`). Best-effort por empleado: un
-fallo puntual no aborta el resto del batch, se cuenta y se sigue.
+Cada persona son ~13 llamadas a Drive. La plantilla entera eran ~500 dentro de
+UNA petición HTTP: más de dos minutos, y el proxy la cortaba con un 504. El
+intento de arreglarlo paralelizando trajo un fallo peor —el cliente de Google
+no es seguro entre hilos— que se manifestaba como errores de red aleatorios.
+
+Trocear ataca la causa en vez del síntoma: **cada petición es lo bastante
+pequeña como para no poder expirar**. Además sale gratis lo que antes habría
+que construir a mano: es reanudable, sobrevive a un redespliegue a mitad, y no
+deja ningún estado que limpiar si se corta.
+
+## Por qué no hay fila de run
+
+El progreso se DERIVA de la base (`count_pending_folder_work`), no se lleva en
+un contador. Un contador puede desincronizarse del estado real y entonces la
+barra nunca llega a cero; una consulta no puede mentir. Y sin fila de run no
+hay filas `running` huérfanas que limpiar cuando el proceso muera a mitad.
+
+## Qué cubre
+
+- Quien nunca tuvo carpeta: altas anteriores al hook, hooks que fallaron, y
+  usuarios creados al aceptar una invitación — esos NO disparan el hook (ver
+  `LoginWithGoogleUseCase`).
+- Quien **cambió de sociedad**: su carpeta se mueve a la nueva, conservando id
+  y contenido. Antes era invisible, porque el provisioning cortaba en cuanto
+  veía un `drive_folder_id` cacheado.
 """
 
 import asyncio
 import logging
 from typing import Optional
 
-from ...domain.models import CATEGORY_FOLDER_NAMES, SyncRun
+from ...domain.models import PendingFolderWork
 from ...domain.ports import IDocumentRepository, IDocumentStorage
-from ..results import BulkFolderPlan, BulkFolderProvisionResult, FolderPlanEntry
+from ..entity_folders import resolve_entity_folder_id
+from ..results import BulkFolderPlan, FolderBatchResult, FolderPlanEntry
 from .provision_employee_drive_folder import ProvisionEmployeeDriveFolderUseCase
 
 logger = logging.getLogger(__name__)
 
-# Personas provisionándose a la vez. Cada una son ~14 llamadas a Drive, y en
-# serie las 37 de la plantilla se iban a más de dos minutos con la petición
-# HTTP abierta — por encima del timeout habitual de un proxy.
-#
-# El número es deliberadamente conservador. Lo que se gana subiéndolo se
-# pierde entero en cuanto Google devuelve un `rateLimitExceeded`: el batch es
-# best-effort, así que esa persona se cuenta como fallida y hay que repetir.
-# Con 8, las 37 caben en ~5 tandas y se queda muy lejos de cualquier límite.
+# Personas por lote. Con ~13 llamadas a Drive cada una, 10 son ~130 llamadas:
+# unos pocos segundos, muy lejos de cualquier timeout de proxy.
+DEFAULT_BATCH_LIMIT = 10
+MAX_BATCH_LIMIT = 50
+
+# Personas provisionándose a la vez DENTRO de un lote. Es una optimización, no
+# un requisito: bajarlo a 1 debe seguir funcionando, y hay test que lo cubre.
+# Que la corrección no dependa de la velocidad es justo lo que faltaba antes.
 MAX_CONCURRENT_PROVISIONS = 8
+
+
+class ProvisioningBusyError(Exception):
+    """Ya hay otro volcado en curso. Se traduce a 409 en la capa HTTP.
+
+    No es una cortesía: dos volcados simultáneos resuelven por su cuenta si la
+    carpeta de una sociedad existe, ninguno ve lo que hace el otro, y Drive
+    acepta dos carpetas con el mismo nombre sin dar ningún error."""
 
 
 class BulkProvisionDriveFoldersUseCase:
     def __init__(self, repository: IDocumentRepository, storage: IDocumentStorage):
         self._repository = repository
-        # `plan()` consulta Drive directamente (sin crear nada), así que
-        # necesita el storage además del caso de uso que sí escribe.
         self._storage = storage
         self._provision = ProvisionEmployeeDriveFolderUseCase(repository, storage)
 
+    # --- Pasada en seco ----------------------------------------------------
+
     async def plan(self) -> BulkFolderPlan:
-        """Pasada EN SECO: qué haría, sin tocar Drive.
+        """Qué haría, sin escribir nada.
 
-        Existe porque la primera ejecución real sobre un Drive ya poblado
-        mueve carpetas de sitio, y para eso no hay deshacer. Consulta (nunca
-        crea) y devuelve el veredicto por persona más el coste en escrituras,
-        que es el dato que decide si conviene lanzarlo de una vez o por
-        tandas: Drive limita las escrituras y un `rateLimitExceeded` a mitad
-        del batch deja el árbol a medias.
+        Solo consulta a Drive por quien NO tiene carpeta registrada, y una vez:
+        para distinguir "hay que crearla" de "existe suelta en la raíz y hay
+        que moverla". Ese segundo caso es herencia del árbol plano y desaparece
+        tras el primer volcado completo, así que el coste del plan tiende a
+        cero según avanza el trabajo.
         """
-        active_users = await self._repository.find_provisionable_users_with_email()
+        pending = await self._repository.find_pending_folder_work()
+        total = await self._repository.count_provisionable_users()
 
-        entity_folders: dict[str, Optional[str]] = {}
         entities_to_create: list[str] = []
+        entidades_vistas: set[str] = set()
         entries: list[FolderPlanEntry] = []
 
-        for user_id, email, entity_name in active_users:
-            # Cachea la consulta por entidad: son 4 sociedades para ~40
-            # personas, y preguntarlo por cada una serían 40 llamadas para
-            # saber lo mismo.
-            if entity_name is not None and entity_name not in entity_folders:
-                found = await self._storage.find_entity_folder(entity_name)
-                entity_folders[entity_name] = found
-                if found is None:
-                    entities_to_create.append(entity_name)
+        for work in pending:
+            if (
+                work.entity_id is not None
+                and work.entity_name is not None
+                and work.entity_id not in entidades_vistas
+            ):
+                entidades_vistas.add(work.entity_id)
+                if await self._repository.find_entity_drive_folder_id(work.entity_id) is None:
+                    entities_to_create.append(work.entity_name)
 
-            entity_folder_id = entity_folders.get(entity_name) if entity_name else None
-
-            cached = await self._repository.find_drive_folder_id(user_id)
-            if cached is not None:
-                # Mismo atajo que la ejecución real: con el id cacheado ni se
-                # pregunta a Drive.
-                entries.append(
-                    FolderPlanEntry(
-                        user_id=user_id,
-                        email=email,
-                        entity_name=entity_name,
-                        action="ya_registrada",
-                        missing_categories=await self._missing_categories(cached),
-                    )
-                )
-                continue
-
-            in_place = (
-                await self._storage.find_employee_folder(email, parent_id=entity_folder_id)
-                if entity_folder_id is not None
-                else None
-            )
-            if in_place is not None:
-                action, folder_id = "ya_en_su_sitio", in_place
+            if work.drive_folder_id is not None:
+                # Tiene carpeta registrada y aun así está pendiente: la única
+                # forma de que eso pase es que haya cambiado de sociedad.
+                action = "recolocar"
             else:
-                flat = await self._storage.find_employee_folder(email)
-                if flat is not None and entity_name is not None:
-                    action, folder_id = "mover", flat
-                elif flat is not None:
-                    action, folder_id = "ya_en_su_sitio", flat
-                else:
-                    action, folder_id = "crear", None
+                flat = await self._storage.find_employee_folder(work.email)
+                action = "mover" if flat is not None else "crear"
 
             entries.append(
                 FolderPlanEntry(
-                    user_id=user_id,
-                    email=email,
-                    entity_name=entity_name,
+                    user_id=work.user_id,
+                    email=work.email,
+                    entity_name=work.entity_name,
                     action=action,
-                    # Una carpeta que aún no existe necesita las cinco.
-                    missing_categories=(
-                        list(CATEGORY_FOLDER_NAMES)
-                        if folder_id is None
-                        else await self._missing_categories(folder_id)
-                    ),
                 )
             )
 
-        return BulkFolderPlan(entries=entries, entity_folders_to_create=entities_to_create)
+        return BulkFolderPlan(
+            entries=entries,
+            entity_folders_to_create=entities_to_create,
+            already_done=max(0, total - len(pending)),
+        )
 
-    async def _missing_categories(self, employee_folder_id: str) -> list[str]:
-        missing = []
-        for category in CATEGORY_FOLDER_NAMES:
-            if await self._storage.find_category_folder(employee_folder_id, category) is None:
-                missing.append(category)
-        return missing
+    # --- Un lote -----------------------------------------------------------
 
-    async def _provision_one(
-        self,
-        semaphore: "asyncio.Semaphore",
-        user_id: str,
-        email: str,
-        entity_name: Optional[str],
-    ):
-        """Una persona, con el hueco de concurrencia ya pedido.
+    async def execute(self, *, limit: int = DEFAULT_BATCH_LIMIT) -> FolderBatchResult:
+        limit = max(1, min(limit, MAX_BATCH_LIMIT))
 
-        Devuelve `None` en vez de propagar: best-effort por empleado, mismo
-        criterio que `SyncDocumentsUseCase._sync_employee` — un fallo puntual
-        (Drive no responde para esa persona) no debe abortar el resto.
+        async with self._repository.provisioning_lock() as acquired:
+            if not acquired:
+                raise ProvisioningBusyError(
+                    "Ya hay un volcado de carpetas en curso. Espera a que termine."
+                )
+
+            pending = await self._repository.find_pending_folder_work(limit=limit)
+            if not pending:
+                return FolderBatchResult(
+                    processed=0, created=0, relocated=0, failed=0, remaining=0
+                )
+
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT_PROVISIONS)
+            outcomes = await asyncio.gather(
+                *(self._process_one(semaphore, work) for work in pending)
+            )
+
+            created = sum(1 for outcome in outcomes if outcome == "created")
+            relocated = sum(1 for outcome in outcomes if outcome == "relocated")
+            failed = sum(1 for outcome in outcomes if outcome is None)
+
+            # DESPUÉS de procesar y con el MISMO predicado que eligió el lote:
+            # quien falló sigue contando como pendiente, que es exactamente lo
+            # que la UI necesita saber para dejar de dar vueltas.
+            remaining = await self._repository.count_pending_folder_work()
+
+        return FolderBatchResult(
+            processed=len(pending),
+            created=created,
+            relocated=relocated,
+            failed=failed,
+            remaining=remaining,
+        )
+
+    async def _process_one(
+        self, semaphore: asyncio.Semaphore, work: PendingFolderWork
+    ) -> Optional[str]:
+        """`"created"` / `"relocated"` / `None` si falló.
+
+        Devuelve `None` en vez de propagar: con `asyncio.gather`, una excepción
+        sin capturar CANCELA a las hermanas, así que una persona tumbaría al
+        lote entero. Best-effort por empleado, mismo criterio que
+        `SyncDocumentsUseCase._sync_employee`.
         """
         async with semaphore:
             try:
-                # `entity_name` viaja desde la misma consulta que los emails:
-                # resolverlo aquí por persona serían N consultas más para un
-                # dato que el repositorio ya tenía delante.
-                return await self._provision.execute(
-                    user_id=user_id, email=email, entity_name=entity_name
+                if work.drive_folder_id is not None:
+                    return await self._relocate(work)
+                await self._provision.execute(
+                    user_id=work.user_id,
+                    email=work.email,
+                    entity_id=work.entity_id,
+                    entity_name=work.entity_name,
                 )
+                return "created"
             except Exception:
                 logger.exception(
-                    "Fallo al provisionar la carpeta de Drive de user_id=%s", user_id
+                    "Fallo al provisionar la carpeta de Drive de user_id=%s", work.user_id
                 )
                 return None
 
-    async def execute(self) -> BulkFolderProvisionResult:
-        sync_run = await self._repository.create_sync_run()
+    async def _relocate(self, work: PendingFolderWork) -> str:
+        """Su carpeta existe, pero cuelga de la sociedad anterior.
 
-        active_users = await self._repository.find_provisionable_users_with_email()
-        created = 0
-        skipped = 0
-        failed = 0
+        Se VERIFICA el padre real en Drive antes de mover. Eso es lo que hace
+        inofensivo el backfill optimista de la migración `055`: si la columna
+        mentía y la carpeta ya estaba en su sitio, aquí se descubre y solo se
+        corrige el dato, sin escribir en Drive.
+        """
+        assert work.drive_folder_id is not None
 
-        # Las carpetas de ENTIDAD, antes del fan-out y de una en una.
-        #
-        # No es una optimización, es lo que hace seguro el paralelismo: dos
-        # corrutinas que preguntan a la vez "¿existe ya Hincator?" reciben las
-        # dos que no, y crean DOS carpetas con el mismo nombre. A partir de
-        # ahí media plantilla cuelga de una y media de la otra, y Drive no se
-        # queja porque admite nombres repetidos.
-        #
-        # Resolverlas aquí las deja además cacheadas en el proveedor, así que
-        # las 37 personas siguientes no vuelven a preguntar por ellas.
-        for entity_name in dict.fromkeys(
-            entity for _, _, entity in active_users if entity is not None
-        ):
-            try:
-                await self._storage.get_or_create_entity_folder(entity_name)
-            except Exception:
-                # Si la entidad no se puede crear, sus empleados fallarán uno
-                # a uno y se contarán como tales — no se aborta el batch, que
-                # puede tener gente de otras sociedades.
-                logger.exception("Fallo al resolver la carpeta de la entidad %s", entity_name)
-
-        # El resto, en paralelo acotado: son ~14 llamadas a Drive por persona
-        # y en serie se iban a más de dos minutos, por encima del timeout del
-        # proxy. El semáforo evita el otro extremo: soltar 37 tandas a la vez
-        # es la forma más rápida de que Google devuelva `rateLimitExceeded`.
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_PROVISIONS)
-        results = await asyncio.gather(
-            *(
-                self._provision_one(semaphore, user_id, email, entity_name)
-                for user_id, email, entity_name in active_users
-            )
+        destino = await resolve_entity_folder_id(
+            self._repository,
+            self._storage,
+            entity_id=work.entity_id,
+            entity_name=work.entity_name,
         )
+        padre_actual = await self._storage.find_folder_parent_id(work.drive_folder_id)
 
-        for result in results:
-            if result is None:
-                failed += 1
-                continue
+        if destino is not None and padre_actual != destino:
+            # Mover conserva el id y el contenido: `users.drive_folder_id`
+            # sigue siendo válido y las nóminas viajan con la carpeta.
+            await self._storage.move_folder(work.drive_folder_id, new_parent_id=destino)
 
-            if result.created:
-                created += 1
-            else:
-                skipped += 1
-
-        if not active_users or failed == 0:
-            status = "success"
-        elif failed == len(active_users):
-            status = "failed"
-        else:
-            status = "partial"
-
-        detail_parts = []
-        if skipped:
-            detail_parts.append(f"{skipped} carpeta(s) omitida(s) (ya existían).")
-        if failed:
-            detail_parts.append(f"{failed} empleado(s) fallaron durante el provisioning.")
-
-        finished_run: SyncRun = await self._repository.finish_sync_run(
-            sync_run.id,
-            status=status,
-            files_synced=created,
-            error_detail=" ".join(detail_parts) or None,
+        await self._repository.save_drive_folder_id(
+            work.user_id, work.drive_folder_id, entity_id=work.entity_id
         )
-
-        return BulkFolderProvisionResult(
-            sync_run=finished_run, created=created, skipped=skipped, failed=failed
-        )
+        return "relocated"

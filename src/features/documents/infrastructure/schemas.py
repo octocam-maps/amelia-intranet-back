@@ -9,6 +9,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from ..application.use_cases.bulk_provision_drive_folders import DEFAULT_BATCH_LIMIT
+
 
 class DocumentDTO(BaseModel):
     id: str
@@ -40,43 +42,48 @@ class SyncRunDTO(BaseModel):
     error_detail: Optional[str] = None
 
 
-class DriveFolderProvisionRunDTO(BaseModel):
-    """Resumen de `POST /documents/provision-folders` (batch de backfill):
-    misma fila de auditoría `drive_sync_runs` que `SyncRunDTO`, pero con
-    `created`/`skipped`/`failed` desglosados (no solo texto libre en
-    `error_detail`) — `BulkFolderProvisionResult` los calcula en el caso de
-    uso, no vienen de columnas propias de la tabla."""
+class FolderBatchRequestDTO(BaseModel):
+    """Cuerpo de un lote. `limit` viaja en la petición y no en configuración
+    porque es la UI quien conoce su propia tolerancia de espera; el caso de uso
+    lo acota igualmente entre 1 y `MAX_BATCH_LIMIT`."""
 
-    id: str
-    started_at: datetime
-    finished_at: Optional[datetime] = None
-    status: str
+    limit: int = DEFAULT_BATCH_LIMIT
+
+
+class FolderBatchResultDTO(BaseModel):
+    """Resultado de UN lote.
+
+    `remaining` es lo que gobierna el bucle del cliente, y se calcula
+    consultando la base después de procesar — no es `total - procesadas`. Quien
+    falla sigue pendiente, y esa diferencia es justo la señal de que hay que
+    dejar de repetir."""
+
+    processed: int
     created: int
-    skipped: int
+    relocated: int
     failed: int
-    error_detail: Optional[str] = None
+    remaining: int
 
 
 class FolderPlanEntryDTO(BaseModel):
     """Una línea de la pasada en seco. `action`: `crear` | `mover` |
-    `ya_en_su_sitio` | `ya_registrada`."""
+    `recolocar`."""
 
     user_id: str
     email: str
     entity_name: Optional[str]
     action: str
-    missing_categories: list[str]
 
 
 class BulkFolderPlanDTO(BaseModel):
-    """Qué haría el provisioning, SIN haberlo hecho. `estimated_drive_writes`
-    es el dato que decide si lanzarlo de una vez: Drive limita las escrituras
-    y un corte a mitad deja el árbol incompleto."""
+    """Qué haría el volcado, SIN haberlo hecho. Solo habla del trabajo
+    pendiente: a quien ya tiene su carpeta en su sitio ni se le menciona."""
 
     entries: list[FolderPlanEntryDTO]
     entity_folders_to_create: list[str]
+    pending: int
+    already_done: int
     to_create: int
     to_move: int
-    already_ok: int
     category_folders_to_create: int
     estimated_drive_writes: int

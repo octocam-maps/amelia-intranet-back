@@ -5,7 +5,9 @@ que `auth.application.results`."""
 from dataclasses import dataclass
 from typing import Optional
 
-from ..domain.models import Document, SyncRun
+from ..domain.models import CATEGORY_FOLDER_NAMES, Document
+
+CATEGORY_FOLDER_COUNT = len(CATEGORY_FOLDER_NAMES)
 
 
 @dataclass(frozen=True)
@@ -19,50 +21,61 @@ class DocumentDownload:
 
 
 @dataclass(frozen=True)
-class BulkFolderProvisionResult:
-    """Resumen de `BulkProvisionDriveFoldersUseCase` (batch de backfill,
-    `POST /documents/provision-folders`): reusa la misma fila de
-    `drive_sync_runs` que `SyncDocumentsUseCase` (auditoría), pero con
-    conteos propios de "carpeta creada/omitida/fallida" — `SyncRun` en sí no
-    modela ese desglose (`files_synced`/`error_detail` solo), así que este
-    resultado los expone estructurados para la respuesta del endpoint."""
+class FolderBatchResult:
+    """Resultado de UN lote del volcado (`POST /documents/provision-folders`).
 
-    sync_run: SyncRun
+    No hay fila de `drive_sync_runs`: ese reuso nunca encajó —`files_synced` no
+    significa nada al crear carpetas, y por eso hubo que colgarle conteos en el
+    DTO—. Con lotes habría además una fila por tanda, y una ejecución
+    interrumpida dejaría filas `running` huérfanas para siempre. La trazabilidad
+    va al log, y el ESTADO se lee de la base.
+
+    `remaining` se consulta después de procesar, con el mismo predicado que
+    eligió el lote. No es `total - procesadas`: si alguien falla, sigue
+    pendiente, y esa es justo la información que necesita la UI para saber que
+    tiene que parar en vez de dar vueltas.
+    """
+
+    processed: int
     created: int
-    skipped: int
+    relocated: int
     failed: int
+    remaining: int
 
 
 @dataclass(frozen=True)
 class FolderPlanEntry:
-    """Qué haría el provisioning con UNA persona, sin hacerlo.
+    """Qué haría el volcado con UNA persona, sin hacerlo.
 
     `action` es el veredicto:
-      - `ya_registrada`   -> tiene `drive_folder_id` cacheado; ni se consulta a Drive
-      - `ya_en_su_sitio`  -> la carpeta existe bajo su entidad; solo se cachearía el id
-      - `mover`           -> existe SUELTA en la raíz (árbol plano) y se movería
-      - `crear`           -> no existe en ninguna parte
+      - `crear`      -> no tiene carpeta en ninguna parte
+      - `mover`      -> existe SUELTA en la raíz (árbol plano heredado)
+      - `recolocar`  -> existe, pero bajo una sociedad que ya no es la suya
     """
 
     user_id: str
     email: str
     entity_name: Optional[str]
     action: str
-    missing_categories: list[str]
 
 
 @dataclass(frozen=True)
 class BulkFolderPlan:
-    """Resultado de la pasada EN SECO. No escribe nada en Drive ni deja fila
-    en `drive_sync_runs`: es una fotografía de lo que ocurriría.
+    """Pasada EN SECO: lo que ocurriría, sin haber escrito nada.
 
-    `entity_folders_to_create` son las carpetas de sociedad que hoy no
-    existen. Van aparte porque se comparten entre personas: contarlas por
-    empleado multiplicaría por 40 lo que son 4 carpetas.
+    Solo habla del trabajo PENDIENTE. A quien ya tiene su carpeta en su sitio
+    ni se le menciona ni se le consulta a Drive — antes se hacían ~7 llamadas
+    por persona para acabar diciendo "esta no necesita nada", y eso hacía que
+    el propio plan pudiera expirar. Ahora su coste es proporcional a lo que
+    falta, así que tiende a cero según avanza el volcado.
+
+    `entity_folders_to_create` van aparte porque se comparten entre personas:
+    contarlas por empleado multiplicaría por 40 lo que son 4 carpetas.
     """
 
     entries: list[FolderPlanEntry]
     entity_folders_to_create: list[str]
+    already_done: int
 
     @property
     def to_create(self) -> int:
@@ -70,21 +83,22 @@ class BulkFolderPlan:
 
     @property
     def to_move(self) -> int:
-        return sum(1 for e in self.entries if e.action == "mover")
+        return sum(1 for e in self.entries if e.action in ("mover", "recolocar"))
 
     @property
-    def already_ok(self) -> int:
-        return sum(1 for e in self.entries if e.action in ("ya_registrada", "ya_en_su_sitio"))
+    def pending(self) -> int:
+        return len(self.entries)
 
     @property
     def category_folders_to_create(self) -> int:
-        return sum(len(e.missing_categories) for e in self.entries)
+        """Cinco por carpeta que nazca. A quien solo se recoloca no se le
+        crean: se mueve con las suyas dentro."""
+        return CATEGORY_FOLDER_COUNT * self.to_create
 
     @property
     def estimated_drive_writes(self) -> int:
-        """Escrituras que costaría aplicarlo. Drive limita por proyecto y por
-        usuario: saber el número ANTES evita descubrir el `rateLimitExceeded`
-        a mitad del batch."""
+        """Escrituras que costaría aplicarlo. Es una COTA, no una promesa: si
+        alguien pasa a activo entre el plan y el volcado, entra y suma."""
         return (
             len(self.entity_folders_to_create)
             + self.to_create

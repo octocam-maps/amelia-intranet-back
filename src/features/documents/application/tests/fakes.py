@@ -12,6 +12,7 @@ eran placeholders fuera de alcance de WU-C1."""
 
 import hashlib
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Optional
@@ -20,6 +21,7 @@ from src.features.documents.domain.models import (
     CATEGORY_FOLDER_NAMES,
     Document,
     DriveFileMetadata,
+    PendingFolderWork,
     SyncRun,
     UploadedFile,
 )
@@ -61,6 +63,14 @@ class FakeDocumentRepository:
         self.entity_name_by_user: dict[str, str] = entity_name_by_user or {}
         self.sync_runs: dict[str, SyncRun] = {}
         self._sync_run_counter = 0
+        # --- Estado de carpetas [055] ---
+        # `entity_id` se deriva del NOMBRE de la sociedad: en los tests no hay
+        # tabla `entities`, y usar el nombre como id mantiene los fixtures
+        # legibles (`("u1", "ana@…", "Amelia Hub")`) sin inventar UUIDs.
+        self.entity_drive_folder_ids: dict[str, str] = {}
+        self.drive_folder_entity_ids: dict[str, Optional[str]] = {}
+        # Lo pone a `True` un test para simular que otro volcado está en curso.
+        self.provisioning_locked = False
 
     async def find_by_id(self, document_id: str) -> Optional[Document]:
         document = self.documents.get(document_id)
@@ -131,19 +141,82 @@ class FakeDocumentRepository:
     async def find_drive_folder_id(self, user_id: str) -> Optional[str]:
         return self.drive_folder_ids.get(user_id)
 
-    async def save_drive_folder_id(self, user_id: str, drive_folder_id: str) -> None:
+    async def save_drive_folder_id(
+        self,
+        user_id: str,
+        drive_folder_id: str,
+        *,
+        entity_id: Optional[str] = None,
+    ) -> None:
         self.drive_folder_ids[user_id] = drive_folder_id
+        self.drive_folder_entity_ids[user_id] = entity_id
 
     async def find_active_users_with_email(self) -> list[tuple[str, str, Optional[str]]]:
         return list(self.active_users)
 
-    async def find_provisionable_users_with_email(
-        self,
-    ) -> list[tuple[str, str, Optional[str]]]:
+    async def find_entity_drive_folder_id(self, entity_id: str) -> Optional[str]:
+        return self.entity_drive_folder_ids.get(entity_id)
+
+    async def save_entity_drive_folder_id(
+        self, entity_id: str, drive_folder_id: str
+    ) -> None:
+        self.entity_drive_folder_ids[entity_id] = drive_folder_id
+
+    def _provisionable(self) -> list[tuple[str, str, Optional[str]]]:
         return list(self.active_users) + list(self.invited_users)
 
-    async def find_entity_name_for_user(self, user_id: str) -> Optional[str]:
-        return self.entity_name_by_user.get(user_id)
+    def _is_pending(self, user_id: str, entity_name: Optional[str]) -> bool:
+        """Réplica del predicado SQL. `entity_name` hace de `entity_id`, y la
+        comparación imita a `IS DISTINCT FROM`: `None` frente a `None` NO es
+        distinto, así que el externo-invitado sin sociedad no se queda
+        eternamente pendiente."""
+        if user_id not in self.drive_folder_ids:
+            return True
+        return self.drive_folder_entity_ids.get(user_id) != entity_name
+
+    async def find_pending_folder_work(
+        self, *, limit: Optional[int] = None
+    ) -> list[PendingFolderWork]:
+        pendientes = [
+            PendingFolderWork(
+                user_id=user_id,
+                email=email,
+                entity_id=entity_name,
+                entity_name=entity_name,
+                drive_folder_id=self.drive_folder_ids.get(user_id),
+            )
+            for user_id, email, entity_name in self._provisionable()
+            if self._is_pending(user_id, entity_name)
+        ]
+        pendientes.sort(key=lambda w: w.email)
+        return pendientes[:limit] if limit is not None else pendientes
+
+    async def count_pending_folder_work(self) -> int:
+        return sum(
+            1
+            for user_id, _, entity_name in self._provisionable()
+            if self._is_pending(user_id, entity_name)
+        )
+
+    async def count_provisionable_users(self) -> int:
+        return len(self._provisionable())
+
+    @asynccontextmanager
+    async def provisioning_lock(self):
+        if self.provisioning_locked:
+            yield False
+            return
+        self.provisioning_locked = True
+        try:
+            yield True
+        finally:
+            self.provisioning_locked = False
+
+    async def find_entity_for_user(
+        self, user_id: str
+    ) -> tuple[Optional[str], Optional[str]]:
+        nombre = self.entity_name_by_user.get(user_id)
+        return (nombre, nombre)
 
     async def create_sync_run(self) -> SyncRun:
         self._sync_run_counter += 1
@@ -183,6 +256,9 @@ class FakeDocumentStorage:
         # quedó cada persona.
         self.entity_folders: dict[str, str] = {}
         self.entity_by_email: dict[str, str] = {}
+        # Dónde cuelga cada carpeta, para poder afirmar recolocaciones.
+        self.parent_by_folder: dict[str, Optional[str]] = {}
+        self.moved: list[tuple[str, str]] = []
         self.files_by_folder: dict[str, dict[str, DriveFileMetadata]] = {}
         self.content_by_file_id: dict[str, bytes] = {}
         self.upload_calls: list[dict] = []  # para aserciones "llamó al storage"
@@ -198,19 +274,26 @@ class FakeDocumentStorage:
         return folder_id
 
     async def get_or_create_employee_folder(
-        self, email: str, *, entity_name: Optional[str] = None
+        self, email: str, *, entity_folder_id: Optional[str] = None
     ) -> str:
-        # Mover conserva el id también aquí, igual que en Drive real: la
-        # entidad se registra aparte y la carpeta NO cambia de identificador.
-        if entity_name is not None:
-            await self.get_or_create_entity_folder(entity_name)
-            self.entity_by_email[email] = entity_name
+        # Mover conserva el id también aquí, igual que en Drive real: el padre
+        # se registra aparte y la carpeta NO cambia de identificador.
         folder_id = self.folders_by_email.get(email)
         if folder_id is None:
             folder_id = f"fake-folder-{uuid.uuid4()}"
             self.folders_by_email[email] = folder_id
             self.files_by_folder[folder_id] = {}
+        self.parent_by_folder[folder_id] = entity_folder_id
+        if entity_folder_id is not None:
+            self.entity_by_email[email] = entity_folder_id
         return folder_id
+
+    async def find_folder_parent_id(self, folder_id: str) -> Optional[str]:
+        return self.parent_by_folder.get(folder_id)
+
+    async def move_folder(self, folder_id: str, *, new_parent_id: str) -> None:
+        self.parent_by_folder[folder_id] = new_parent_id
+        self.moved.append((folder_id, new_parent_id))
 
     async def find_entity_folder(self, entity_name: str) -> Optional[str]:
         return self.entity_folders.get(entity_name)

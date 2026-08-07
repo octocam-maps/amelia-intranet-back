@@ -52,46 +52,36 @@ class GoogleDriveDocumentStorage:
             build_credentials(key_path=key_path, key_json=key_json),
             root_folder_id=root_folder_id,
         )
-        # Memo de las carpetas de sociedad. Son CUATRO para toda la plantilla
-        # y `get_or_create_employee_folder` las resuelve por persona: sin
-        # esto, un volcado de 37 personas pregunta 37 veces dónde está la
-        # misma carpeta.
-        #
-        # Vive lo que vive la instancia, y la factoría crea una por petición
-        # (`get_document_storage` en cada `Depends`), así que no puede quedarse
-        # obsoleto entre requests.
-        self._entity_folder_ids: dict[str, str] = {}
-        # El batch provisiona en paralelo. Sin el cerrojo, dos corrutinas que
-        # fallan el memo a la vez crearían DOS carpetas con el mismo nombre —
-        # Drive las admite, y a partir de ahí media plantilla cuelga de una y
-        # media de la otra.
-        self._entity_folder_lock = asyncio.Lock()
 
     async def get_or_create_entity_folder(self, entity_name: str) -> str:
-        cached = self._entity_folder_ids.get(entity_name)
-        if cached is not None:
-            return cached
+        """Sin memo ni cerrojo: el id lo guarda `entities.drive_folder_id` [055]
+        y quien llama solo llega hasta aquí cuando esa columna está vacía.
 
-        async with self._entity_folder_lock:
-            # Segunda comprobación DENTRO del cerrojo: quien esperaba aquí
-            # puede haber quedado desbloqueado justo después de que otro la
-            # creara.
-            cached = self._entity_folder_ids.get(entity_name)
-            if cached is not None:
-                return cached
-
-            folder_id = await asyncio.to_thread(self._client.find_folder_by_name, entity_name)
-            if folder_id is None:
-                folder_id = await asyncio.to_thread(self._client.create_folder, entity_name)
-            self._entity_folder_ids[entity_name] = folder_id
+        Hubo aquí un caché en memoria con doble comprobación. Resolvía el coste
+        —37 personas preguntando por las mismas 4 carpetas— pero no el problema:
+        la factoría crea una instancia por petición, así que dos peticiones
+        simultáneas tenían dos cachés, ninguna veía a la otra y las dos creaban
+        la carpeta. Era estado de la aplicación viviendo en memoria."""
+        folder_id = await asyncio.to_thread(self._client.find_folder_by_name, entity_name)
+        if folder_id is not None:
             return folder_id
+        return await asyncio.to_thread(self._client.create_folder, entity_name)
+
+    async def find_folder_parent_id(self, folder_id: str) -> Optional[str]:
+        return await asyncio.to_thread(self._client.find_folder_parent_id, folder_id)
+
+    async def move_folder(self, folder_id: str, *, new_parent_id: str) -> None:
+        await asyncio.to_thread(
+            self._client.move_folder, folder_id, new_parent_id=new_parent_id
+        )
 
     async def get_or_create_employee_folder(
-        self, email: str, *, entity_name: Optional[str] = None
+        self, email: str, *, entity_folder_id: Optional[str] = None
     ) -> str:
-        """Carpeta del empleado dentro de la de su entidad.
+        """Carpeta del empleado dentro de la de su entidad, que llega YA
+        RESUELTA (ver `application/entity_folders.py`).
 
-        `entity_name=None` la deja colgando de la raíz — es el caso del
+        `entity_folder_id=None` la deja colgando de la raíz — es el caso del
         externo-invitado, que no pertenece a ninguna sociedad del grupo.
 
         Los tres casos, en este orden:
@@ -104,13 +94,11 @@ class GoogleDriveDocumentStorage:
         al backend subiendo a la vieja (tiene su id cacheado en
         `users.drive_folder_id`) y a las personas mirando la nueva, vacía.
         """
-        if entity_name is None:
+        if entity_folder_id is None:
             folder_id = await asyncio.to_thread(self._client.find_folder_by_name, email)
             if folder_id is not None:
                 return folder_id
             return await asyncio.to_thread(self._client.create_folder, email)
-
-        entity_folder_id = await self.get_or_create_entity_folder(entity_name)
 
         existing = await asyncio.to_thread(
             self._client.find_folder_by_name, email, parent_id=entity_folder_id

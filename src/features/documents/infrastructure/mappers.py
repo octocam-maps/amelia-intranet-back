@@ -2,13 +2,13 @@
 no se exponen al cliente: son detalles del proveedor de almacenamiento
 (`sdd/fase4-nominas-documentos/design` — nunca se expone la URL/id de Drive)."""
 
-from ..application.results import BulkFolderPlan, BulkFolderProvisionResult
+from ..application.results import BulkFolderPlan, FolderBatchResult
 from ..domain.models import Document, SyncRun
 from .schemas import (
     BulkFolderPlanDTO,
     DocumentDTO,
     DocumentListDTO,
-    DriveFolderProvisionRunDTO,
+    FolderBatchResultDTO,
     FolderPlanEntryDTO,
     SyncRunDTO,
 )
@@ -43,18 +43,13 @@ def sync_run_to_dto(sync_run: SyncRun) -> SyncRunDTO:
     )
 
 
-def bulk_folder_provision_result_to_dto(
-    result: BulkFolderProvisionResult,
-) -> DriveFolderProvisionRunDTO:
-    return DriveFolderProvisionRunDTO(
-        id=result.sync_run.id,
-        started_at=result.sync_run.started_at,
-        finished_at=result.sync_run.finished_at,
-        status=result.sync_run.status,
+def folder_batch_result_to_dto(result: FolderBatchResult) -> FolderBatchResultDTO:
+    return FolderBatchResultDTO(
+        processed=result.processed,
         created=result.created,
-        skipped=result.skipped,
+        relocated=result.relocated,
         failed=result.failed,
-        error_detail=result.sync_run.error_detail,
+        remaining=result.remaining,
     )
 
 
@@ -66,14 +61,14 @@ def bulk_folder_plan_to_dto(plan: BulkFolderPlan) -> BulkFolderPlanDTO:
                 email=entry.email,
                 entity_name=entry.entity_name,
                 action=entry.action,
-                missing_categories=entry.missing_categories,
             )
             for entry in plan.entries
         ],
         entity_folders_to_create=plan.entity_folders_to_create,
+        pending=plan.pending,
+        already_done=plan.already_done,
         to_create=plan.to_create,
         to_move=plan.to_move,
-        already_ok=plan.already_ok,
         category_folders_to_create=plan.category_folders_to_create,
         estimated_drive_writes=plan.estimated_drive_writes,
     )

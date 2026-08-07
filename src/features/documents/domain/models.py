@@ -39,6 +39,29 @@ CATEGORY_FOLDER_NAMES: dict[str, str] = {
 
 
 @dataclass(frozen=True)
+class PendingFolderWork:
+    """Una persona a la que le falta carpeta de Drive, o que la tiene bajo la
+    sociedad equivocada.
+
+    Es el conjunto sobre el que trabaja el volcado, y el mismo del que sale
+    «cuántas quedan». Un `dataclass` y no una tupla porque son cinco campos:
+    con tuplas, el día que se añada uno hay que revisar cada desempaquetado.
+
+    `drive_folder_id is None` distingue los dos trabajos posibles y evita
+    repetir la lógica del predicado SQL en el caso de uso:
+
+    - `None`  -> hay que CREARLA.
+    - Con id  -> existe, pero cuelga de otra sociedad: hay que RECOLOCARLA.
+    """
+
+    user_id: str
+    email: str
+    entity_id: Optional[str]  # None = sin sociedad (externo-invitado): raíz
+    entity_name: Optional[str]
+    drive_folder_id: Optional[str]
+
+
+@dataclass(frozen=True)
 class Document:
     """Una fila de `employee_documents`. RGPD: el filtrado por `user_id`
     (dueño) ocurre siempre en el repositorio (WU-C1), nunca solo en la UI."""

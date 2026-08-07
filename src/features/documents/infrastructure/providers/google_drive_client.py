@@ -173,6 +173,21 @@ class GoogleDriveClient:
         )
         return created["id"]
 
+    def find_folder_parent_id(self, folder_id: str) -> Optional[str]:
+        """Bajo qué carpeta cuelga hoy, según Drive.
+
+        En Drive un fichero puede tener varios padres; en la práctica, en una
+        unidad compartida tiene exactamente uno. Se devuelve el primero y no se
+        finge otra cosa: quien pregunta solo quiere saber si la carpeta está
+        donde debería."""
+        current = (
+            self._service.files()
+            .get(fileId=folder_id, fields="parents", supportsAllDrives=True)
+            .execute(http=self._http())
+        )
+        parents = current.get("parents", [])
+        return parents[0] if parents else None
+
     def move_folder(self, folder_id: str, *, new_parent_id: str) -> None:
         """Recoloca una carpeta bajo otro padre CONSERVANDO su id.
 

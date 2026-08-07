@@ -7,7 +7,7 @@ CRUD manual (listar/subir/descargar/borrar); `POST /documents/sync`
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from src.shared.auth.dependencies import require_role
@@ -16,6 +16,7 @@ from src.shared.auth.roles import ADMIN_ONLY, INTERNAL_ROLES
 from ..application.errors import DocumentNotFoundError
 from ..application.use_cases.bulk_provision_drive_folders import (
     BulkProvisionDriveFoldersUseCase,
+    ProvisioningBusyError,
 )
 from ..application.use_cases.delete_document import DeleteDocumentUseCase
 from ..application.use_cases.download_document import DownloadDocumentUseCase
@@ -33,7 +34,7 @@ from .dependencies import (
 )
 from .mappers import (
     bulk_folder_plan_to_dto,
-    bulk_folder_provision_result_to_dto,
+    folder_batch_result_to_dto,
     document_to_dto,
     documents_to_dto,
     sync_run_to_dto,
@@ -42,7 +43,8 @@ from .schemas import (
     BulkFolderPlanDTO,
     DocumentDTO,
     DocumentListDTO,
-    DriveFolderProvisionRunDTO,
+    FolderBatchRequestDTO,
+    FolderBatchResultDTO,
     SyncRunDTO,
 )
 
@@ -163,20 +165,32 @@ def create_documents_router() -> APIRouter:
         sync_run = await use_case.execute()
         return sync_run_to_dto(sync_run)
 
-    @router.post("/provision-folders", response_model=DriveFolderProvisionRunDTO)
+    @router.post("/provision-folders", response_model=FolderBatchResultDTO)
     async def provision_folders(
+        payload: FolderBatchRequestDTO = FolderBatchRequestDTO(),
         current_user: dict = Depends(require_role(*ADMIN_ONLY)),
         use_case: BulkProvisionDriveFoldersUseCase = Depends(
             get_bulk_provision_drive_folders_use_case
         ),
     ):
-        """Backfill de carpetas de Drive (decisión de producto "hook en alta
-        + batch de backfill"): provisiona la carpeta PADRE de cada empleado
-        activo que todavía no la tenga cacheada — retry seguro, idempotente
-        y best-effort por empleado (`BulkProvisionDriveFoldersUseCase`).
+        """UN LOTE del volcado de carpetas. El cliente repite mientras
+        `remaining > 0`.
+
+        Devuelve un lote y no el trabajo entero porque la plantilla completa
+        son ~500 llamadas a Drive: más de dos minutos con la petición abierta,
+        y el proxy la cortaba con un 504. Cada lote es lo bastante pequeño como
+        para no poder expirar, y como el conjunto pendiente se recalcula en
+        cada llamada, cortar a mitad no deja nada que limpiar.
+
+        `409` si ya hay otro volcado en curso: dos a la vez crearían carpetas
+        de sociedad duplicadas, que Drive acepta sin dar error.
+
         Exclusivo del admin, mismo criterio que `POST /documents/sync`."""
-        result = await use_case.execute()
-        return bulk_folder_provision_result_to_dto(result)
+        try:
+            result = await use_case.execute(limit=payload.limit)
+        except ProvisioningBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return folder_batch_result_to_dto(result)
 
     @router.get("/provision-folders/plan", response_model=BulkFolderPlanDTO)
     async def plan_provision_folders(
@@ -185,16 +199,15 @@ def create_documents_router() -> APIRouter:
             get_bulk_provision_drive_folders_use_case
         ),
     ):
-        """Pasada EN SECO del backfill: qué haría, sin tocar Drive.
+        """Pasada EN SECO del volcado: qué haría, sin escribir nada.
 
-        `GET` y no `POST` a propósito: no escribe nada, ni en Drive ni en
-        `drive_sync_runs`. Es la comprobación previa a la primera ejecución
-        real sobre un Drive ya poblado, donde el batch MUEVE carpetas de sitio
-        y no hay deshacer.
+        `GET` y no `POST` a propósito. Es la comprobación previa sobre un Drive
+        ya poblado, donde el volcado MUEVE carpetas de sitio y no hay deshacer.
 
-        Devuelve el veredicto por persona (`crear` / `mover` / `ya_en_su_sitio`
-        / `ya_registrada`) y `estimated_drive_writes`, que es lo que permite
-        anticipar un `rateLimitExceeded` en vez de descubrirlo a mitad."""
+        Devuelve el veredicto por persona (`crear` / `mover` / `recolocar`) y
+        `estimated_drive_writes`. Solo habla del trabajo PENDIENTE: a quien ya
+        tiene su carpeta en su sitio ni se le menciona ni se le consulta a
+        Drive, así que el coste del plan baja según avanza el volcado."""
         return bulk_folder_plan_to_dto(await use_case.plan())
 
     return router

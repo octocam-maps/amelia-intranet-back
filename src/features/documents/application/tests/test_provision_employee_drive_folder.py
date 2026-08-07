@@ -27,14 +27,16 @@ class _CountingStorage(FakeDocumentStorage):
     def __init__(self):
         super().__init__()
         self.get_or_create_calls = 0
-        self.last_entity_name: Optional[str] = None
+        self.last_entity_folder_id: Optional[str] = None
 
     async def get_or_create_employee_folder(
-        self, email: str, *, entity_name: Optional[str] = None
+        self, email: str, *, entity_folder_id: Optional[str] = None
     ) -> str:
         self.get_or_create_calls += 1
-        self.last_entity_name = entity_name
-        return await super().get_or_create_employee_folder(email)
+        self.last_entity_folder_id = entity_folder_id
+        return await super().get_or_create_employee_folder(
+            email, entity_folder_id=entity_folder_id
+        )
 
 
 def _use_case(*, repository=None, storage=None):

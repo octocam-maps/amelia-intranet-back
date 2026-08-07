@@ -33,6 +33,7 @@ from typing import Optional
 
 from ...domain.models import CATEGORY_FOLDER_NAMES
 from ...domain.ports import IDocumentRepository, IDocumentStorage
+from ..entity_folders import resolve_entity_folder_id
 
 logger = logging.getLogger(__name__)
 
@@ -53,22 +54,38 @@ class ProvisionEmployeeDriveFolderUseCase:
         self._storage = storage
 
     async def execute(
-        self, *, user_id: str, email: str, entity_name: Optional[str] = None
+        self,
+        *,
+        user_id: str,
+        email: str,
+        entity_id: Optional[str] = None,
+        entity_name: Optional[str] = None,
     ) -> ProvisionFolderResult:
         existing_folder_id = await self._repository.find_drive_folder_id(user_id)
         if existing_folder_id is not None:
             return ProvisionFolderResult(drive_folder_id=existing_folder_id, created=False)
 
-        # `entity_name` puede venir resuelto por quien llama (el batch lo trae
-        # en la misma consulta que los emails, para no hacer una por persona);
-        # si no, se resuelve aquí.
-        if entity_name is None:
-            entity_name = await self._repository.find_entity_name_for_user(user_id)
+        # `entity_id`/`entity_name` pueden venir resueltos por quien llama (el
+        # volcado los trae en la misma consulta que los emails, para no hacer
+        # una por persona); si no, se resuelven aquí.
+        if entity_id is None:
+            entity_id, entity_name = await self._repository.find_entity_for_user(user_id)
 
-        folder_id = await self._storage.get_or_create_employee_folder(
-            email, entity_name=entity_name
+        entity_folder_id = await resolve_entity_folder_id(
+            self._repository,
+            self._storage,
+            entity_id=entity_id,
+            entity_name=entity_name,
         )
-        await self._repository.save_drive_folder_id(user_id, folder_id)
+        folder_id = await self._storage.get_or_create_employee_folder(
+            email, entity_folder_id=entity_folder_id
+        )
+        # Se registra BAJO QUÉ sociedad quedó: es lo que permite detectar
+        # después un cambio de sociedad sin preguntarle a Drive por cada
+        # persona de la plantilla.
+        await self._repository.save_drive_folder_id(
+            user_id, folder_id, entity_id=entity_id
+        )
 
         # Las cinco subcarpetas, para que la carpeta no se vea vacía y
         # RRHH pueda dejar un documento en su sitio desde el primer día.
