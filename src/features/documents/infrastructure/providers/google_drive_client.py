@@ -186,10 +186,17 @@ class GoogleDriveClient:
             .execute(http=self._http())
         )
         parents = current.get("parents", [])
-        return parents[0] if parents else None
+        if not parents:
+            return None
+        # La raíz se normaliza a None, que es lo que significa "raíz" en todo
+        # el puerto de almacenamiento. Devolver aquí su id real haría que una
+        # carpeta ya colocada en la raíz pareciera fuera de sitio en cada
+        # pasada del volcado, y se movería una y otra vez a donde ya está.
+        return None if parents[0] == self._root_folder_id else parents[0]
 
-    def move_folder(self, folder_id: str, *, new_parent_id: str) -> None:
+    def move_folder(self, folder_id: str, *, new_parent_id: Optional[str] = None) -> None:
         """Recoloca una carpeta bajo otro padre CONSERVANDO su id.
+        `new_parent_id=None` la lleva a la raíz configurada.
 
         Es la operación que hace segura la reorganización por entidades: en
         Drive, mover no cambia el id, así que el `users.drive_folder_id` que
@@ -210,7 +217,7 @@ class GoogleDriveClient:
         previous_parents = ",".join(current.get("parents", []))
         self._service.files().update(
             fileId=folder_id,
-            addParents=new_parent_id,
+            addParents=new_parent_id or self._root_folder_id,
             removeParents=previous_parents,
             fields="id, parents",
             supportsAllDrives=True,

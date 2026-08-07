@@ -55,7 +55,14 @@ MAX_BATCH_LIMIT = 50
 # Personas provisionándose a la vez DENTRO de un lote. Es una optimización, no
 # un requisito: bajarlo a 1 debe seguir funcionando, y hay test que lo cubre.
 # Que la corrección no dependa de la velocidad es justo lo que faltaba antes.
-MAX_CONCURRENT_PROVISIONS = 8
+#
+# TIENE QUE QUEDAR MUY POR DEBAJO DEL POOL DE CONEXIONES (`max_size=10`, ver
+# `asyncpg_pool`), que es de TODA la aplicación. Medido: con 8 el pico durante
+# un lote era de 8 conexiones y dejaba 2 libres para el resto de la intranet
+# durante varios segundos — el volcado no reventaba, pero encolaba a los demás.
+# Con 4 el pico baja a la mitad y un lote de 10 personas sigue tardando
+# segundos, que para algo que se lanza unas pocas veces al año sobra.
+MAX_CONCURRENT_PROVISIONS = 4
 
 
 class ProvisioningBusyError(Exception):
@@ -176,13 +183,17 @@ class BulkProvisionDriveFoldersUseCase:
             try:
                 if work.drive_folder_id is not None:
                     return await self._relocate(work)
-                await self._provision.execute(
+                result = await self._provision.execute(
                     user_id=work.user_id,
                     email=work.email,
                     entity_id=work.entity_id,
                     entity_name=work.entity_name,
                 )
-                return "created"
+                # Se informa de lo que PASÓ, no de lo que se intentó: el caso
+                # de uso corta sin tocar Drive si el id ya estaba cacheado, y
+                # dar eso por "creada" haría que el resumen contase carpetas
+                # que nadie creó.
+                return "created" if result.created else "skipped"
             except Exception:
                 logger.exception(
                     "Fallo al provisionar la carpeta de Drive de user_id=%s", work.user_id
@@ -207,7 +218,13 @@ class BulkProvisionDriveFoldersUseCase:
         )
         padre_actual = await self._storage.find_folder_parent_id(work.drive_folder_id)
 
-        if destino is not None and padre_actual != destino:
+        # SIN guarda de `destino is not None`. `None` significa "la raíz" en
+        # todo el puerto, así que quedarse quieto cuando alguien PIERDE su
+        # sociedad dejaba su carpeta bajo la anterior mientras la base decía
+        # que estaba en la raíz — y el predicado ya no lo volvía a detectar,
+        # porque NULL frente a NULL no es distinto. Divergencia silenciosa y
+        # permanente: exactamente lo que este rediseño venía a eliminar.
+        if padre_actual != destino:
             # Mover conserva el id y el contenido: `users.drive_folder_id`
             # sigue siendo válido y las nóminas viajan con la carpeta.
             await self._storage.move_folder(work.drive_folder_id, new_parent_id=destino)

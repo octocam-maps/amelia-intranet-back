@@ -70,7 +70,7 @@ class GoogleDriveDocumentStorage:
     async def find_folder_parent_id(self, folder_id: str) -> Optional[str]:
         return await asyncio.to_thread(self._client.find_folder_parent_id, folder_id)
 
-    async def move_folder(self, folder_id: str, *, new_parent_id: str) -> None:
+    async def move_folder(self, folder_id: str, *, new_parent_id: Optional[str]) -> None:
         await asyncio.to_thread(
             self._client.move_folder, folder_id, new_parent_id=new_parent_id
         )

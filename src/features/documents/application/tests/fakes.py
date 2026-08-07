@@ -291,7 +291,7 @@ class FakeDocumentStorage:
     async def find_folder_parent_id(self, folder_id: str) -> Optional[str]:
         return self.parent_by_folder.get(folder_id)
 
-    async def move_folder(self, folder_id: str, *, new_parent_id: str) -> None:
+    async def move_folder(self, folder_id: str, *, new_parent_id: Optional[str]) -> None:
         self.parent_by_folder[folder_id] = new_parent_id
         self.moved.append((folder_id, new_parent_id))
 

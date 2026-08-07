@@ -222,7 +222,13 @@ class IDocumentStorage(Protocol):
         ...
 
     async def find_folder_parent_id(self, folder_id: str) -> Optional[str]:
-        """Bajo qué carpeta cuelga `folder_id` HOY, según Drive.
+        """Bajo qué carpeta cuelga `folder_id` HOY, según el almacenamiento.
+
+        `None` significa LA RAÍZ, igual que en `get_or_create_employee_folder`
+        y en `move_folder`. Esa convención tiene que ser la misma en los tres o
+        el caso de uso no puede comparar «dónde está» con «dónde debería
+        estar»: devolver aquí el id real de la raíz haría que una carpeta ya
+        colocada pareciera fuera de sitio en cada pasada.
 
         Solo se consulta para quien la base marca como pendiente de
         recolocación, que son pocos. Es lo que permite que el backfill de
@@ -230,8 +236,9 @@ class IDocumentStorage(Protocol):
         suposición era errónea, aquí se ve y no se mueve nada de más."""
         ...
 
-    async def move_folder(self, folder_id: str, *, new_parent_id: str) -> None:
+    async def move_folder(self, folder_id: str, *, new_parent_id: Optional[str]) -> None:
         """Recoloca una carpeta CONSERVANDO su id y su contenido.
+        `new_parent_id=None` la lleva a la raíz.
 
         Que el id no cambie es la razón de mover en vez de crear en el sitio
         nuevo: `users.drive_folder_id` sigue siendo válido y las nóminas ya

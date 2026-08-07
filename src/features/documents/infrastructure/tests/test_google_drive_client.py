@@ -365,6 +365,52 @@ def test_list_files_in_folder_pagina_hasta_agotar_next_page_token():
     assert {f["id"] for f in files} == {"file-1", "file-2"}
 
 
+# --- La raíz, normalizada a None ---------------------------------------------
+
+
+def test_find_folder_parent_id_normaliza_la_raiz_a_none():
+    """Drive devuelve el id REAL de la unidad compartida como padre de lo que
+    cuelga de ella. El puerto de almacenamiento usa `None` para decir "raíz",
+    así que traducirlo aquí es lo que permite comparar «dónde está» con «dónde
+    debería estar».
+
+    Sin esta traducción, una carpeta correctamente colocada en la raíz —el
+    externo-invitado— parecería fuera de sitio y el volcado la movería a donde
+    ya está, en cada pasada y para siempre."""
+    service, _ = _service_with_mock_sequence(
+        [({"status": "200"}, json.dumps({"parents": [_ROOT_FOLDER_ID]}))]
+    )
+    client = GoogleDriveClient(None, root_folder_id=_ROOT_FOLDER_ID, service=service)
+
+    assert client.find_folder_parent_id("carpeta-en-la-raiz") is None
+
+
+def test_find_folder_parent_id_devuelve_el_padre_cuando_no_es_la_raiz():
+    service, _ = _service_with_mock_sequence(
+        [({"status": "200"}, json.dumps({"parents": ["carpeta-de-amelia-hub"]}))]
+    )
+    client = GoogleDriveClient(None, root_folder_id=_ROOT_FOLDER_ID, service=service)
+
+    assert client.find_folder_parent_id("carpeta-de-ana") == "carpeta-de-amelia-hub"
+
+
+def test_mover_sin_padre_lleva_la_carpeta_a_la_raiz():
+    """`new_parent_id=None` significa raíz. Es el caso de quien pierde su
+    sociedad, y sin él su carpeta se quedaba bajo la anterior."""
+    service, http = _service_with_mock_sequence(
+        [
+            ({"status": "200"}, json.dumps({"parents": ["carpeta-vieja"]})),
+            ({"status": "200"}, json.dumps({"id": "carpeta-de-ana"})),
+        ]
+    )
+    client = GoogleDriveClient(None, root_folder_id=_ROOT_FOLDER_ID, service=service)
+
+    client.move_folder("carpeta-de-ana", new_parent_id=None)
+
+    uri_del_update = http.request_sequence[1][0]
+    assert f"addParents={_ROOT_FOLDER_ID}" in uri_del_update
+
+
 # --- Seguridad entre hilos ---------------------------------------------------
 #
 # El provider envuelve cada llamada en `asyncio.to_thread`, y desde que el

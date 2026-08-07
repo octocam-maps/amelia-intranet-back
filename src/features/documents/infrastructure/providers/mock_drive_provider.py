@@ -77,7 +77,7 @@ class MockDocumentStorage:
     async def find_folder_parent_id(self, folder_id: str) -> Optional[str]:
         return self._parent_by_folder.get(folder_id)
 
-    async def move_folder(self, folder_id: str, *, new_parent_id: str) -> None:
+    async def move_folder(self, folder_id: str, *, new_parent_id: Optional[str]) -> None:
         self._parent_by_folder[folder_id] = new_parent_id
 
     async def find_entity_folder(self, entity_name: str) -> Optional[str]:

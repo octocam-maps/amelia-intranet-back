@@ -27,6 +27,8 @@ from src.features.documents.application.use_cases.bulk_provision_drive_folders i
     ProvisioningBusyError,
 )
 
+from src.shared.database.infrastructure.asyncpg_pool import POOL_MAX_SIZE
+
 from .fakes import FakeDocumentRepository, FakeDocumentStorage
 
 
@@ -292,6 +294,53 @@ async def test_si_la_carpeta_ya_estaba_en_su_sitio_solo_se_corrige_el_dato():
     assert repository.drive_folder_entity_ids["u1"] == "Amelia Lab"
 
 
+@pytest.mark.asyncio
+async def test_perder_la_sociedad_devuelve_la_carpeta_a_la_raiz():
+    """El caso INVERSO al cambio de sociedad, y el que estaba roto.
+
+    Al quitarle la sociedad a alguien, la base pasaba a decir «cuelga de la
+    raíz» y en Drive seguía colgando de la sociedad anterior. Como NULL frente
+    a NULL no es distinto, el predicado ya no lo volvía a detectar: divergencia
+    silenciosa y permanente entre lo que el sistema cree y lo que hay.
+
+    La causa era una incoherencia del puerto: `None` significaba «la raíz» al
+    CREAR y «no hagas nada» al MOVER.
+    """
+    repository = FakeDocumentRepository(active_users=[("u1", "ana@ameliahub.com", "Amelia Hub")])
+    storage = FakeDocumentStorage()
+    await _caso(repository, storage).execute()
+    carpeta = repository.drive_folder_ids["u1"]
+    assert storage.parent_by_folder[carpeta] == storage.entity_folders["Amelia Hub"]
+
+    # RRHH le quita la sociedad.
+    repository.active_users = [("u1", "ana@ameliahub.com", None)]
+    await _caso(repository, storage).execute()
+
+    # `None` = raíz, en la base Y en el almacenamiento. Sin esto, uno decía una
+    # cosa y el otro otra.
+    assert storage.parent_by_folder[carpeta] is None
+    assert repository.drive_folder_entity_ids["u1"] is None
+    assert await repository.count_pending_folder_work() == 0
+
+
+@pytest.mark.asyncio
+async def test_una_carpeta_ya_en_la_raiz_no_se_mueve_cada_pasada():
+    """La otra mitad de la misma convención. Si el almacenamiento devolviera el
+    id REAL de la raíz en vez de `None`, una carpeta correctamente colocada en
+    la raíz parecería fuera de sitio y se movería a donde ya está, en cada
+    pasada y para siempre."""
+    repository = FakeDocumentRepository(active_users=[("u1", "externo@gmail.com", None)])
+    storage = FakeDocumentStorage()
+    await _caso(repository, storage).execute()
+    storage.moved.clear()
+
+    # Se fuerza a que vuelva a entrar en el conjunto pendiente.
+    repository.drive_folder_entity_ids["u1"] = "Amelia Hub"
+    await _caso(repository, storage).execute()
+
+    assert storage.moved == []
+
+
 # --- El paralelismo es una optimización, no un requisito --------------------
 
 
@@ -318,6 +367,20 @@ async def test_el_paralelismo_esta_acotado():
     await _caso(_repositorio(MAX_BATCH_LIMIT), storage).execute(limit=MAX_BATCH_LIMIT)
 
     assert storage.maximo <= MAX_CONCURRENT_PROVISIONS
+
+
+def test_la_concurrencia_no_se_come_el_pool_de_conexiones():
+    """El pool es de TODA la aplicación, no del volcado.
+
+    Medido contra Postgres real: con 8 en paralelo el pico era de 8 de 10
+    conexiones, dejando 2 para el resto de la intranet durante los segundos que
+    dura un lote. No reventaba nada — encolaba a los demás usuarios, que es
+    peor porque no se ve en ningún error.
+
+    El margen es holgado a propósito: cada persona hace varias consultas y el
+    lote además retiene una conexión para el cerrojo.
+    """
+    assert MAX_CONCURRENT_PROVISIONS <= POOL_MAX_SIZE // 2
 
 
 @pytest.mark.asyncio

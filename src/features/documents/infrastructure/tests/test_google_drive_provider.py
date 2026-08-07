@@ -47,7 +47,16 @@ class _FakeGoogleDriveClient:
         self.created_folders.append(name)
         return folder_id
 
-    def move_folder(self, folder_id, *, new_parent_id):
+    def find_folder_parent_id(self, folder_id):
+        """Devuelve `None` para la raíz, igual que el cliente real: en este
+        doble la raíz se representa con `parent_id=None`, así que la búsqueda
+        inversa ya da la convención correcta sin caso especial."""
+        for (parent, _name), fid in self.folders.items():
+            if fid == folder_id:
+                return parent
+        return None
+
+    def move_folder(self, folder_id, *, new_parent_id=None):
         self.moved.append((folder_id, new_parent_id))
         # Reproduce el efecto real: deja de estar en la raíz y pasa a colgar
         # del nuevo padre, CONSERVANDO su id.
@@ -409,6 +418,42 @@ async def test_without_an_entity_the_folder_stays_at_the_root():
 
     assert client.folders[(None, "externo@gmail.com")] == folder_id
     assert client.moved == []
+
+
+# --- La raíz se representa como None en todo el puerto -----------------------
+
+
+@pytest.mark.asyncio
+async def test_una_carpeta_en_la_raiz_declara_padre_None():
+    """`None` significa "la raíz" en `get_or_create_employee_folder` y en
+    `move_folder`; leer tiene que hablar el mismo idioma.
+
+    Si aquí se devolviera el id real de la unidad compartida, el volcado
+    compararía ese id contra el `None` que significa raíz, concluiría que la
+    carpeta está fuera de sitio, y la movería a donde ya está — en cada pasada
+    y para siempre."""
+    client = _FakeGoogleDriveClient()
+    storage = _build_storage(client)
+    folder_id = await storage.get_or_create_employee_folder("externo@gmail.com")
+
+    assert await storage.find_folder_parent_id(folder_id) is None
+
+
+@pytest.mark.asyncio
+async def test_mover_con_padre_None_devuelve_la_carpeta_a_la_raiz():
+    """El caso de quien PIERDE su sociedad. Sin esto su carpeta se quedaba bajo
+    la sociedad anterior mientras la base decía que estaba en la raíz."""
+    client = _FakeGoogleDriveClient()
+    storage = _build_storage(client)
+    entity_id = await storage.get_or_create_entity_folder("Amelia Hub")
+    folder_id = await storage.get_or_create_employee_folder(
+        "ana@ameliahub.com", entity_folder_id=entity_id
+    )
+    assert await storage.find_folder_parent_id(folder_id) == entity_id
+
+    await storage.move_folder(folder_id, new_parent_id=None)
+
+    assert await storage.find_folder_parent_id(folder_id) is None
 
 
 # --- Dónde dejó de estar la protección de la carpeta de entidad --------------
