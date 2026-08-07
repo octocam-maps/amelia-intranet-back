@@ -37,14 +37,20 @@ class FakeDocumentRepository:
         self,
         documents: Optional[list[Document]] = None,
         *,
-        active_users: Optional[list[tuple[str, str]]] = None,
+        active_users: Optional[list[tuple[str, str, Optional[str]]]] = None,
+        entity_name_by_user: Optional[dict[str, str]] = None,
     ):
         self.documents: dict[str, Document] = {d.id: d for d in (documents or [])}
         self.drive_folder_ids: dict[str, str] = {}
         # `(user_id, email)` de empleados activos — consumido por el sync
         # (WU-D, `SyncDocumentsUseCase`). Vacío por defecto para no afectar
         # los tests de WU-C1 que no lo usan.
-        self.active_users: list[tuple[str, str]] = active_users or []
+        # `(user_id, email, entity_name)` — el tercer elemento se admite
+        # ausente para no reescribir los tests que no van de entidades.
+        self.active_users: list[tuple[str, str, Optional[str]]] = [
+            (u if len(u) == 3 else (*u, None)) for u in (active_users or [])
+        ]
+        self.entity_name_by_user: dict[str, str] = entity_name_by_user or {}
         self.sync_runs: dict[str, SyncRun] = {}
         self._sync_run_counter = 0
 
@@ -120,8 +126,11 @@ class FakeDocumentRepository:
     async def save_drive_folder_id(self, user_id: str, drive_folder_id: str) -> None:
         self.drive_folder_ids[user_id] = drive_folder_id
 
-    async def find_active_users_with_email(self) -> list[tuple[str, str]]:
+    async def find_active_users_with_email(self) -> list[tuple[str, str, Optional[str]]]:
         return list(self.active_users)
+
+    async def find_entity_name_for_user(self, user_id: str) -> Optional[str]:
+        return self.entity_name_by_user.get(user_id)
 
     async def create_sync_run(self) -> SyncRun:
         self._sync_run_counter += 1
@@ -157,6 +166,10 @@ class FakeDocumentStorage:
 
     def __init__(self):
         self.folders_by_email: dict[str, str] = {}
+        # Reorganización por entidades: carpeta de cada sociedad y bajo cuál
+        # quedó cada persona.
+        self.entity_folders: dict[str, str] = {}
+        self.entity_by_email: dict[str, str] = {}
         self.files_by_folder: dict[str, dict[str, DriveFileMetadata]] = {}
         self.content_by_file_id: dict[str, bytes] = {}
         self.upload_calls: list[dict] = []  # para aserciones "llamó al storage"
@@ -164,7 +177,21 @@ class FakeDocumentStorage:
         # `MockDocumentStorage._category_folders`.
         self.category_folders: dict[str, dict[str, str]] = {}
 
-    async def get_or_create_employee_folder(self, email: str) -> str:
+    async def get_or_create_entity_folder(self, entity_name: str) -> str:
+        folder_id = self.entity_folders.get(entity_name)
+        if folder_id is None:
+            folder_id = f"fake-entity-{uuid.uuid4()}"
+            self.entity_folders[entity_name] = folder_id
+        return folder_id
+
+    async def get_or_create_employee_folder(
+        self, email: str, *, entity_name: Optional[str] = None
+    ) -> str:
+        # Mover conserva el id también aquí, igual que en Drive real: la
+        # entidad se registra aparte y la carpeta NO cambia de identificador.
+        if entity_name is not None:
+            await self.get_or_create_entity_folder(entity_name)
+            self.entity_by_email[email] = entity_name
         folder_id = self.folders_by_email.get(email)
         if folder_id is None:
             folder_id = f"fake-folder-{uuid.uuid4()}"
@@ -172,7 +199,12 @@ class FakeDocumentStorage:
             self.files_by_folder[folder_id] = {}
         return folder_id
 
-    async def find_employee_folder(self, email: str) -> Optional[str]:
+    async def find_entity_folder(self, entity_name: str) -> Optional[str]:
+        return self.entity_folders.get(entity_name)
+
+    async def find_employee_folder(
+        self, email: str, *, parent_id: Optional[str] = None
+    ) -> Optional[str]:
         return self.folders_by_email.get(email)
 
     async def get_or_create_category_folder(

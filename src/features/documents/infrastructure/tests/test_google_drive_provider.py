@@ -31,6 +31,9 @@ class _FakeGoogleDriveClient:
         self.folders: dict[tuple, str] = {}
         self.created_folders: list[str] = []
         self.raise_404_on_download = False
+        # Reorganización por entidades: mover conserva el id (como en Drive
+        # real), así que se registra el destino sin cambiar la clave del id.
+        self.moved: list[tuple[str, str]] = []
 
     def find_folder_by_name(self, name, *, parent_id=None):
         return self.folders.get((parent_id, name))
@@ -40,6 +43,15 @@ class _FakeGoogleDriveClient:
         self.folders[(parent_id, name)] = folder_id
         self.created_folders.append(name)
         return folder_id
+
+    def move_folder(self, folder_id, *, new_parent_id):
+        self.moved.append((folder_id, new_parent_id))
+        # Reproduce el efecto real: deja de estar en la raíz y pasa a colgar
+        # del nuevo padre, CONSERVANDO su id.
+        for (parent, name), fid in list(self.folders.items()):
+            if fid == folder_id:
+                del self.folders[(parent, name)]
+                self.folders[(new_parent_id, name)] = fid
 
     def upload_file(self, *, folder_id, filename, content, mime_type):
         return f"file-{filename}", "md5-fake-hash"
@@ -310,3 +322,98 @@ async def test_list_folder_files_mapea_a_drive_file_metadata_del_dominio():
             content_hash="abc123",
         )
     ]
+
+
+# --- Reorganización por entidades: RAÍZ / <Entidad> / <email> ---
+
+
+def _build_storage(client: _FakeGoogleDriveClient) -> GoogleDriveDocumentStorage:
+    """Mismo seam que el resto del módulo: credenciales de mentira y el
+    cliente falso, sin tocar red."""
+    return GoogleDriveDocumentStorage(
+        key_path="",
+        key_json='{"type": "service_account"}',
+        root_folder_id="root-folder-123",
+        client=client,
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_employee_folder_is_created_inside_its_entity():
+    client = _FakeGoogleDriveClient()
+    storage = _build_storage(client)
+
+    folder_id = await storage.get_or_create_employee_folder(
+        "ana@ameliahub.com", entity_name="Amelia Hub"
+    )
+
+    entity_id = client.folders[(None, "Amelia Hub")]
+    assert client.folders[(entity_id, "ana@ameliahub.com")] == folder_id
+
+
+@pytest.mark.asyncio
+async def test_an_existing_flat_folder_is_MOVED_not_duplicated():
+    """EL caso que hace segura la migración.
+
+    Crear una carpeta nueva en su sitio dejaría dos por persona: la plana, a
+    la que el backend sigue subiendo porque tiene su id cacheado en
+    `users.drive_folder_id`, y la nueva, vacía. En Drive mover CONSERVA el id,
+    así que la caché sigue siendo válida.
+    """
+    client = _FakeGoogleDriveClient()
+    # Estado heredado: la carpeta cuelga de la raíz.
+    plana = client.create_folder("ana@ameliahub.com")
+    client.created_folders.clear()
+    storage = _build_storage(client)
+
+    folder_id = await storage.get_or_create_employee_folder(
+        "ana@ameliahub.com", entity_name="Amelia Hub"
+    )
+
+    assert folder_id == plana, "el id DEBE conservarse: `drive_folder_id` apunta a él"
+    assert len(client.moved) == 1
+    # Solo se creó la carpeta de la entidad, NUNCA una segunda del empleado.
+    assert client.created_folders == ["Amelia Hub"]
+
+
+@pytest.mark.asyncio
+async def test_a_folder_already_in_place_is_not_moved_again():
+    """Idempotencia: el batch de provisioning es también el reintento, así que
+    se ejecuta más de una vez sobre la misma gente."""
+    client = _FakeGoogleDriveClient()
+    storage = _build_storage(client)
+
+    first = await storage.get_or_create_employee_folder(
+        "ana@ameliahub.com", entity_name="Amelia Hub"
+    )
+    second = await storage.get_or_create_employee_folder(
+        "ana@ameliahub.com", entity_name="Amelia Hub"
+    )
+
+    assert first == second
+    assert client.moved == []
+
+
+@pytest.mark.asyncio
+async def test_without_an_entity_the_folder_stays_at_the_root():
+    """El externo-invitado no pertenece a ninguna sociedad."""
+    client = _FakeGoogleDriveClient()
+    storage = _build_storage(client)
+
+    folder_id = await storage.get_or_create_employee_folder("externo@gmail.com")
+
+    assert client.folders[(None, "externo@gmail.com")] == folder_id
+    assert client.moved == []
+
+
+@pytest.mark.asyncio
+async def test_the_entity_folder_is_reused_across_employees():
+    """Dos personas de la misma sociedad comparten carpeta de entidad; crear
+    una por empleado la duplicaría."""
+    client = _FakeGoogleDriveClient()
+    storage = _build_storage(client)
+
+    await storage.get_or_create_employee_folder("ana@ameliahub.com", entity_name="Amelia Hub")
+    await storage.get_or_create_employee_folder("luis@ameliahub.com", entity_name="Amelia Hub")
+
+    assert client.created_folders.count("Amelia Hub") == 1

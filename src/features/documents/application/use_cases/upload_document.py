@@ -100,7 +100,14 @@ class UploadDocumentUseCase:
         # de lista/creación, igual que antes hacía con la carpeta raíz.
         folder_id = await self._repository.find_drive_folder_id(user_id)
         if folder_id is None:
-            folder_id = await self._storage.get_or_create_employee_folder(staff_member.email)
+            # Con su entidad, para que la carpeta nazca en el mismo sitio que
+            # las del provisioning. Sin esto, subir un documento a alguien sin
+            # carpeta la crearía suelta en la raíz y reintroduciría el árbol
+            # plano por la puerta de atrás.
+            entity_name = await self._repository.find_entity_name_for_user(user_id)
+            folder_id = await self._storage.get_or_create_employee_folder(
+                staff_member.email, entity_name=entity_name
+            )
             await self._repository.save_drive_folder_id(user_id, folder_id)
 
         category_folder_id = await self._storage.get_or_create_category_folder(

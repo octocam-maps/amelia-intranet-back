@@ -103,7 +103,10 @@ class SyncDocumentsUseCase:
         skipped = 0
         failed_employees = 0
 
-        for user_id, email in active_users:
+        # `entity_name` no se usa aquí: el sync busca la carpeta YA existente
+        # por su id cacheado o por nombre, no la crea. Se desempaqueta para no
+        # romper con la tupla de tres.
+        for user_id, email, _entity_name in active_users:
             try:
                 employee_created, employee_skipped = await self._sync_employee(user_id, email)
             except Exception:

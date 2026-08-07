@@ -28,10 +28,11 @@ fallo puntual no aborta el resto del batch, se cuenta y se sigue.
 """
 
 import logging
+from typing import Optional
 
-from ...domain.models import SyncRun
+from ...domain.models import CATEGORY_FOLDER_NAMES, SyncRun
 from ...domain.ports import IDocumentRepository, IDocumentStorage
-from ..results import BulkFolderProvisionResult
+from ..results import BulkFolderPlan, BulkFolderProvisionResult, FolderPlanEntry
 from .provision_employee_drive_folder import ProvisionEmployeeDriveFolderUseCase
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,93 @@ logger = logging.getLogger(__name__)
 class BulkProvisionDriveFoldersUseCase:
     def __init__(self, repository: IDocumentRepository, storage: IDocumentStorage):
         self._repository = repository
+        # `plan()` consulta Drive directamente (sin crear nada), así que
+        # necesita el storage además del caso de uso que sí escribe.
+        self._storage = storage
         self._provision = ProvisionEmployeeDriveFolderUseCase(repository, storage)
+
+    async def plan(self) -> BulkFolderPlan:
+        """Pasada EN SECO: qué haría, sin tocar Drive.
+
+        Existe porque la primera ejecución real sobre un Drive ya poblado
+        mueve carpetas de sitio, y para eso no hay deshacer. Consulta (nunca
+        crea) y devuelve el veredicto por persona más el coste en escrituras,
+        que es el dato que decide si conviene lanzarlo de una vez o por
+        tandas: Drive limita las escrituras y un `rateLimitExceeded` a mitad
+        del batch deja el árbol a medias.
+        """
+        active_users = await self._repository.find_active_users_with_email()
+
+        entity_folders: dict[str, Optional[str]] = {}
+        entities_to_create: list[str] = []
+        entries: list[FolderPlanEntry] = []
+
+        for user_id, email, entity_name in active_users:
+            # Cachea la consulta por entidad: son 4 sociedades para ~40
+            # personas, y preguntarlo por cada una serían 40 llamadas para
+            # saber lo mismo.
+            if entity_name is not None and entity_name not in entity_folders:
+                found = await self._storage.find_entity_folder(entity_name)
+                entity_folders[entity_name] = found
+                if found is None:
+                    entities_to_create.append(entity_name)
+
+            entity_folder_id = entity_folders.get(entity_name) if entity_name else None
+
+            cached = await self._repository.find_drive_folder_id(user_id)
+            if cached is not None:
+                # Mismo atajo que la ejecución real: con el id cacheado ni se
+                # pregunta a Drive.
+                entries.append(
+                    FolderPlanEntry(
+                        user_id=user_id,
+                        email=email,
+                        entity_name=entity_name,
+                        action="ya_registrada",
+                        missing_categories=await self._missing_categories(cached),
+                    )
+                )
+                continue
+
+            in_place = (
+                await self._storage.find_employee_folder(email, parent_id=entity_folder_id)
+                if entity_folder_id is not None
+                else None
+            )
+            if in_place is not None:
+                action, folder_id = "ya_en_su_sitio", in_place
+            else:
+                flat = await self._storage.find_employee_folder(email)
+                if flat is not None and entity_name is not None:
+                    action, folder_id = "mover", flat
+                elif flat is not None:
+                    action, folder_id = "ya_en_su_sitio", flat
+                else:
+                    action, folder_id = "crear", None
+
+            entries.append(
+                FolderPlanEntry(
+                    user_id=user_id,
+                    email=email,
+                    entity_name=entity_name,
+                    action=action,
+                    # Una carpeta que aún no existe necesita las cinco.
+                    missing_categories=(
+                        list(CATEGORY_FOLDER_NAMES)
+                        if folder_id is None
+                        else await self._missing_categories(folder_id)
+                    ),
+                )
+            )
+
+        return BulkFolderPlan(entries=entries, entity_folders_to_create=entities_to_create)
+
+    async def _missing_categories(self, employee_folder_id: str) -> list[str]:
+        missing = []
+        for category in CATEGORY_FOLDER_NAMES:
+            if await self._storage.find_category_folder(employee_folder_id, category) is None:
+                missing.append(category)
+        return missing
 
     async def execute(self) -> BulkFolderProvisionResult:
         sync_run = await self._repository.create_sync_run()
@@ -50,9 +137,14 @@ class BulkProvisionDriveFoldersUseCase:
         skipped = 0
         failed = 0
 
-        for user_id, email in active_users:
+        for user_id, email, entity_name in active_users:
             try:
-                result = await self._provision.execute(user_id=user_id, email=email)
+                # `entity_name` viaja desde la misma consulta que los emails:
+                # resolverlo aquí por persona serían N consultas más para un
+                # dato que el repositorio ya tenía delante.
+                result = await self._provision.execute(
+                    user_id=user_id, email=email, entity_name=entity_name
+                )
             except Exception:
                 # Best-effort por empleado: mismo criterio que
                 # `SyncDocumentsUseCase._sync_employee` — un fallo puntual

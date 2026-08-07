@@ -142,11 +142,35 @@ class PostgresDocumentRepository:
             "UPDATE users SET drive_folder_id = $2 WHERE id = $1", user_id, drive_folder_id
         )
 
-    async def find_active_users_with_email(self) -> list[tuple[str, str]]:
+    async def find_active_users_with_email(self) -> list[tuple[str, str, Optional[str]]]:
         # El sync (WU-D) itera SOLO sobre empleados activos — nunca sobre
         # externos-invitados ni usuarios de baja.
-        rows = await self._db.fetch("SELECT id, email FROM users WHERE status = 'active'")
-        return [(str(row["id"]), row["email"]) for row in rows]
+        #
+        # `LEFT JOIN` y no `JOIN`: `users.entity_id` admite NULL (el
+        # externo-invitado no pertenece a ninguna sociedad) y un JOIN normal
+        # lo dejaría fuera del batch sin que nada lo delatara.
+        #
+        # `deleted_at IS NULL`: a quien se dio de baja definitiva no se le
+        # provisiona carpeta nueva.
+        rows = await self._db.fetch(
+            """
+            SELECT u.id, u.email, e.name AS entity_name
+            FROM users u
+            LEFT JOIN entities e ON e.id = u.entity_id
+            WHERE u.status = 'active' AND u.deleted_at IS NULL
+            """
+        )
+        return [(str(row["id"]), row["email"], row["entity_name"]) for row in rows]
+
+    async def find_entity_name_for_user(self, user_id: str) -> Optional[str]:
+        return await self._db.fetchval(
+            """
+            SELECT e.name FROM users u
+            JOIN entities e ON e.id = u.entity_id
+            WHERE u.id = $1
+            """,
+            user_id,
+        )
 
     async def create_sync_run(self) -> SyncRun:
         row = await self._db.fetchrow("INSERT INTO drive_sync_runs DEFAULT VALUES RETURNING *")

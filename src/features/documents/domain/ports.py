@@ -68,10 +68,20 @@ class IDocumentRepository(Protocol):
         volver a buscarla por nombre en cada subida/descarga."""
         ...
 
-    async def find_active_users_with_email(self) -> list[tuple[str, str]]:
-        """`(user_id, email)` de empleados con `status='active'` — el sync
-        (WU-D) itera solo sobre estos, nunca sobre externos-invitados ni
-        usuarios de baja."""
+    async def find_active_users_with_email(self) -> list[tuple[str, str, Optional[str]]]:
+        """`(user_id, email, entity_name)` de empleados con `status='active'`
+        — el sync (WU-D) itera solo sobre estos, nunca sobre externos-invitados
+        ni usuarios de baja.
+
+        `entity_name` es `None` para quien no tiene sociedad asignada (el
+        externo-invitado): su carpeta cuelga de la raíz, no de ninguna
+        entidad."""
+        ...
+
+    async def find_entity_name_for_user(self, user_id: str) -> Optional[str]:
+        """Nombre de la sociedad a la que pertenece (`entities.name`), o
+        `None` si no tiene ninguna. Es lo que decide bajo qué carpeta de
+        entidad va la suya en Drive."""
         ...
 
     async def create_sync_run(self) -> SyncRun:
@@ -93,18 +103,41 @@ class IDocumentStorage(Protocol):
     real o `MockDocumentStorage`). Postgres nunca guarda el contenido del
     archivo, solo los metadatos vía `IDocumentRepository`."""
 
-    async def get_or_create_employee_folder(self, email: str) -> str:
-        """Devuelve el id de la subcarpeta del empleado (nombre = `email`)
-        bajo `DRIVE_ROOT_FOLDER_ID`, CREÁNDOLA si no existe. Lo usa el flujo
-        de subida manual (admin, WU-C1) — el admin siempre puede subir aunque
-        sea el primer documento de esa persona."""
+    async def get_or_create_entity_folder(self, entity_name: str) -> str:
+        """Carpeta de una sociedad del grupo bajo la raíz, creándola si no
+        existe. Es el nivel que agrupa a las personas por entidad."""
         ...
 
-    async def find_employee_folder(self, email: str) -> Optional[str]:
+    async def get_or_create_employee_folder(
+        self, email: str, *, entity_name: Optional[str] = None
+    ) -> str:
+        """Id de la carpeta del empleado (nombre = `email`) DENTRO de la de
+        su entidad, creándola si no existe. Con `entity_name=None` cuelga de
+        la raíz — el externo-invitado no pertenece a ninguna sociedad.
+
+        Si la carpeta ya existía suelta en la raíz (árbol plano anterior a la
+        reorganización), se MUEVE conservando su id en vez de crear una
+        nueva: `users.drive_folder_id` sigue apuntando a la misma y los
+        documentos ya subidos no se pierden de vista."""
+        ...
+
+    async def find_entity_folder(self, entity_name: str) -> Optional[str]:
+        """Carpeta de una sociedad SIN crearla. La usa la pasada en seco del
+        provisioning para saber qué haría sin tocar Drive."""
+        ...
+
+    async def find_employee_folder(
+        self, email: str, *, parent_id: Optional[str] = None
+    ) -> Optional[str]:
         """Busca la subcarpeta por nombre = `email` SIN crearla — la usa el
         sync (WU-D): si RRHH todavía no colocó ninguna carpeta a mano para
         ese empleado, el sync simplemente no encuentra nada que conciliar,
-        nunca crea una carpeta vacía."""
+        nunca crea una carpeta vacía.
+
+        `parent_id` acota la búsqueda a una carpeta concreta (la de su
+        entidad); sin él busca en la raíz, que es donde están las del árbol
+        plano anterior a la reorganización. La pasada en seco necesita
+        distinguir esos dos sitios para decidir entre "mover" y "crear"."""
         ...
 
     async def get_or_create_category_folder(
