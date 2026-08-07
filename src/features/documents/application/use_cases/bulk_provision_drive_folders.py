@@ -28,6 +28,7 @@ Drive (`ProvisionEmployeeDriveFolderUseCase`). Best-effort por empleado: un
 fallo puntual no aborta el resto del batch, se cuenta y se sigue.
 """
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -37,6 +38,16 @@ from ..results import BulkFolderPlan, BulkFolderProvisionResult, FolderPlanEntry
 from .provision_employee_drive_folder import ProvisionEmployeeDriveFolderUseCase
 
 logger = logging.getLogger(__name__)
+
+# Personas provisionándose a la vez. Cada una son ~14 llamadas a Drive, y en
+# serie las 37 de la plantilla se iban a más de dos minutos con la petición
+# HTTP abierta — por encima del timeout habitual de un proxy.
+#
+# El número es deliberadamente conservador. Lo que se gana subiéndolo se
+# pierde entero en cuanto Google devuelve un `rateLimitExceeded`: el batch es
+# best-effort, así que esa persona se cuenta como fallida y hay que repetir.
+# Con 8, las 37 caben en ~5 tandas y se queda muy lejos de cualquier límite.
+MAX_CONCURRENT_PROVISIONS = 8
 
 
 class BulkProvisionDriveFoldersUseCase:
@@ -130,6 +141,33 @@ class BulkProvisionDriveFoldersUseCase:
                 missing.append(category)
         return missing
 
+    async def _provision_one(
+        self,
+        semaphore: "asyncio.Semaphore",
+        user_id: str,
+        email: str,
+        entity_name: Optional[str],
+    ):
+        """Una persona, con el hueco de concurrencia ya pedido.
+
+        Devuelve `None` en vez de propagar: best-effort por empleado, mismo
+        criterio que `SyncDocumentsUseCase._sync_employee` — un fallo puntual
+        (Drive no responde para esa persona) no debe abortar el resto.
+        """
+        async with semaphore:
+            try:
+                # `entity_name` viaja desde la misma consulta que los emails:
+                # resolverlo aquí por persona serían N consultas más para un
+                # dato que el repositorio ya tenía delante.
+                return await self._provision.execute(
+                    user_id=user_id, email=email, entity_name=entity_name
+                )
+            except Exception:
+                logger.exception(
+                    "Fallo al provisionar la carpeta de Drive de user_id=%s", user_id
+                )
+                return None
+
     async def execute(self) -> BulkFolderProvisionResult:
         sync_run = await self._repository.create_sync_run()
 
@@ -138,23 +176,42 @@ class BulkProvisionDriveFoldersUseCase:
         skipped = 0
         failed = 0
 
-        for user_id, email, entity_name in active_users:
+        # Las carpetas de ENTIDAD, antes del fan-out y de una en una.
+        #
+        # No es una optimización, es lo que hace seguro el paralelismo: dos
+        # corrutinas que preguntan a la vez "¿existe ya Hincator?" reciben las
+        # dos que no, y crean DOS carpetas con el mismo nombre. A partir de
+        # ahí media plantilla cuelga de una y media de la otra, y Drive no se
+        # queja porque admite nombres repetidos.
+        #
+        # Resolverlas aquí las deja además cacheadas en el proveedor, así que
+        # las 37 personas siguientes no vuelven a preguntar por ellas.
+        for entity_name in dict.fromkeys(
+            entity for _, _, entity in active_users if entity is not None
+        ):
             try:
-                # `entity_name` viaja desde la misma consulta que los emails:
-                # resolverlo aquí por persona serían N consultas más para un
-                # dato que el repositorio ya tenía delante.
-                result = await self._provision.execute(
-                    user_id=user_id, email=email, entity_name=entity_name
-                )
+                await self._storage.get_or_create_entity_folder(entity_name)
             except Exception:
-                # Best-effort por empleado: mismo criterio que
-                # `SyncDocumentsUseCase._sync_employee` — un fallo puntual
-                # (p. ej. Drive no responde para esa persona) no debe abortar
-                # el resto del batch.
+                # Si la entidad no se puede crear, sus empleados fallarán uno
+                # a uno y se contarán como tales — no se aborta el batch, que
+                # puede tener gente de otras sociedades.
+                logger.exception("Fallo al resolver la carpeta de la entidad %s", entity_name)
+
+        # El resto, en paralelo acotado: son ~14 llamadas a Drive por persona
+        # y en serie se iban a más de dos minutos, por encima del timeout del
+        # proxy. El semáforo evita el otro extremo: soltar 37 tandas a la vez
+        # es la forma más rápida de que Google devuelva `rateLimitExceeded`.
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_PROVISIONS)
+        results = await asyncio.gather(
+            *(
+                self._provision_one(semaphore, user_id, email, entity_name)
+                for user_id, email, entity_name in active_users
+            )
+        )
+
+        for result in results:
+            if result is None:
                 failed += 1
-                logger.exception(
-                    "Fallo al provisionar la carpeta de Drive de user_id=%s", user_id
-                )
                 continue
 
             if result.created:

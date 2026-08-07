@@ -52,12 +52,39 @@ class GoogleDriveDocumentStorage:
             build_credentials(key_path=key_path, key_json=key_json),
             root_folder_id=root_folder_id,
         )
+        # Memo de las carpetas de sociedad. Son CUATRO para toda la plantilla
+        # y `get_or_create_employee_folder` las resuelve por persona: sin
+        # esto, un volcado de 37 personas pregunta 37 veces dónde está la
+        # misma carpeta.
+        #
+        # Vive lo que vive la instancia, y la factoría crea una por petición
+        # (`get_document_storage` en cada `Depends`), así que no puede quedarse
+        # obsoleto entre requests.
+        self._entity_folder_ids: dict[str, str] = {}
+        # El batch provisiona en paralelo. Sin el cerrojo, dos corrutinas que
+        # fallan el memo a la vez crearían DOS carpetas con el mismo nombre —
+        # Drive las admite, y a partir de ahí media plantilla cuelga de una y
+        # media de la otra.
+        self._entity_folder_lock = asyncio.Lock()
 
     async def get_or_create_entity_folder(self, entity_name: str) -> str:
-        folder_id = await asyncio.to_thread(self._client.find_folder_by_name, entity_name)
-        if folder_id is not None:
+        cached = self._entity_folder_ids.get(entity_name)
+        if cached is not None:
+            return cached
+
+        async with self._entity_folder_lock:
+            # Segunda comprobación DENTRO del cerrojo: quien esperaba aquí
+            # puede haber quedado desbloqueado justo después de que otro la
+            # creara.
+            cached = self._entity_folder_ids.get(entity_name)
+            if cached is not None:
+                return cached
+
+            folder_id = await asyncio.to_thread(self._client.find_folder_by_name, entity_name)
+            if folder_id is None:
+                folder_id = await asyncio.to_thread(self._client.create_folder, entity_name)
+            self._entity_folder_ids[entity_name] = folder_id
             return folder_id
-        return await asyncio.to_thread(self._client.create_folder, entity_name)
 
     async def get_or_create_employee_folder(
         self, email: str, *, entity_name: Optional[str] = None

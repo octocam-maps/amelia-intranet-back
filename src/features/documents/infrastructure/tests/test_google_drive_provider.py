@@ -8,6 +8,9 @@ la traducción async/dominio (asyncio.to_thread, mapeo a `UploadedFile`/
 duplicar la cobertura de flags de Shared Drive.
 """
 
+import asyncio
+import time
+
 import httplib2
 import pytest
 from googleapiclient.errors import HttpError
@@ -415,5 +418,51 @@ async def test_the_entity_folder_is_reused_across_employees():
 
     await storage.get_or_create_employee_folder("ana@ameliahub.com", entity_name="Amelia Hub")
     await storage.get_or_create_employee_folder("luis@ameliahub.com", entity_name="Amelia Hub")
+
+    assert client.created_folders.count("Amelia Hub") == 1
+
+
+# --- Memo de la carpeta de entidad y seguridad bajo concurrencia -----------
+
+
+@pytest.mark.asyncio
+async def test_the_entity_folder_is_only_looked_up_once():
+    """Son cuatro sociedades para toda la plantilla, y el volcado resuelve la
+    entidad por persona. Sin memo, 37 empleados son 37 consultas a Drive para
+    obtener siempre la misma respuesta."""
+    client = _FakeGoogleDriveClient()
+    client.lookups = []
+    original = client.find_folder_by_name
+
+    def _contando(name, *, parent_id=None):
+        client.lookups.append((parent_id, name))
+        return original(name, parent_id=parent_id)
+
+    client.find_folder_by_name = _contando
+    storage = _build_storage(client)
+
+    for i in range(10):
+        await storage.get_or_create_employee_folder(f"p{i}@ameliahub.com", entity_name="Amelia Hub")
+
+    assert [l for l in client.lookups if l == (None, "Amelia Hub")] == [(None, "Amelia Hub")]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_callers_do_not_duplicate_the_entity_folder():
+    """El batch provisiona en paralelo. Drive NO impone unicidad por nombre:
+    dos corrutinas que fallan el memo a la vez crean dos carpetas «Amelia Hub»
+    sin que nada dé error, y media plantilla acaba colgando de cada una."""
+
+    class _SlowClient(_FakeGoogleDriveClient):
+        def find_folder_by_name(self, name, *, parent_id=None):
+            # `asyncio.to_thread` hace que la búsqueda ceda el control de
+            # verdad; esto reproduce esa ventana de forma determinista.
+            time.sleep(0.01)
+            return super().find_folder_by_name(name, parent_id=parent_id)
+
+    client = _SlowClient()
+    storage = _build_storage(client)
+
+    await asyncio.gather(*(storage.get_or_create_entity_folder("Amelia Hub") for _ in range(8)))
 
     assert client.created_folders.count("Amelia Hub") == 1
