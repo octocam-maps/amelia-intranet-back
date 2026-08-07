@@ -218,3 +218,60 @@ async def test_the_entity_folder_is_only_counted_once_for_the_whole_company():
     plan = await BulkProvisionDriveFoldersUseCase(repository, _ReadOnlySpy()).plan()
 
     assert sorted(plan.entity_folders_to_create) == ["Amelia Hub", "Amelia Lab"]
+
+
+# --- Alcance: el INVITADO también tiene carpeta ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_batch_also_provisions_people_who_never_logged_in():
+    """Medido en la base real: 32 de 37 personas estaban en `invited`. Con el
+    filtro del sync (`status='active'`) el volcado cubría el 13% de la
+    plantilla y dos de las cuatro entidades no llegaban ni a existir.
+
+    Un `invited` no es alguien ajeno a la empresa: es alguien a quien RRHH ya
+    dio de alta y cuyo contrato suele existir antes de su primer día."""
+    repository = FakeDocumentRepository(
+        active_users=[("u1", "ana@ameliahub.com", "Amelia Hub")],
+        invited_users=[("u2", "luis@amelialab.com", "Amelia Lab")],
+    )
+    storage = FakeDocumentStorage()
+
+    result = await BulkProvisionDriveFoldersUseCase(repository, storage).execute()
+
+    assert result.created == 2
+    assert storage.entity_by_email["luis@amelialab.com"] == "Amelia Lab"
+
+
+@pytest.mark.asyncio
+async def test_the_invited_show_up_in_the_dry_run_too():
+    """Si el plan y la ejecución consultaran conjuntos distintos, la pasada en
+    seco dejaría de ser una previsión de lo que va a pasar — que es lo único
+    para lo que sirve."""
+    repository = FakeDocumentRepository(
+        active_users=[("u1", "ana@ameliahub.com", "Amelia Hub")],
+        invited_users=[("u2", "luis@amelialab.com", "Amelia Lab")],
+    )
+
+    plan = await BulkProvisionDriveFoldersUseCase(repository, _ReadOnlySpy()).plan()
+
+    assert plan.to_create == 2
+    assert sorted(plan.entity_folders_to_create) == ["Amelia Hub", "Amelia Lab"]
+
+
+@pytest.mark.asyncio
+async def test_widening_the_batch_does_not_widen_the_sync():
+    """El sync manda un aviso por cada documento que indexa. Si arrastrase a
+    los `invited`, ampliar el alcance de las CARPETAS habría empezado a
+    mandar correos a gente que aún no puede entrar en la intranet — un efecto
+    que nadie pidió y que nadie relacionaría con este cambio."""
+    repository = FakeDocumentRepository(
+        active_users=[("u1", "ana@ameliahub.com", "Amelia Hub")],
+        invited_users=[("u2", "luis@amelialab.com", "Amelia Lab")],
+    )
+
+    del_sync = await repository.find_active_users_with_email()
+    del_batch = await repository.find_provisionable_users_with_email()
+
+    assert [u[1] for u in del_sync] == ["ana@ameliahub.com"]
+    assert len(del_batch) == 2
