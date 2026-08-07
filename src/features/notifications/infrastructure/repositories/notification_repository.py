@@ -9,7 +9,7 @@ de fan-out y alimentar los jobs por-tiempo — mismo patrón que
 from datetime import date, datetime
 from typing import Any, Optional
 
-from src.shared.auth.roles import ROLES_WITHOUT_TIME_CLOCK, RoleCode
+from src.shared.auth.roles import ROLES_WITHOUT_TIME_TRACKING, RoleCode
 from src.shared.database.infrastructure.asyncpg_pool import DatabasePool
 
 from ...domain.entities import Notification
@@ -214,19 +214,24 @@ class PostgresNotificationRepository(INotificationRepository):
         return [str(row["user_id"]) for row in rows]
 
     async def list_user_ids_pending_clock_in(self, work_date: date) -> list[str]:
-        # RF-A4.3: se excluye a quien NO TIENE el módulo de control horario —
-        # `externo_invitado` desde el principio y `becario` desde la migración
-        # 038. La lista se DERIVA de `TIME_CLOCK_ROLES` (ver
-        # `src/shared/auth/roles.py`), que es el mismo grupo que guarda los
-        # endpoints de `/time-clock`: así el recordatorio nunca puede pedirle
-        # fichar a alguien a quien el backend le responde 403.
+        # RF-A4.3: se excluye a quien NO TIENE NINGUNA FORMA de registrar su
+        # jornada — `externo_invitado` desde el principio y `becario` desde la
+        # migración 038. La lista se DERIVA de `DAILY_TIME_LOG_ROLES` (ver
+        # `src/shared/auth/roles.py`), que agrupa el fichaje por tramos Y el
+        # parte diario del técnico: así el recordatorio nunca pide fichar a
+        # quien recibiría un 403, pero tampoco se olvida del técnico, cuyo
+        # parte es obligatorio a diario aunque no use `/time-clock/entries`.
+        #
+        # `technician_daily_logs` no necesita su propio NOT EXISTS: el parte
+        # crea también su fila en `time_clock_entries`, que es lo que ya
+        # comprueba la consulta de abajo.
         #
         # Interpolado y no ligado como parámetro: son valores de un `Enum`
         # controlado, no input del cliente, y así el placeholder `$1` (que SÍ
         # está ligado a `work_date`) no se corre — mismo criterio y mismo
         # motivo que en `list_announcement_recipient_ids`.
         excluded_roles = ", ".join(
-            f"'{role.value}'" for role in ROLES_WITHOUT_TIME_CLOCK
+            f"'{role.value}'" for role in ROLES_WITHOUT_TIME_TRACKING
         )
         rows = await self._db.fetch(
             f"""
